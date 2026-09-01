@@ -307,3 +307,169 @@ the rest are in `ISSUES.md`. What the review revealed about the design, as oppos
 - **Correcting the note above:** the placeholder domain is not confined to `marker.ts`. `commands.ts`,
   `events.ts`, `state.ts`, `sim.ts` and the harness's command parser and scenario builder are all
   marker-shaped. Slice 2 replaces a vocabulary, not a file.
+
+### 2026-09-02 — analysis of review findings, slice 1 (cycle 1)
+
+Re-analysis of the five blocking findings only. The non-blocking findings stay in `ISSUES.md` and are
+out of scope for this cycle. One development task is emitted, against the existing branch and PR 1,
+so the slice lands as one reviewed unit.
+
+**What the findings have in common.** Four of the five are the same mistake in different clothes: the
+harness trusts a caller-supplied value without deciding what the legal range of that value is. A tick
+count, a method name, a scenario name and a JSON Pointer token are all strings or numbers that arrive
+from outside, and in each case the code asked "is this the wrong shape?" instead of "is this one of
+the values I accept?". Finding 4 is a different animal — a convention clash — and finding 5 is its
+documentation falling out of step.
+
+#### Bounds (finding 1)
+
+`requiredCount` bounds a count below and not above, so `sim.step {ticks: 9007199254740991}` runs a
+loop that allocates per iteration until V8 aborts the process. `sim.runUntil`'s `maxTicks` and the
+`tick` field on replay commands and checkpoints have the same hole; `verifyReplay` derives its loop
+bound from the largest tick it is handed, so one oversized number in a fixture drives the same
+unbounded loop.
+
+Capping ticks alone is not enough. `Sim.step` allocates one event per marker per tick, and today there
+is exactly one marker, so a tick cap looks like an event cap. From slice 2 on, markers multiply and a
+tick cap silently stops bounding memory. Both are capped:
+
+| Limit                     | Value     | Applies to                                             |
+| ------------------------- | --------- | ------------------------------------------------------ |
+| `MAX_TICKS_PER_STEP`      | 100000    | `ticks` on `sim.step`                                   |
+| `MAX_TICKS_PER_RUN`       | 1000000   | `maxTicks` on `sim.runUntil`                            |
+| `MAX_EVENTS_PER_RESPONSE` | 100000    | events accumulated by one `sim.step` call               |
+| `MAX_REPLAY_TICK`         | 1000000   | any `tick` in `commands` or `hashTrail`                 |
+| `MAX_REPLAY_ENTRIES`      | 100000    | length of `commands` and of `hashTrail`                 |
+
+The parameter caps are checked before any work starts. The event budget cannot be — how many events
+`ticks` produces is not knowable until they are produced — so the harness steps in chunks and checks
+the accumulated count as it goes, which is the loop `stepUntilPointerEquals` already uses. The budget
+lives in the harness rather than in `Sim.step` because the sim must not throw a harness-shaped error
+and must not import the harness to build one; keeping the check on the harness side leaves the sim
+pure.
+
+Exceeding any cap is a JSON-RPC error with a new `limit-exceeded` code, not `invalid-params`. A
+request that is well-formed but too large is a different diagnosis from a malformed one, and the agent
+driving the harness needs to tell them apart to know whether to retry with a smaller number.
+
+#### Own-property lookups (finding 2)
+
+Three tables keyed by caller-supplied strings resolve off `Object.prototype`: the method table in
+`rpc.ts`, the scenario table in `scenarios.ts`, and the JSON Pointer member lookup in `pointer.ts`,
+which uses `in`. The rule adopted is that any lookup keyed by an untrusted string is an own-property
+lookup — null-prototype objects for the two static tables, `Object.hasOwn` for the pointer — and it is
+stated here because slice 2 onward will add more such tables.
+
+**Correcting the review on the mechanism.** The review recorded that the scenario builder "registers a
+permanently broken session because registration happens before the state is known good". That is not
+what the code does: `SessionRegistry.open` calls `createScenarioSim` first and registers afterwards
+(`sessions.ts:22-29`). The observed effect is real but the cause is only the prototype lookup —
+`BUILDERS['constructor']` returns `Object`, which does not throw, so `Object(seed)` is registered as
+though it were a `Sim`. Fixing the lookup fixes the session; no reordering is needed.
+
+#### The replay convention (finding 4)
+
+This is the one real design choice. The verifier's checkpoint at tick `K` means "the state at clock
+`K` before the commands issued at `K` are applied". The protocol has no way to show a client that
+state: `sim.dispatch` returns a hash after its commands are applied, and `sim.step` returns one after
+the clock has moved. So for any tick carrying a command, no trail an agent can record is one the
+verifier accepts — the divergence is reported at tick 0 even when the final hash matches exactly. The
+committed fixture passes only because it was written using the verifier's internal convention rather
+than recorded through the protocol.
+
+**Decision: the verifier moves to the post-dispatch convention.** A checkpoint at tick `K` becomes
+"the state at clock `K` after every command issued at `K`", which is exactly the hash `sim.dispatch`
+returns, and for a tick with no commands is exactly the hash the preceding `sim.step` returned. The
+verifier's post-loop behaviour already matches this — it dispatches the final tick's commands and
+hashes without stepping — so the change is to compare the checkpoint after `dispatchIssuedAt` and
+before `sim.step`, and to fold the pre-loop tick-0 check into the loop.
+
+Adding a `replay.record` method was rejected. It would make the harness stateful for something a
+client can already do from the responses it receives, and it would leave the verifier's convention
+unobservable by any other route — the protocol would grow a method whose only purpose is to paper over
+a convention nothing else can produce. Recording belongs on the client side of the line.
+
+The fix is not complete when the verifier changes. The acceptance criterion is a test that records a
+trail through the public protocol — including at least one tick that carries a command, since that is
+the case that fails today — and then verifies it. The committed fixture is regenerated by that same
+recording path so that it is reproducible rather than hand-built.
+
+#### Gates that are actually tested (finding 3)
+
+A relative import from `packages/sim` into `packages/harness` passes eslint, tsc and the dependency
+gate. That is the slice's own "sim must not import the view" criterion, and nothing catches it. The
+eslint import selectors match sources not beginning with `.`, so every relative path is exempt by
+construction; `globalThis.Math.random()` and `Date.parse` are unrestricted; `crypto`, `setTimeout`,
+`setInterval` and `process` are described as banned in `06-stack-decision.md` but appear in no rule;
+and the dependency gate reads three manifest fields, not `devDependencies`.
+
+Three separate repairs, and one structural change behind them:
+
+- **The import boundary becomes a script**, `tools/check-sim-imports.ts`, which resolves every import
+  specifier in `packages/sim/src` against its own directory and fails when the result escapes that
+  directory or is a bare specifier. A regex cannot express "escapes the package" because it cannot
+  know how deep the importing file sits. `eslint-plugin-import` with a resolver would also express it,
+  and was rejected: it adds a dependency to enforce a rule about the repository's own shape, and the
+  existing dependency gate already establishes the pattern of a small script that a negative test can
+  run as a subprocess.
+- **`globalThis` is banned outright inside `packages/sim/src`.** One `no-restricted-globals` entry
+  closes `globalThis.Math.random()`, `globalThis.Date` and every other aliased route in a single rule,
+  which is why it is preferred over chasing each member expression. `crypto`, `setTimeout`,
+  `setInterval` and `process` join it, and `Date.parse` joins the restricted properties.
+- **The dependency gate reads `devDependencies` too**, and takes its manifest path as an argument
+  (defaulting to today's) so a negative test can point it at a deliberately bad fixture.
+
+**Decision on what a negative test is: a committed test, not a script and not a manual probe.** It
+lives under `tests/gates/`, runs each gate as a real subprocess against a fixture that violates it, and
+asserts a non-zero exit and the expected diagnostic. Fixtures live in `tests/gates/fixtures/`, which is
+excluded from the root `tsconfig.json` includes and ignored by the main eslint run — a fixture whose
+job is to fail the gate would otherwise fail `npm run check` itself. The lint negative test invokes
+eslint with `--no-ignore` against those fixtures, and `eslint.config.js` applies the same exported
+`simPurityRules` object to them, so the test exercises the shipped rules rather than a copy that can
+drift. This is the point of the whole exercise: a gate verified once by hand is a gate that stops
+working silently, and the build should be what notices.
+
+**Residual limit, recorded honestly:** no lint rule survives local aliasing — `const M = Math;
+M.random()` passes any of this. The determinism test is the real backstop, and this belongs in
+`ISSUES.md` rather than in a rule that pretends to more coverage than it has.
+
+#### The skill document (finding 5)
+
+`.claude/skills/pp-sim-harness/SKILL.md` shows a three-command, twelve-checkpoint fixture as a
+one-command, one-checkpoint document with no ellipsis and no note that it is abridged, so the example
+fails when run verbatim. Its recording procedure then describes the convention finding 4 shows the
+verifier rejects. Both are corrected against the new convention, and the example is made runnable —
+either the real fixture or an explicitly marked excerpt whose commands and hashes are its actual
+contents. The review's separate point, that the protocol as built should be documented in one place
+from slice 2 on, is not part of this cycle.
+
+#### Decisions taken without a human, continuing the series above
+
+| #  | Decision                                                             | Why                                                                                                             |
+| -- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 13 | Request limits live in the harness, not `balance.json`               | `balance.json` holds invented game constants; a protocol request cap is not one, and mixing them muddies both     |
+| 14 | Cap ticks and events, not ticks alone                                | One marker makes a tick cap look like an event cap; from slice 2 markers multiply and it stops bounding memory    |
+| 15 | Enforce the event budget in the harness, stepping in chunks          | The sim cannot raise a harness error without importing the harness, and it must import nothing                   |
+| 16 | New `limit-exceeded` error code rather than reusing `invalid-params` | Well-formed but too large is a different diagnosis from malformed; the agent needs to know whether to retry small |
+| 17 | Own-property lookup at all three sites                               | Null-prototype tables and `Object.hasOwn` state the rule once for the tables slice 2 will add                     |
+| 18 | The verifier adopts the protocol's post-dispatch convention          | A convention no client can observe through the public protocol is unusable, whatever its internal merits          |
+| 19 | No `replay.record` method                                            | Recording is client-side from responses already returned; a stateful mode adds protocol surface for no gain       |
+| 20 | The import boundary is a script, not `eslint-plugin-import`          | No new dependency to enforce a rule about our own repository shape; matches the existing dependency gate          |
+| 21 | `globalThis` banned outright inside `packages/sim/src`               | One rule closes every aliased-global route rather than enumerating member expressions forever                     |
+| 22 | Gate negative tests are committed tests run as subprocesses          | A gate probed once by hand fails silently later; the build should be what notices                                 |
+| 23 | This entry is committed to the feature branch, not `agent/develop`   | The next stage works on PR 1's branch and must read it there; see the deviation note below                        |
+| 24 | No new Jira issue; OPP-8 stays the ticket for this rework            | Rework of an existing slice is not new scope, and a second key would fragment the board                           |
+
+**Deviation from the analysis stage contract (decision 23).** The stage skill says to commit the
+analysis document to `agent/develop`. Here the work continues on an open branch with an open PR, and a
+document committed to `agent/develop` would be invisible to the stage that has to read it. It is
+committed to `agent/feature/20260902-000100-opp-slice-1-sim-core-and-agent-harness` instead, and
+reaches `agent/develop` when PR 1 merges.
+
+**Constraints discovered.** `packages/sim` has no `paths`, no project references and no `rootDir`
+boundary in any tsconfig, so TypeScript will not object to a cross-package relative import and cannot
+be made to without restructuring the build — which is why the boundary is a script. `tests/harness/`
+already spawns the harness as a child process, so gate tests have a working subprocess pattern to
+follow. `balance.json` is still empty of real constants and stays that way.
+
+**One development task** is emitted: the five fixes on the existing branch, extending PR 1.
