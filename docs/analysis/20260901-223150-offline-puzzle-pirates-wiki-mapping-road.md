@@ -237,3 +237,42 @@ slices are stories, one under each phase-1 epic.
 - Created `agent/develop` from `main`; the repo had no `develop` branch.
 - Defined the MVP loop and five development slices; emitted one development task per slice.
 - Recorded twelve decisions taken without a human, above.
+
+### 2026-09-02 — development, slice 1 (OPP-8)
+
+Built the simulation core, the agent harness and the repository scaffolding on
+`agent/feature/20260902-000100-opp-slice-1-sim-core-and-agent-harness`. `npm run check` runs the
+dependency gate, three typecheck projects, lint and 37 tests, all green.
+
+**Dependencies added** — all root devDependencies, none in `packages/sim`: `typescript` (the project
+is TypeScript), `@types/node` (the harness uses node builtins), `eslint`, `@eslint/js` and
+`typescript-eslint` (the purity gates are lint rules). No runtime dependency exists anywhere yet.
+
+**Deviations from the analysis, with reasons:**
+
+- **npm workspaces, not pnpm.** pnpm is not installed on this machine and npm 11 has workspaces.
+  Installing a global tool was not worth it.
+- **No build step for tests.** Node 24 strips TypeScript types natively, so `node --test` runs `.ts`
+  directly. This removes a test runner and a bundler from the inner loop.
+- **No dependency-cruiser.** Layering is enforced by an ESLint rule banning non-relative imports
+  inside `packages/sim`, plus `tools/check-sim-deps.ts` which fails if that package gains a
+  dependency. Both were verified to actually fire by breaking them deliberately.
+- **`dispatch` applies its mutation immediately** rather than queuing it for the next tick as
+  `06-stack-decision.md` sketched. Queuing would put pending commands into saved state for no gain;
+  synchronous accept/reject is what makes rule enforcement testable without stepping. The harness
+  reflects this — `sim.dispatch` returns the new tick and state hash.
+- **`snapshot()` clones through canonical JSON, not `structuredClone`.** `structuredClone` is a host
+  global; using it would make `packages/sim` depend on node or DOM typings.
+- **`packages/sim/src` is flat**, without the `state/`, `systems/` and `save/` subtrees. There is no
+  content to fill them yet; slice 2 can introduce them without moving anything.
+- **`SCHEMA_VERSION` starts at 2** so a real 1→2 migration exists and is exercised, rather than a
+  hook that has never run.
+- **`replay.verify` takes an optional hash trail.** Without recorded per-tick hashes there is nothing
+  to report a diverging tick against; the fixture carries one.
+- **Floating point is banned outright in sim state**, enforced at the serialisation boundary — the
+  canonical serialiser throws on a non-safe-integer. This replaces the fixed-point helpers the stack
+  document proposed; they can come back if a system genuinely needs fractions.
+
+**For slice 2:** the placeholder domain is `packages/sim/src/marker.ts` and its tests. It exists only
+to prove the machinery and should be deleted, not extended. `balance.json` is empty and waiting for
+the first invented constant.

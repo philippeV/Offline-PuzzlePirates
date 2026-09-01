@@ -1,0 +1,84 @@
+{
+  "seed": 12648430,
+  "scenario": "marker-field",
+  "commands": [
+    {
+      "tick": 0,
+      "command": {
+        "op": "marker.place",
+        "id": 1,
+        "x": 4,
+        "y": 9
+      }
+    },
+    {
+      "tick": 3,
+      "command": {
+        "op": "marker.move",
+        "id": 1,
+        "dx": 2,
+        "dy": 0
+      }
+    },
+    {
+      "tick": 7,
+      "command": {
+        "op": "marker.move",
+        "id": 1,
+        "dx": -3,
+        "dy": 1
+      }
+    }
+  ],
+  "hashTrail": [
+    {
+      "tick": 1,
+      "hash": "cf51698cdc80fdda"
+    },
+    {
+      "tick": 2,
+      "hash": "9400fa38b2dd2035"
+    },
+    {
+      "tick": 3,
+      "hash": "4b188ffdee0fe4dc"
+    },
+    {
+      "tick": 4,
+      "hash": "027122a3ce9b088e"
+    },
+    {
+      "tick": 5,
+      "hash": "5f9b4c06037ce0f5"
+    },
+    {
+      "tick": 6,
+      "hash": "34fb3c5b4703457a"
+    },
+    {
+      "tick": 7,
+      "hash": "4988ffa46dce4088"
+    },
+    {
+      "tick": 8,
+      "hash": "63f537cbe7b3a358"
+    },
+    {
+      "tick": 9,
+      "hash": "53faf936df1fbbdb"
+    },
+    {
+      "tick": 10,
+      "hash": "de8d660029621392"
+    },
+    {
+      "tick": 11,
+      "hash": "4be3fafae056d2fe"
+    },
+    {
+      "tick": 12,
+      "hash": "bf6370fad4b0fb94"
+    }
+  ],
+  "finalHash": "bf6370fad4b0fb94"
+}
