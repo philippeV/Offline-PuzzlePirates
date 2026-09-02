@@ -1116,3 +1116,56 @@ step defect, the two tuning notes that overstate their own model, the unreachabl
 multiplier, the key re-ordering a `snapshot.restore` introduces into `state.get` output, the CRLF
 trap in the fixture recipes on Windows, and the observation that a played session never moves the
 water line at all, so the idle golden is its only committed coverage.
+
+### 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
+
+The test-stage run above committed its record and then died before merging, so the entry's closing
+claim that "PR 2 merged into `agent/develop`" was written in anticipation and was not true. The task
+was reaped back into the queue and re-run. Rather than trust the earlier record, this run re-drove
+the harness from scratch on the same three threads. **Every headline measurement reproduced. No
+blocking failure. PR 2 merged into `agent/develop` for real this time.**
+
+**Step atomicity, reproduced number for number.** On a fresh `bilge-session` (seed 20260902)
+`sim.step {ticks:100000}` returns `-32005 limit-exceeded` while `/tick` reads 99993, with the events
+of all 99993 committed ticks discarded. 99992 is the largest success and returns exactly 100000
+events; 99993 is the first failure; 99994 also commits exactly 99993, since the loop aborts the
+moment the budget breaks. The identical retry then succeeds and lands the clock at 199993.
+`marker-field` at 100000 ticks succeeds untouched — but only by coincidence, at exactly one event
+per tick, so one more event-emitting system tips it into the same failure. The escape is confined to
+the event budget: an invalid command in a `sim.dispatch` batch (which discards the valid command
+alongside it), a `ticks` over `MAX_TICKS_PER_STEP`, `session-unknown`, `snapshot-unknown`,
+`pointer-unknown` and an ordinary rejected swap all leave `stateHash` identical. `sim.runUntil`
+shares the defect through the same `stepWithinEventBudget` loop.
+
+**Scoring re-derived from geometry on a wider sample.** 23 accepted swaps across seeds 1, 28, 160,
+181, 777, 12648430 and 20260902, each cleared set computed independently from the raw pre-swap
+`cells` array and each score computed by hand from `01-duty-puzzles.md`. Reported cells equalled
+derived cells in all 23, and points matched across 0, 3, 5, 7, 12, 16, 20, 27, 48, 56 and 80 —
+including a Bingo, both Sea Donkey shapes, a Har! and a Vegas. Overlapping lines count a shared cell
+once in `cells` and once per line in the base sum, as published. Every chain step scored exactly one
+point per cleared cell, and a `puzzle.scored` total equalled the sum of its whole cascade. An
+accepted swap that clears nothing scores 0, still charges the move, and does physically exchange the
+two cells.
+
+**The pump-wins half, driven harder.** Seed 424242 flooded idle to 336 per mille, then 60 real
+scoring swaps took `dutyOutputPerMille` to 6145 — a net of minus 1703 per mille per thousand ticks.
+The water drained 336 to 0 over ticks 2401-2597, within a tick of the predicted 197, and held at 0
+for 2000 further ticks across three frame rotations. Sampling the whole `/puzzle` subtree on each of
+2196 ticks: no negative level, no negative accumulator, the accumulator inside [0, 999], and not one
+non-integer among the 144 cells or 18 frame intervals. Descending `bilge.waterLineMoved` fired at
+ticks 2402 and 2500 and stopped at the row-9 floor.
+
+**The ordinary path.** `npm run check` green from the worktree in 48 s, 101 of 101. `levelChanged`
+at exactly 3600 and 7200, then silence at `maxStarLevel` 2. A snapshot at tick 57 restored to its own
+tick and hash exactly, and an eight-step mixed sequence replayed after the restore reproduced all
+eight hashes in order. Both committed replays verify with `divergedAtTick: null` and re-record
+byte-identically once CRLF is normalised; the idle golden's patch against live state is empty.
+Reaching `waterLineRow` 8 idle measured 1193 ticks on four different seeds — seed-independent, since
+idle inflow never touches the RNG — against the 4206 in `pp-sim-harness/SKILL.md:150`, which is
+recorded in `ISSUES.md` and was left alone as the task directed.
+
+**Deviation confirmed as already-owned, not new.** Combo multipliers are flat and ungated by star
+level, so the shipped 0-2 band scores as a 7-star board. That is the deviation recorded at the end
+of the development entry above, and the follow-up slice owns it along with star levels past 2. A
+census of all 132 swaps on 260 opening boards again found no line of six and no five-line clear, so
+`comboMultiplierByLineCount[5]` stays unreachable.

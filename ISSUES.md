@@ -4,6 +4,21 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
+
+The run that wrote the entry below died before merging and was reaped; the re-run reproduced every
+measurement in it and found nothing new that blocks. Two additions only.
+
+- **`limit-exceeded` is missing from the harness error table.** `pp-sim-harness/SKILL.md` documents
+  -32700 through -32004 and stops, so the one code a driver is most likely to hit while stepping —
+  `-32005` / `limit-exceeded`, the non-atomic one — is the code the skill never names. It matters the
+  first time an agent writes a retry against that table.
+- **`marker-field` survives a 100000-tick step by coincidence.** It emits exactly one event per tick,
+  so it lands on the budget rather than over it. Any second event-emitting system in that scenario,
+  or a startup event, tips it into the same silent commit-then-fail. Also, every request above the
+  boundary commits exactly 99993 ticks, not the number asked for — the loop aborts the moment the
+  budget breaks — so the damage is constant rather than proportional.
+
 ## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2
 
 The test stage stood the branch up in its own worktree and drove the harness over the real protocol.
