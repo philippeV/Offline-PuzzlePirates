@@ -14,6 +14,7 @@ export interface BilgingBalance {
   pufferSpawnPerMille: number;
   crabSpawnPerMille: number;
   jellySpawnPerMille: number;
+  tokenSpawnPerMille: number;
   crabPointsAtFullWater: number;
   pufferPointsPerCell: number;
   jellyPointsPerCell: number;

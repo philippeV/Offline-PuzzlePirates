@@ -39,6 +39,7 @@ function bilgingBalanceOf(block: Record<string, unknown>): BilgingBalance {
     pufferSpawnPerMille: integerOf(block, 'pufferSpawnPerMille'),
     crabSpawnPerMille: integerOf(block, 'crabSpawnPerMille'),
     jellySpawnPerMille: integerOf(block, 'jellySpawnPerMille'),
+    tokenSpawnPerMille: integerOf(block, 'tokenSpawnPerMille'),
     crabPointsAtFullWater: integerOf(block, 'crabPointsAtFullWater'),
     pufferPointsPerCell: integerOf(block, 'pufferPointsPerCell'),
     jellyPointsPerCell: integerOf(block, 'jellyPointsPerCell'),

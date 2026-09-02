@@ -4,13 +4,17 @@ import { test } from 'node:test';
 import {
   CRAB_CELL,
   JELLY_CELL,
+  NO_SHAPE,
   PER_MILLE,
   PUFFER_CELL,
   applyBilgeSwap,
+  climbCrabs,
   detonationCellsOf,
   flatIndexOf,
   resolveBoard,
+  shapeOf,
   stepPointsOf,
+  type Board,
   type BoardCell,
 } from '../../packages/sim/src/index.ts';
 import { BALANCE, quietBoard, quietCellAt, resolveContext } from './fixtures.ts';
@@ -185,6 +189,20 @@ test('no critter spawns below the star level that unlocks it', () => {
   assert.equal(refilledTopRow(5, 0, JELLY_DRAW).every((cell) => cell >= 0), true);
   assert.equal(refilledTopRow(6, 0, JELLY_DRAW).every((cell) => cell === JELLY_CELL), true);
   assert.equal(refilledTopRow(7, 0, PER_MILLE - 1).every((cell) => cell >= 0), true);
+});
+
+test('a climbing crab carries the shape of the piece it displaces down with it', () => {
+  const board: Board = {
+    width: 1,
+    height: 3,
+    cells: [1, 2, CRAB_CELL],
+    shapes: [NO_SHAPE, shapeOf(3, 0), NO_SHAPE],
+  };
+
+  climbCrabs(board);
+
+  assert.deepEqual(board.cells, [1, CRAB_CELL, 2]);
+  assert.deepEqual(board.shapes, [NO_SHAPE, NO_SHAPE, shapeOf(3, 0)]);
 });
 
 test('a crab only spawns at or below the water line', () => {

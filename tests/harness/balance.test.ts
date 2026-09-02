@@ -22,6 +22,7 @@ const BILGING_KEYS = [
   'pufferSpawnPerMille',
   'crabSpawnPerMille',
   'jellySpawnPerMille',
+  'tokenSpawnPerMille',
   'crabPointsAtFullWater',
   'pufferPointsPerCell',
   'jellyPointsPerCell',
