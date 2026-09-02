@@ -1480,3 +1480,82 @@ obstacle damage, so a moved bilging hash is a regression, not a blessing opportu
 carries balance keys `_note` and `bilging`. It carries `bilging` alone: slice 2's `loadPuzzleBalance`
 builds a literal from named blocks and never copies `_note` or `_sources` out of `balance.json`. The
 new fixture pin asserts the correct shape.
+
+### 2026-09-02 — development, slice 3 repair (cycle 1)
+
+The three blocking findings from the PR 3 review are fixed, on the existing branch and PR 3 rather
+than a fresh one, so the slice still lands as one reviewed unit. Decisions 64 to 73 were followed
+without substantive deviation; everything below is either a measurement that confirmed one or
+something the implementation found that the analysis had not.
+
+**Repair 1, the ship-class guard.** Both guards now validate through `SHIP_CLASS_IDS` with the
+`Array.find` idiom, and the `as ShipClassId` casts on both sides of `parseShipClass` are gone — the
+find genuinely launders `string`. `SHIP_CLASSES`, `RAM_SIZE_RANKS`, `BALL_WEIGHTS_MICRO` and the ram
+overrides built in `battle/turn.ts` are null-prototype behind an intermediate typed local, and
+`shipClassOf`, `ramSizeRankOf` and `ballWeightMicroOf` throw `RangeError`. `SHIP_CLASS_IDS` still
+yields the same fourteen ids in the same order. `sim.dispatch` was left non-atomic, per decision 67.
+
+**The pre-fix failure is quieter than the analysis described, which strengthens the case for the
+guard.** The document says an accepted `crewCount` commission "only dies on the next `sim.step`". In
+the default `marker-field` scenario that step does not die: the scenario carries `balance: null` and
+no battle, so nothing calls `shipClassOf` on the corrupt ship during a tick, and all eight poisoned
+sessions stepped cleanly. A poisoned session can therefore keep answering `sim.step` indefinitely
+rather than failing loudly. The new test pins the state hash rather than relying on a later throw.
+
+**Repair 2, the v3 to v4 migration.** `migrations[3]` sets `balance: null`. The regenerated fixture
+was produced independently in a throwaway worktree at `f5ee82a` and came out byte-identical to the
+analysis prototype's, balance keys exactly `["bilging"]`, 1561 bytes, LF.
+
+**The manufactured fixture was wrong in more than its balance.** It also carried an extra
+`rngStreams["bilge.refill"]` cursor and `puzzle.moves: 1` with a move recorded in the last frame
+interval — neither of which a real slice-2 run at that seed and tick produces. The genuine fixture
+matches a current-build reference run exactly outside `balance`, as decision 70 predicted.
+
+**The torn tick is literal, not inferred, and there is now a test that shows it.** Against the
+unfixed migration, loading the genuine fixture and stepping a commissioned ship throws
+`TypeError: Cannot read properties of undefined (reading 'crewDutyOutputPerMille')` in `npcOutputOf`,
+reached through `stepShips`. The unfixed migration leaves a `PuzzleBalance`-shaped balance in place,
+`stepShips` sees it as non-null, and `dutyOutputsOf` reaches `balance.npc` on an `undefined`. The
+throw lands after `advanceTick`, `driftMarkers` and `stepPuzzle` have already committed — the tear
+decision 66 describes, now demonstrated rather than reasoned about.
+
+**A convention break worth a reviewer's eye.** `tests/sim/migration.test.ts` is now the first file
+under `tests/sim/` to import from `packages/harness`; every other file there imports only from
+`packages/sim`. No gate objects — `check-sim-deps.ts` and `check-sim-imports.ts` scope to
+`packages/sim`, the eslint purity rules to `packages/sim/src` — and `tests/battle/session.test.ts`
+already mixes the two the same way. The analysis prototype had put these tests in a new file; they
+were consolidated into `migration.test.ts` instead, which is where the assertions they correct live.
+
+**Repair 3, the melee handicap.** `'wear'` left `DamageSource` and the conditional at `meters.ts:48`
+went with it. Exactly one existing test went red on the source change, the assertion at `:266`, as
+predicted — that was measured across the whole suite, not assumed. The melee tie-break is untouched.
+
+**The fused-damage test replicates one line of production logic, deliberately.** `applyOutcomes` is
+unexported and `turn.ts` was outside the repair's scope, so the new test drives `resolveMovement`
+directly and re-applies `turn.ts`'s `struckObstacle ? 'obstacle' : 'ram'` label rule itself. The
+collision numbers come from the real resolver — victim 1,000,000 fused, mover 500,000 — but the
+labelling step is duplicated, and it will not follow `turn.ts` if that rule changes. Recorded rather
+than fixed, because exporting a function to suit a test is the larger change.
+
+**The post-fix measurement reproduces the analysis exactly.** Re-run over 600 seeds under the mirror
+policy, with the turn cap lifted so nothing scores `unresolved`: player won 326 (54.3%),
+melee-decided 464 (77.3%), sunk 136 (22.7%), ties 261 of 464 (56.3%), nil-against-nil 218 (83.5%),
+longest battle 168 turns. Every figure matches the analysis's post-fix column to the unit. The
+grapple share was verified independently rather than copied: the brigand grapples in 343 of 464
+melee-decided battles, 73.9%, and the player takes 199 of the 261 ties. Ties now settle 261 of 600
+battles, better than two in five.
+
+**`ISSUES.md` gained a section rather than entries under the review heading.** The five items this
+repair deliberately did not fix are the repair's debt, not the review's, and the review section's
+preamble scopes it to what that review let through. They sit under a new
+`2026-09-02 — repair of the slice 3 review findings` heading, following the file's newest-first
+order.
+
+**Verification.** `npm run check` is green from cold through all five stages — deps, imports,
+typecheck, lint, test — at 257 tests, up from the 252 the review saw. Each of the five added or
+corrected tests was proved red against the unfixed code and green after, including the one the
+analysis warned about: the independent-path migration test was proved red with the genuine fixture
+already in place, which is the trap that would otherwise have shipped the same invisible bug behind a
+green suite. All eight files under `packages/fixtures/` are byte-identical to `HEAD` with CRLF
+normalised, except the deliberately regenerated v3 save. `battle.test.ts`'s win and loss existence
+assertions pass untouched, so the guardrail did not need to be exercised.

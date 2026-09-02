@@ -4,6 +4,61 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — repair of the slice 3 review findings (cycle 2)
+
+The three blocking findings from the review below are fixed: the prototype key that passed the
+ship-class guard, the v3 to v4 migration that left `balance` structurally invalid, and rock damage
+being dropped from the melee handicap. The melee entry below now carries the post-fix measurement it
+asked for. What follows is what the repair deliberately did not touch, and when each starts to
+matter.
+
+### Rock and ram damage are one fused integer
+
+`CollisionOutcome` carries a single `damageTakenSmallMicro` labelled by a single `struckObstacle`
+boolean, so a ship that is grounded on a rock and rammed in the same pass reports the whole fused
+amount under one source. Decision 71 makes the label irrelevant to every rule that exists today —
+obstacle and ram damage both raise the melee handicap now, and nothing else reads the source — so
+splitting the field buys nothing here and would widen a slice already three repairs wide. The first
+rule that treats a rock differently from a ram has to unfuse them before it can be written.
+
+### `packages/fixtures/saves/` has no owner skill
+
+`pp-golden-state` owns the goldens, `pp-scenario-author` the scenarios and replays,
+`pp-replay-triage` the trails. The saves directory is named in passing by the skills around it and
+owned by none, and no skill says how one is regenerated — which is how a manufactured v3 fixture was
+committed and survived a review unchallenged. The recipe now exists, in the analysis document rather
+than in a skill: build the state from the tip of the slice that wrote the schema version, through
+`createScenarioSim(seed, scenario)` and `step(ticks)`, and normalise to LF before comparing bytes on
+a checkout with `core.autocrlf` true. Moving it into a skill is the fix, and it was out of scope for
+a repair slice.
+
+### `MAXIMUM_TURNS = 120` is already unsafe
+
+Sharpens the 120-turn entry below, which measured the cap against a different player policy. At 600
+seeds the mirror policy walks past it on its own: one battle runs 168 turns and would score
+`unresolved` against `battle.test.ts`'s cap. That is true *before* this repair as well as after —
+the melee change moves no battle's length by a turn — so the hazard is not something the repair
+introduced. The twenty-four seeds the committed test uses dodge it. The assertion is one seed-list
+change away from flaking, independently of anything this slice touched.
+
+### `deserialise` validates nothing
+
+`deserialise` is a `JSON.parse` and a cast handed straight to `migrate`. Decisions 64 and 66 make an
+unknown `shipClass` unreachable through every command path — the guard fires before `createShip` —
+but a save carrying one walks in behind those guards and reaches the new `RangeError` in
+`shipClassOf`, and a throw inside a tick tears state because `Sim.step` has no transaction. No RPC
+method exposes `deserialise` today, so nothing reachable can trigger it. It starts to matter the
+moment there is a `session.load`.
+
+### The last prototype-carrying default
+
+`resolveMovement`'s `ramDamage: RamDamageOverrides = {}` (`battle/collision.ts:38`) is an ordinary
+object literal, and `ramDamageOf` indexes it by a class id (`ram.ts:27`), so an id of `toString`
+would find a function there rather than fall through to the published ram damage. It is unreachable
+in production — every caller passes the null-prototype table decision 65 created, and decision 64
+refuses the id before there is a ship to carry it — but it is the same bug shape that blocked this
+review, one refactor away.
+
 ## 2026-09-02 — independent review of slice 3 (OPP-10), PR 3
 
 Four lenses plus an empirical probe, all against `ea34344`. Three findings blocked and went back to
@@ -61,14 +116,34 @@ the moment slice 5 puts a human, or any other policy, on one side.
 
 `resolveMelee` has no RNG: the attacker wins if and only if it is strictly stronger, so every tie
 goes to the defender. In this scenario crew is 5 on both sides and rum is never consumed, so
-`strengthOf` collapses to `30 × (6 − blackBlockRows)` — seven possible values. Measured over 766
-melee-decided battles the tie rate is 28.7%, and 45.1% when both sides play the same policy; 152 of
-220 observed ties are 0 versus 0, both ships pinned at maximum handicap. Re-scoring the same 900
-battles with ties going to the attacker moves the player's win rate from 51.0% to 33.7% under mirror
-play and from 43.0% to 10.0% under a heuristic. Ties alone decide about a quarter of all battles, so
-the tie-break is the single largest rule in the sea battle and it is invented. It is recorded rather
-than blocked because no published formula exists to contradict, and because finding 3 above changes
-the input to this formula anyway — worth revisiting together.
+`strengthOf` collapses to `30 × (6 − blackBlockRows)` — seven possible values. This entry asked for
+a re-measurement and the repair cycle above supplied one, over 600 seeds under the mirror policy
+`tests/harness/battle.test.ts` actually uses, with the turn cap lifted so that nothing scores
+`unresolved`. The numbers below are all post-fix.
+
+The player wins 326 of 600, 54.3%. 464 battles, 77.3%, are decided by `resolveMelee` and 136, 22.7%,
+by sinking. 261 of those 464 melee verdicts are ties, 56.3%, and 218 of the ties are nil against
+nil, 83.5% — both ships pinned at six black rows, strength 0 against strength 0. The longest battle
+runs 168 turns. So the tie-break alone settles 261 of 600 battles, better than two in five, and it
+is invented: nothing published contradicts it, which is why decision 73 re-measured it rather than
+changed it. It remains the single largest rule in the sea battle.
+
+**The tie mass rose because obstacle damage now feeds the handicap.** The analysis measured the same
+600 seeds pre-fix at 202 ties of 464, 43.5%, with 130 nil against nil, 64.4%. Rock damage now raises
+`meleeDamageSmallMicro` as well, so more ships reach the grapple already pinned and more melees are
+0 against 0.
+
+**The battle trajectory is bit-identical before and after.** Melee-decided count, sink count and the
+longest battle are unchanged to the unit — 464, 136 and 168 on both sides of the repair — because
+`meleeDamageSmallMicro` is a write-only sink that nothing reads except `meleeSideOf` at battle end.
+Only the verdict of an already-melee-decided battle can move, and 36 of 464 flip. That is what made
+the repair cheap, and it also means the meter carries no gameplay pressure today.
+
+**The player gains from the tie rise only by accident.** The brigand throws the grapple in 343 of
+the 464 melee-decided battles, 73.9%, so it is the attacker in three ties out of four and the tie
+goes to the defender, which is the player. A six-point win-rate swing — 48.3% to 54.3% — resting on
+who happens to grapple is a coin flip dressed as a rule, and it inverts the moment a player planner
+grapples more often than the brigand's does.
 
 ### Tuning prose that overstates its own model, again
 
