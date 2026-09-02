@@ -4,6 +4,115 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
+
+Three threads drove real `pp-harness` processes over stdio. Nothing blocked: the MVP loop runs end to
+end over the wire, the booty chest rules hold, and determinism survives a process boundary at 55 cut
+points with a verified-sensitive negative control. `npm run check` is 412/412 exit 0 from cold on the
+merged result. What follows is what only a played session could produce.
+
+### The pillage is a gauntlet, and now there are numbers
+
+540 real voyages — six destinations × three voyage types × thirty seeds — confirm the review's static
+arithmetic by sailing it. The six-leg Keris route averages **4.50 battles** against the 4.61 the
+review predicted and the "about one and a half" its `_sources` claims; the eight-leg McGuffin's route
+averages **6.50** against a predicted 6.60. Observed per-leg rates track `550 + difficulty/2` across
+every band, and **every one of the 60 legs sailed at difficulty 875 or above carried a brigand** — the
+arrival leg at McGuffin's Isle is a mathematical certainty and was hit 30 times out of 30. The
+quietest of thirty Keris pillages still fought once.
+
+The contrast between voyage types is real and larger than the tuning prose suggests. Evade is
+absolute: 180 evade voyages, zero encounters, and because `encounterChanceOf` returns 0 before
+touching the RNG the `world.encounter` stream is never even created, so tick counts are identical
+across all thirty seeds. Trade is a quieter pillage rather than a different activity — 1.90 battles on
+the Keris route against 4.50 — but no trade voyage in 180 fought on every leg, where 30 of 180
+pillages did. The same route costs 26.7 minutes evading, 40.9 trading and 61.6 pillaging, because a
+battle freezes the voyage.
+
+Recorded as a balance note, not a defect. Nothing was retuned. The number may still be the one
+wanted; the sentence justifying it is not.
+
+### A pillage is a poor trade, and losing is nearly free but not quite
+
+Across 180 pillages the player took a mean of **71 PoE** into the booty chest, and **145 of 180 ended
+with an empty chest**. Sixty first encounters were isolated and diffed across the whole battle
+including settlement: over 55 losses the complete set of fields that ever change is `shipCount`,
+`damageTakenSmallMicro` and `meleeDamageSmallMicro`. No coin, cargo, chest, crew or rum ever moves on
+a loss, and the brigand is struck off identically on a win and a loss.
+
+One correction to the review, which recorded that a loss costs nothing and evade therefore buys
+nothing. A loss leaves **permanent melee damage**: `meleeDamageSmallMicro` is only ever incremented
+and nothing in the codebase decreases it, while hull damage does heal through carpentry. The win rate
+decays inside a single voyage — 17.3% on the first battle, 3.7% on the second, 0% by the third — so
+evade buys 57% of the voyage time back and a ship whose boarding strength is not permanently spent.
+What a loss still does not risk is coin, cargo or the voyage.
+
+(The player ship submits no `battle.plan` in this scenario, so those win rates are a passive pirate's.
+The encounter frequency, the tick costs and the loss-costs-nothing result come from `rollEncounter`
+and `settleEncounter` and are independent of combat skill.)
+
+### `session.save` does not exist over the protocol
+
+`packages/harness/src/methods/session.ts` exports `session.new` and `session.load` and nothing else;
+`session.save` answers `-32601 method-unknown`. Decision 84 exists because "save, reload, identical
+hash" was undrivable over the protocol, and it is still only half closed — an agent can load a save
+but cannot produce one under that name. `tests/harness/session-load.test.ts` does not notice because
+it builds a `Sim` in-process and calls `sim.save()`.
+
+Not blocking, because a byte-faithful save is obtainable anyway: `serialise()` is `canonicalJson`
+of the state, so `state.get {pointer:""}` put through `JSON.stringify` round-trips exactly, verified
+by re-dumping a loaded session with key order preserved. Both test threads used that route.
+`docs/wiki-map/06-stack-decision.md` also names `session.close` and a `session.load {path}` form,
+neither of which exists.
+
+### Half the plundered coin never reaches the booty chest
+
+`battle.ended` reported `bootyPoe: 770`, but the hull came out of the battle with `bootyPoe: 385`
+**and `poe: 385`**, before any porting or division. `awardBooty` in `packages/sim/src/battle/booty.ts`
+does `const shared = Math.floor(roll.poe / 2); winner.poe += shared; winner.bootyPoe += roll.poe -
+shared;`. Decision 86's premise is that coin taken is not coin owned until it is divided; half of it
+is owned immediately, so `booty.divide` only ever divides half of what a pillage rolls.
+
+**Not a slice-4 regression** — `git log -S` puts that line in `a305574`, slice 3. Slice 4 added
+`bootyCargo` beside it without revisiting the coin, which is how the two halves came to disagree.
+
+### Decision 89's justification is unreachable with the shipped tuning
+
+The `booty.divide` guard was widened to accept a chest holding goods but no coin, because "a roll can
+pay no coin". With `booty` as shipped — `brigandPoeBase` 800, `brigandPoePerMightMilli` 1000,
+`brigandPoeVariancePerMille` 250 — `rollBooty` yields 600 to 1000 PoE and `awardBooty` always leaves
+at least 300 in the chest, so that case cannot occur. Every won encounter observed produced `bootyPoe`
+between 302 and 843. The widened guard is correct and harmless; only its stated reason is dead.
+
+### The booty-chest mass gain recurs per division
+
+The review reported `booty.divide` gaining a kilogram once. Driven over the protocol it gains one
+**per division**: on seed 621 a first division took a 70 kg pair of lots to 71 and a second took 141
+to 142. Conditions stay narrow — `small-cannon-ball` in both hold and chest with each side's gram
+remainder at or above 500 — and no goods are created or destroyed, only the accounted mass. The
+sim's own capacity accounting was shown to move, not just the arithmetic: at 13429 kg of filler a
+`market.buy` of 1 unit is accepted before the division and refused `hold-full` after it, with nothing
+having entered or left the ship.
+
+### A zero-unit trade is accepted and emits an event
+
+`{"op":"market.buy","units":0}` returns accepted with a `market.traded` event carrying `units: 0`
+and `poe: 0`. The state hash does not move, so it mutates nothing. Cosmetic.
+
+### A slice-4 voyage cannot be driven in one protocol call
+
+A full pillage runs 50,000 to 400,000 ticks and the marker domain emits one `marker.drifted` per
+tick, so a whole voyage in a single `sim.runUntil` trips `MAX_EVENTS_PER_RESPONSE` (100,000) in
+`packages/harness/src/limits.ts`. That is the guard working, not a defect, but anyone scripting a
+voyage over the protocol has to chunk, and the `pp-sim-harness` skill does not say so next to its
+existing advice about stepping `bilge-session` in small spans.
+
+### `pp-sim-harness`'s documentation has drifted
+
+It states that `session.new` reports `schemaVersion` 4 — it reports 5. It says three scenarios exist;
+there are four, and `pillage-loop` is the missing one. Its method table has no `session.load`, and its
+transcripts still show hashes from schema 3 and 4.
+
 ## 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
 
 A four-lens review of PR 5. Nothing blocked: `npm run check` is 383/383 from cold on two independent
@@ -116,9 +225,16 @@ becomes session state: `{"schemaVersion":5}` is accepted and answered with a has
 `sim.step` dies `internal-error: Cannot read properties of undefined`. The existing test refuses `{}`
 only for want of a `schemaVersion`. Two related edges: malformed saves surface as `internal-error`
 (-32603) rather than `invalid-params`, because `statusOf()` hashes outside `loadSim`'s try/catch; and
-a save whose `voyage.route` names a league point that does not exist loads cleanly, then throws from
-`stepVoyage` *after* incrementing `legTicks` and `legIndex`, so the session advances a tick and loses
-its events. Local, single-player and self-inflicted, but the RPC contract says bad params yield
+a save whose `voyage.route` names a league point that does not exist loads cleanly and then throws
+from `stepVoyage`. **Corrected by the physical test after the merge:** the review measured that
+second edge on the pre-merge branch and reported that the session advanced a tick and lost its
+events. It does not, on the merged tree. Slice 2b's `atomically` wrapper around
+`stepWithinEventBudget` arrived with `agent/develop` and restores the session exactly — driven over
+the protocol, `sim.step` answers `internal-error` and `/tick` and `/voyage` are both unchanged. The
+same holds for an unknown `shipClass` and for a bare `{"schemaVersion":5}`. What survives is only
+that these surface as `internal-error` rather than `invalid-params`, and that a structurally invalid
+save is accepted at load time at all. Local, single-player and self-inflicted, but the RPC contract
+says bad params yield
 `invalid-params` and this slice's own tests show that intent. The `schemaVersion` gate itself is
 sound: 999, 1e308, 0, -1, 4.5, absent, non-numeric and non-string were each refused cleanly, and no
 prototype-pollution path exists — every domain lookup table is deliberately null-prototype.

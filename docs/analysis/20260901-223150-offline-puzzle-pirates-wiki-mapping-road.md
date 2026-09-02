@@ -2172,3 +2172,81 @@ asserts the status was one of two values.
 `world/cargo.ts`, so the battle layer depends on the world layer. Decision 80 meant to keep the
 world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
 the dependency runs opposite to the stated intent, and slice 5 should not deepen it.
+
+### 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
+
+Three threads drove real `pp-harness` processes over stdio against the merged branch `6808738`. The
+slice passed and was merged into `agent/develop`. Full findings are in `ISSUES.md` under the same
+date; what follows is what the test changed about the design record.
+
+**The merge with slice 2b was the first half of the work.** PR 4 landed while slice 4 was under
+review, colliding in six files. `balance.json` was merged programmatically rather than by hand — a
+union of both sides, checked to 71 constants against 71 `_sources` entries with the bijection intact,
+`bilging.maxStarLevel` the only key the two sides disagreed on and only develop having changed it.
+The three bilging fixtures were re-blessed from live runs and each proven by rolling back across
+exactly the slice-4 delta to reproduce develop's committed hash. `npm run check` is 412/412 exit 0
+from cold on the merged result, up from 383 by slice 2b's tests.
+
+**The `_sources` prose for the encounter rate is wrong, and now it is wrong with evidence.** 540 real
+voyages — six destinations, three voyage types, thirty seeds — put the six-leg Keris pillage at 4.50
+battles against the 4.61 the review predicted statically and the "about one and a half" the entry
+claims, and the eight-leg McGuffin's route at 6.50 against a predicted 6.60. Observed per-leg rates
+track `550 + difficulty/2`; every one of the 60 legs sailed at difficulty 875 or above carried a
+brigand, and the arrival leg at McGuffin's Isle is a certainty hit 30 times out of 30. **The tuning
+value is not being changed here** — this is recorded so the decision to keep or move it is taken
+deliberately, with the measurement in hand, rather than inherited from a sentence that does not
+describe the code.
+
+**Decision 86 is half-implemented, and it predates slice 4.** Its premise is that coin taken is not
+coin owned until it is divided. `awardBooty` splits the roll — half straight into `winner.poe`, half
+into `bootyPoe` — so `booty.divide` only ever divides half of what a pillage rolls. The line is from
+slice 3; slice 4 added `bootyCargo` beside it without revisiting the coin, which is how the goods half
+and the coin half came to follow different rules. **Goods obey decision 86 exactly; coin does not.**
+
+**Decision 89's justification is unreachable with the shipped tuning.** The guard was widened because
+"a roll can pay no coin"; with `booty` as shipped, `rollBooty` yields 600 to 1000 PoE and `awardBooty`
+always leaves at least 300 in the chest, so a goods-but-no-coin chest cannot occur. The guard is
+correct and harmless — only its reason is dead, and it will become reachable the moment the coin split
+above is revisited.
+
+**A loss is nearly free, but not free, and this corrects the review.** Over 55 isolated losses the
+complete set of fields that ever change is `shipCount`, `damageTakenSmallMicro` and
+`meleeDamageSmallMicro`. No coin, cargo, chest, crew or rum moves. But melee damage is monotone —
+only ever incremented, with no repair path anywhere in the codebase, where hull damage heals through
+carpentry — so the win rate decays inside a single voyage from 17.3% on the first battle to 0% by the
+third. The review's "evade buys nothing" was too strong: evade buys 57% of the voyage time and a ship
+whose boarding strength is not permanently spent. **Whether melee damage should be repairable is an
+open design question this slice surfaced rather than created.**
+
+**Determinism across a process boundary is proven, not assumed.** 55 cut points over six seeds, each
+with the writing process `SIGKILL`ed and a fresh one loading the save: load hash, final hash, final
+tick, RNG stream set, cursor values and tail command results matched on every one. Nineteen cuts
+landed inside a running battle, all mid-turn. Seven more were placed tick-by-tick around the exact
+moments slice 4's lazily-created streams come into existence, including two cuts one tick apart
+straddling the birth of `world.plunder` and `booty.poe`; both sides agreed on which streams existed.
+The pass was made meaningful by a negative control — perturbing an RNG cursor by 1 or deleting a
+stream entry diverges both hashes. One thing learned for future triage: **nudging a marker diverges
+the load hash but the final hash re-converges**, because marker drift clamps at the field edge and is
+an absorbing state. The marker domain is a weak canary over long runs; the RNG cursors are the strong
+one.
+
+**`session.load` arrived without `session.save`.** Decision 84 exists because "save, reload, identical
+hash" was undrivable over the protocol, and it is still only half closed: `session.save` answers
+`method-unknown`. A save is obtainable as `state.get {pointer:""}` through `JSON.stringify`, which
+round-trips byte-exactly, so nothing is blocked — but the decision's stated goal is not met by the
+method set as shipped.
+
+**One review finding was corrected by the merge itself.** The review measured, on the pre-merge
+branch, that a save with a bogus `voyage.route` advanced a tick and lost its events before throwing.
+Slice 2b's `atomically` wrapper around `stepWithinEventBudget` arrived with `agent/develop` and
+restores the session exactly; driven over the protocol, `/tick` and `/voyage` are both unchanged after
+the error. What survives is only that such saves are accepted at load time and surface as
+`internal-error` rather than `invalid-params`.
+
+**Both settlement-guard defects reproduce over the wire, and the second is the urgent one.** The
+review found them in-process; the test confirmed both over the protocol with matched controls. Defect
+1 — the world striking a brigand off a battle no voyage owned — needs a `battle.start` issued during a
+voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `battle.disengage`
+followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
+stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
+voyage's first tick. The queued repair task has been reordered to put defect 2 first.
