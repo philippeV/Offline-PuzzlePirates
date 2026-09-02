@@ -268,7 +268,7 @@ replace /ships/0/bilgePerMille 42
 replace /ships/0/cannonLoadAccumulator 795500
 replace /ships/0/cannonballs 39
 replace /ships/0/cannonsLoaded 1
-replace /ships/0/speedPerMille 1000
+replace /ships/0/speedPerMille 967
 replace /ships/1/cannonLoadAccumulator 795500
 replace /ships/1/cannonballs 39
 replace /ships/1/cannonsLoaded 1
