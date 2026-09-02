@@ -7,8 +7,11 @@ import type {
   BootyBalance,
   BootyOverflowPolicy,
   BrigandBalance,
+  DivisionBalance,
+  MarketBalance,
   NpcBalance,
   ShipBalance,
+  WorldBalance,
 } from '@opp/sim';
 
 import { isRecord } from './json.ts';
@@ -32,6 +35,9 @@ export function loadBalance(source: URL): Balance {
     npc: npcBalanceOf(readerOf(file, 'npc')),
     brigand: brigandBalanceOf(readerOf(file, 'brigand')),
     booty: bootyBalanceOf(readerOf(file, 'booty')),
+    world: worldBalanceOf(readerOf(file, 'world')),
+    market: marketBalanceOf(readerOf(file, 'market')),
+    division: divisionBalanceOf(readerOf(file, 'division')),
   };
 }
 
@@ -141,6 +147,36 @@ function bootyBalanceOf(read: BlockReader): BootyBalance {
     brigandCargoUnitsBase: read.integer('brigandCargoUnitsBase'),
     chartDropChancePerMille: read.integer('chartDropChancePerMille'),
     overflowPolicy: read.policy('overflowPolicy'),
+  };
+}
+
+function worldBalanceOf(read: BlockReader): WorldBalance {
+  return {
+    startingPoe: read.integer('startingPoe'),
+    encounterChancePerMille: read.integer('encounterChancePerMille'),
+    encounterDifficultyWeightPerMille: read.integer('encounterDifficultyWeightPerMille'),
+    pillageSpawnBonusPerMille: read.integer('pillageSpawnBonusPerMille'),
+    tradeSpawnPenaltyPerMille: read.integer('tradeSpawnPenaltyPerMille'),
+    brigandCrewCount: read.integer('brigandCrewCount'),
+  };
+}
+
+function marketBalanceOf(read: BlockReader): MarketBalance {
+  return {
+    rawBasePricePoe: read.integer('rawBasePricePoe'),
+    refinedBasePricePoe: read.integer('refinedBasePricePoe'),
+    spawnDiscountPerMille: read.integer('spawnDiscountPerMille'),
+    scarcityPremiumPerMille: read.integer('scarcityPremiumPerMille'),
+    spreadPerMille: read.integer('spreadPerMille'),
+    startingStockUnits: read.integer('startingStockUnits'),
+    maxStockUnits: read.integer('maxStockUnits'),
+  };
+}
+
+function divisionBalanceOf(read: BlockReader): DivisionBalance {
+  return {
+    crewCutPerMille: read.integer('crewCutPerMille'),
+    playerSharePerMille: read.integer('playerSharePerMille'),
   };
 }
 

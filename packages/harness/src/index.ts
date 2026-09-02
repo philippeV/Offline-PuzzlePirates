@@ -16,6 +16,12 @@ export {
   type RpcResponse,
   type RpcSuccess,
 } from './rpc.ts';
-export { BILGE_SCENARIO, DEFAULT_SCENARIO, createScenarioSim } from './scenarios.ts';
+export {
+  BILGE_SCENARIO,
+  DEFAULT_SCENARIO,
+  HOME_ISLAND,
+  PILLAGE_LOOP_SCENARIO,
+  createScenarioSim,
+} from './scenarios.ts';
 export { serve } from './server.ts';
 export { SessionRegistry, type Session, type SimStatus } from './sessions.ts';
