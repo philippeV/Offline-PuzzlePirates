@@ -25,7 +25,7 @@ test('session.new opens a seeded session at tick zero', async () => {
 
   assert.equal(typeof opened['session'], 'string');
   assert.equal(opened['tick'], 0);
-  assert.equal(opened['schemaVersion'], 3);
+  assert.equal(opened['schemaVersion'], 4);
   assert.match(opened['stateHash'] as string, /^[0-9a-f]{16}$/);
 });
 

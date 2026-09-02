@@ -5,7 +5,7 @@ import type { PuzzleBalance } from './puzzle/balance.ts';
 import type { PuzzleState } from './puzzle/session.ts';
 import { createRngStreams, type RngStreams } from './rng.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface Marker {
   id: EntityId;

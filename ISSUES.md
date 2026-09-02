@@ -4,6 +4,76 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 2c (OPP-14), the token layer
+
+What the three units of slice 2c left behind. None of it stops the slice: `npm run check` is green
+at 149 tests, the containment boundary is unmoved at 99987 / 99988, the opening board's `cells` are
+byte-identical to the pre-slice ones, and `bilge.refill` draws the same 12 numbers from the same
+cursor over the committed replay as it did before the token stream existed.
+
+### Left by the shape layer
+
+- **`board.ts` has outgrown the repo's ~100-line convention and now carries two unrelated
+  encodings.** `packages/sim/src/puzzle/board.ts:106` — the file is 106 lines and holds both the
+  cell and critter sentinels and the `symbol * 2 + half` shape encoding (`board.ts:12-14` and
+  `board.ts:46-60`), which nothing outside `tokens.ts` reads. Not worth splitting while the encoding
+  is six lines and one constant pair; it starts to matter when a renderer needs to name symbols,
+  because the split then has to happen with a consumer already depending on the old path.
+- **`MANEUVER_BAR_SILVER` is exported and never read.** `packages/sim/src/puzzle/tokens.ts:18`,
+  re-exported at `packages/sim/src/index.ts:128`. Only `MANEUVER_BAR_GOLD` has a consumer
+  (`packages/sim/src/puzzle/move.ts:31`), because nothing spends the meter yet — what a maneuver
+  does to the ship is scoped out of this slice. Harmless as a published constant, but it is a public
+  export that no test can fail on, so it will drift silently if the wiki threshold it names moves.
+- **The meter saturates and never drains.** `packages/sim/src/puzzle/move.ts:31` clamps at
+  `MANEUVER_BAR_GOLD` and nothing subtracts. Under perfect play — always take the first clearing
+  swap — the bar reaches gold after 66 / 74 / 77 / 127 / 166 swaps on seeds 1 to 5 and stays there
+  for the rest of the session, so every pair after the first handful is discarded. Correct for a
+  slice that only fills the bar; it matters the moment a consumer wants to know how many pairs a
+  player actually made.
+
+### Left by the token layer
+
+- **The performance gate is open on 99.55% of moves, so it throttles almost nothing.**
+  `packages/sim/src/puzzle/tokens.ts:34` and `tokens.ts:54-56` refuse to spawn below a `good` duty
+  rating. Measured over 5 seeds x 400 clearing swaps: 1991 of 2000 moves passed the gate, and the
+  nine that did not were the first one to three swaps of each session, while `dutyOutputPerMille`
+  was still climbing out of `booched`. The wiki sentence the gate paraphrases reads as a standing
+  constraint on sloppy play; at the shipped bands it is an opening delay. The density throttle that
+  actually does the work is `bilging.tokenSpawnPerMille`, and `balance.json:17` already says so —
+  but the gate is the half a reader will believe, so this wants either a note or bands that bite.
+- **The slice-2b crab-overwrite bug is still present and untouched.**
+  `packages/sim/src/puzzle/resolve.ts:65-71` still captures `refilled` before `climbCrabs` runs and
+  hands the stale index list to `spawnCritters`, so a crab that climbs into a cell refilled in the
+  same step is replaced by the critter spawned on that index. Slice 2c neither fixed nor worsened
+  it. The new consumer of the same list, `spawnTokens` at `resolve.ts:72`, is accidentally immune:
+  `tokens.ts:36` skips any index whose cell is not a colour, so it can never write over a climbed
+  crab. That asymmetry between the two consumers is the clearest statement of the fix
+  `spawnCritters` needs.
+
+### Left by the schema bump
+
+- **The manufactured-save migration tests cannot exercise the new migration.**
+  `tests/sim/migration.test.ts:31-35` builds a "previous schema" save by relabelling a *current*
+  sim's state, and that sim has never started a puzzle, so its `puzzle` is `null` and the 3 to 4
+  migration takes its pass-through branch. The three tests that use it — `migration.test.ts:38`,
+  `:47` and `:124` — are therefore true but vacuous with respect to the board and meter fields the
+  migration exists to add; the committed `packages/fixtures/saves/bilge-session-v3.json` is what
+  covers those. This is exactly the circularity the slice 2b review predicted, and it will mislead
+  the first person who bumps the schema again without also committing a fixture.
+- **Two skills quote hashes and a schema version that no longer reproduce.**
+  `.claude/skills/pp-golden-state/SKILL.md:95` still shows the golden blessing `3a34e82ce2c7cb80`,
+  which was already wrong before this slice — slice 2b re-blessed it to `8757ccc5d6f518e4`, and it
+  is now `9a3fbfb43b9ba184` — and `.claude/skills/pp-scenario-author/SKILL.md:74` and `:199-200`
+  still show `schemaVersion` 3 and the pre-slice-2b opening hash. Only the pointer table in
+  `.claude/skills/pp-sim-harness/SKILL.md:90` was corrected here, because the rest are transcripts
+  labelled "copied from an actual run": hand-editing them would destroy the one property that makes
+  them worth trusting. They want re-running against the harness, not patching.
+- **The re-blessed opening fixture is now half constant.**
+  `packages/fixtures/scenarios/bilge-opening.json:155` — the file grew from 157 to 303 lines because
+  the recipe pins `/puzzle/board` whole and the board's new `shapes` array is 144 copies of `-1` at
+  tick 0, which it will stay for as long as tokens only appear after a clear. Not worth deviating
+  from the recipe over, but it doubles the review surface of every future re-bless of that file.
+
 ## 2026-09-02 — independent review of slice 2b (OPP-13), PR 4
 
 The 4-lens review of PR 4. Nothing here blocked the slice: `npm run check` is green at 130 tests, the

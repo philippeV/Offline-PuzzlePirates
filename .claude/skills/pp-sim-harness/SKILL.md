@@ -45,7 +45,7 @@ Sessions live in the process; killing it discards them.
 `seed` is a safe integer, not a hex string. `scenario` may be omitted. Two scenarios exist:
 `marker-field`, which is the default, and `bilge-session`, which creates the sim with the tuning
 loaded from `balance.json` and dispatches `puzzle.start`. `session.new` reports
-`schemaVersion` 3.
+`schemaVersion` 4.
 
 `sim.dispatch` applies each command **immediately** — it does not queue for the next tick — and
 returns one result per command in order, so rule enforcement is testable without stepping at all.
@@ -87,16 +87,20 @@ Pointers that exist today:
 ```
 /tick                              integer, advanced only by sim.step
 /seed                              the root seed
-/schemaVersion                     3, alongside /nextEntityId
+/schemaVersion                     4, alongside /nextEntityId
 /markers/0/{id,x,y}                the placeholder domain
 /balance                           the pinned tuning, null outside a puzzle scenario
 /puzzle                            null until puzzle.start is accepted
 /puzzle/board/{width,height,cells} cells is flat row-major, index y * width + x
+/puzzle/board/shapes               parallel to cells, -1 where a piece carries no token half
+/puzzle/maneuverBar                completed shape pairs, 0 to 6
 /puzzle/{starLevel,moves,totalScore,bilgePerMille,waterLineRow,dutyOutputPerMille}
 /puzzle/frame/intervals/17         the current ten-second sample
 /rngStreams/marker.drift/draws     one draw per stepped tick
 /rngStreams/bilge.fill/draws       the opening board only
 /rngStreams/bilge.refill/draws     every refill after a clear
+/rngStreams/bilge.critters/draws   one draw per refilled cell
+/rngStreams/bilge.tokens/draws     refilled colour cells while performance is good, plus one per token
 ```
 
 `depth` truncates: containers deeper than `depth` are replaced by `"{3 fields}"` or
