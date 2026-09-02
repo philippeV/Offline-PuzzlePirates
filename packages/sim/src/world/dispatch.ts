@@ -132,7 +132,7 @@ function divide(state: WorldState, shipId: number): CommandResult {
 
   const ship = findShip(state.ships, shipId);
   if (ship === undefined) return refused('unknown-ship');
-  if (ship.bootyPoe === 0) return refused('no-booty');
+  if (ship.bootyPoe === 0 && ship.bootyCargo.length === 0) return refused('no-booty');
 
   const balance = state.balance;
   if (balance === null) return refused('balance-missing');

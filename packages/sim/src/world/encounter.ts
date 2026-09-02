@@ -5,9 +5,10 @@ import { PER_MILLE } from '../puzzle/scoring.ts';
 import { rngStream } from '../rng.ts';
 import { createShip, findShip, type ShipState } from '../ship/state.ts';
 import type { WorldState } from '../state.ts';
-import { COMMODITY_IDS, commodityOf, type CommodityId } from './commodities.ts';
+import { stowLot } from './cargo.ts';
+import { COMMODITY_IDS, commodityOf } from './commodities.ts';
 import { leaguePointOf, type LeaguePointId } from './leaguePoints.ts';
-import type { CargoLot, VoyageType } from './state.ts';
+import type { VoyageType } from './state.ts';
 
 export const ENCOUNTER_STREAM = 'world.encounter';
 export const PLUNDER_STREAM = 'world.plunder';
@@ -79,16 +80,7 @@ export function materialisePlunder(state: WorldState, ship: ShipState): SimEvent
     (bootyCargoUnits * GRAMS_PER_KG) / commodityOf(commodityId).massGramsPerUnit,
   );
   ship.bootyCargoUnits = 0;
-  stow(ship.cargo, commodityId, units);
+  stowLot(ship.bootyCargo, commodityId, units);
   return [{ type: 'cargo.plundered', tick: state.tick, shipId: ship.id, commodityId, units }];
 }
 
-function stow(cargo: CargoLot[], commodityId: CommodityId, units: number): void {
-  const held = cargo.find((lot) => lot.commodityId === commodityId);
-  if (held !== undefined) {
-    held.units += units;
-    return;
-  }
-  cargo.push({ commodityId, units });
-  cargo.sort((first, second) => (first.commodityId < second.commodityId ? -1 : 1));
-}

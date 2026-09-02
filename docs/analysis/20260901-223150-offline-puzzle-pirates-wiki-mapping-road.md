@@ -1850,3 +1850,44 @@ task. Merchant brigands and greedies are phase 2. Restocking the magazine at a p
 `small-cannon-ball`, `swill` and `grog` are tradeable commodities, but buying them fills the hold
 rather than the ship's `cannonballs` and `rum` counters, so decision 63's placeholders still stand.
 That is the substance of the follow-up development task this slice emits.
+### 2026-09-02 — development, slice 4 correction: the booty chest (OPP-11)
+
+Decision 80 was wrong in its destination, and the user caught it before the review did. Plunder was
+being materialised straight into the ship's **hold**, which erases the distinction the wiki draws
+between goods a pirate bought and goods a pirate took. The wiki is explicit: a win puts commodities
+and chests into the ship's **booty chest**, an officer may sell out of that chest before division,
+and "unsold goods go into the ship's hold on division". A hold full of plunder that was never
+divided is not a state the game can reach.
+
+The rule, stated the way the user stated it: **traded commodities go to the hold; commodities
+pillaged or foraged during a voyage go to the booty chest.**
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                             | Rationale                                                                                                                                                                                                                                        |
+| -- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 86 | A ship carries a `bootyCargo` chest distinct from its `cargo` hold                    | `bootyPoe` already stood beside `poe` for exactly this reason — coin taken is not coin owned until it is divided. Goods needed the same pair, and without it `booty.divide` had nothing to divide but coin                                        |
+| 87 | Plunder enters the chest; division is the only thing that moves it to the hold        | It makes division a real event rather than a coin transfer, and it is what makes "sell what you pillaged" require porting first — the loop the wiki describes. `market.sell` sells from the hold, so plunder is unsellable until it is divided     |
+| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both, which also makes division mass-neutral and removes any need for a capacity check when the chest empties   |
+| 89 | `booty.divide` is refused only when the chest holds neither coin nor goods            | The first guard tested `bootyPoe` alone, so a chest holding goods but no coin was undividable and its goods were stranded. A roll can pay no coin, so the case is reachable                                                                       |
+
+**Schema 5 was extended rather than bumped again.** It is unreleased — PR 5 is open and unmerged —
+so migration 4 now gives every ship a `bootyCargo` alongside its `cargo`. Bumping to 6 for a shape
+no committed save has ever carried would invent history.
+
+**No fixture moved.** No committed golden, scenario or replay carries a ship, so the added field
+changed no pinned hash. The three tests that asserted plunder landing in the hold were rewritten to
+assert the chest, and they were rewritten to assert the *new* rule rather than relaxed — each now
+also asserts the hold stays empty until division. `tests/world/division.test.ts` is new and covers
+the transfer, the shared mass budget, the unsellability of undivided plunder and the empty-chest
+refusal; the end-to-end loop test now pins that a won encounter's goods reach the hold only after
+`booty.divide`.
+
+**One duplication removed on the way.** `stowLot`, `releaseLot` and `massKgOf` existed twice, once
+in `market.ts` and once inside `encounter.ts`. They now live in `world/cargo.ts` with `transferLots`,
+which is what division uses.
+
+**Still deferred.** The wiki lets an officer sell pillaged goods directly out of the chest before
+division, with the proceeds going back into the chest. That is a second selling path and a second
+price surface, and the loop closes without it, so it is not built — `market.sell` sells from the
+hold only.

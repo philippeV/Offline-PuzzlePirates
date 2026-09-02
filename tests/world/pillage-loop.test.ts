@@ -76,14 +76,20 @@ test('a won encounter fills the booty chest and dividing it pays the pirate a sh
 
   const { sim, ship } = won;
   const chest = ship.bootyPoe;
+  const chestGoods = ship.bootyCargo.map((lot) => ({ ...lot }));
   const purseBefore = stateOf(sim).pirate?.poe ?? 0;
   const holdBefore = ship.poe;
+
+  assert.ok(chestGoods.length > 0, 'a won encounter yielded no goods to the chest');
+  assert.deepEqual(ship.cargo, [], 'plunder reached the hold without being divided');
 
   assert.equal(sim.dispatch({ op: 'voyage.port' }).status, 'accepted');
   const divided = sim.dispatch({ op: 'booty.divide', shipId: ship.id });
   assert.equal(divided.status, 'accepted');
 
   assert.equal(ship.bootyPoe, 0);
+  assert.deepEqual(ship.bootyCargo, [], 'the chest still holds goods after division');
+  assert.deepEqual(ship.cargo, chestGoods, 'the divided goods did not reach the hold');
   assert.ok((stateOf(sim).pirate?.poe ?? 0) > purseBefore, 'the pirate was paid nothing');
   assert.ok(ship.poe > holdBefore, 'the restocking cut never reached the hold');
   assert.ok(

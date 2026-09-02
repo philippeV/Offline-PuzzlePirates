@@ -21,7 +21,7 @@ const migrations: Record<number, Migration> = {
 function shipsWithCargo(ships: unknown): unknown[] {
   if (!Array.isArray(ships)) return [];
   return ships.map((ship: unknown) =>
-    typeof ship === 'object' && ship !== null ? { ...(ship as RawSave), cargo: [] } : ship,
+    typeof ship === 'object' && ship !== null ? { ...(ship as RawSave), cargo: [], bootyCargo: [] } : ship,
   );
 }
 

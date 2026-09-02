@@ -1,6 +1,7 @@
 import type { DivisionBalance } from '../balance.ts';
 import { PER_MILLE } from '../puzzle/scoring.ts';
 import type { ShipState } from '../ship/state.ts';
+import { transferLots } from './cargo.ts';
 import type { PirateState } from './state.ts';
 
 export interface Division {
@@ -8,6 +9,7 @@ export interface Division {
   crewCutPoe: number;
   pirateSharePoe: number;
   crewSharePoe: number;
+  cargoUnits: number;
 }
 
 export function divideBooty(
@@ -23,6 +25,13 @@ export function divideBooty(
   ship.bootyPoe = 0;
   ship.poe += crewCutPoe;
   pirate.poe += pirateSharePoe;
+  const cargoUnits = transferLots(ship.bootyCargo, ship.cargo);
 
-  return { poe, crewCutPoe, pirateSharePoe, crewSharePoe: divisible - pirateSharePoe };
+  return {
+    poe,
+    crewCutPoe,
+    pirateSharePoe,
+    crewSharePoe: divisible - pirateSharePoe,
+    cargoUnits,
+  };
 }

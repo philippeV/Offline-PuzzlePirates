@@ -3,12 +3,10 @@ import { freeHoldOf } from '../battle/booty.ts';
 import type { RejectionReason } from '../commands.ts';
 import { PER_MILLE } from '../puzzle/scoring.ts';
 import type { ShipState } from '../ship/state.ts';
-import { lotOf } from './cargo.ts';
+import { lotOf, massKgOf, releaseLot, stowLot } from './cargo.ts';
 import { COMMODITY_IDS, commodityOf, type CommodityId } from './commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from './islands.ts';
-import type { CargoLot, IslandMarket, MarketStock, PirateState } from './state.ts';
-
-const GRAMS_PER_KG = 1000;
+import type { IslandMarket, MarketStock, PirateState } from './state.ts';
 
 export type TradeOutcome =
   | { ok: true; poe: number; units: number }
@@ -97,21 +95,5 @@ function openingStockOf(
   };
 }
 
-function massKgOf(commodityId: CommodityId, units: number): number {
-  return Math.floor((units * commodityOf(commodityId).massGramsPerUnit) / GRAMS_PER_KG);
-}
 
-function stowLot(cargo: CargoLot[], commodityId: CommodityId, units: number): void {
-  const lot = lotOf(cargo, commodityId);
-  if (lot !== undefined) {
-    lot.units += units;
-    return;
-  }
-  cargo.push({ commodityId, units });
-  cargo.sort((a, b) => (a.commodityId < b.commodityId ? -1 : 1));
-}
 
-function releaseLot(cargo: CargoLot[], lot: CargoLot, units: number): void {
-  lot.units -= units;
-  if (lot.units === 0) cargo.splice(cargo.indexOf(lot), 1);
-}

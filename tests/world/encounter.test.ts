@@ -136,7 +136,7 @@ test('a spawned brigand is a crewed sloop that opens a battle against the player
   assert.fail('no seed drew a brigand');
 });
 
-test('plunder becomes a commodity lot of the same mass to within the floor', () => {
+test('plunder becomes a booty chest lot of the same mass to within the floor', () => {
   const drawn = new Set<CommodityId>();
   for (let seed = 1; seed <= PLUNDER_SEEDS; seed += 1) {
     const [state, ship] = plunderedShipOf(seed * 7919, BOOTY_CARGO_UNITS);
@@ -154,15 +154,16 @@ test('plunder becomes a commodity lot of the same mass to within the floor', () 
     const grams = plundered.units * massGramsPerUnit;
     assert.ok(grams <= BOOTY_CARGO_UNITS * GRAMS_PER_KG, String(seed));
     assert.ok(BOOTY_CARGO_UNITS * GRAMS_PER_KG - grams < massGramsPerUnit, String(seed));
-    assert.equal(cargoLotsMassKgOf(ship.cargo), Math.floor(grams / GRAMS_PER_KG));
+    assert.equal(cargoLotsMassKgOf(ship.bootyCargo), Math.floor(grams / GRAMS_PER_KG));
+    assert.deepEqual(ship.cargo, [], 'plunder reached the hold instead of the chest');
   }
   assert.ok(drawn.size > 1, 'the plunder stream drew a single commodity');
 });
 
-test('plunder merges into the hold and leaves it sorted by commodity', () => {
+test('plunder merges into the booty chest and leaves it sorted by commodity', () => {
   for (let seed = 1; seed <= PLUNDER_SEEDS; seed += 1) {
     const [state, ship] = plunderedShipOf(seed * 7919, BOOTY_CARGO_UNITS);
-    ship.cargo = [
+    ship.bootyCargo = [
       { commodityId: 'hemp', units: 3 },
       { commodityId: 'wood', units: 5 },
     ];
@@ -170,11 +171,11 @@ test('plunder merges into the hold and leaves it sorted by commodity', () => {
     const plundered = events[0];
     assert.ok(plundered?.type === 'cargo.plundered');
 
-    const ids = ship.cargo.map((lot) => lot.commodityId);
+    const ids = ship.bootyCargo.map((lot) => lot.commodityId);
     assert.deepEqual(ids, [...ids].sort(), String(seed));
     assert.equal(new Set(ids).size, ids.length, String(seed));
 
-    const held = ship.cargo.find((lot) => lot.commodityId === plundered.commodityId);
+    const held = ship.bootyCargo.find((lot) => lot.commodityId === plundered.commodityId);
     const carried = plundered.commodityId === 'hemp' ? 3 : plundered.commodityId === 'wood' ? 5 : 0;
     assert.equal(held?.units, plundered.units + carried, String(seed));
   }
@@ -185,10 +186,11 @@ test('a ship carrying no booty is left alone', () => {
 
   assert.deepEqual(materialisePlunder(state, ship), []);
   assert.deepEqual(ship.cargo, []);
+  assert.deepEqual(ship.bootyCargo, []);
   assert.deepEqual(state.rngStreams, {});
 });
 
-test('a won battle is settled into cargo, the brigand struck off and the voyage resumed', () => {
+test('a won battle is settled into the booty chest, the brigand struck off and the voyage resumed', () => {
   const state = sailingState(SEED, 'pillage');
   const player = state.ships[0];
   assert.ok(player !== undefined);
@@ -214,7 +216,8 @@ test('a won battle is settled into cargo, the brigand struck off and the voyage 
     [player.id],
   );
   assert.equal(player.bootyCargoUnits, 0);
-  assert.equal(player.cargo.length, 1);
+  assert.equal(player.bootyCargo.length, 1);
+  assert.deepEqual(player.cargo, [], 'a won battle put plunder straight into the hold');
 
   stepWorld(state);
   assert.equal(state.voyage?.legTicks, 1);

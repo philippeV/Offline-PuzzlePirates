@@ -41,6 +41,7 @@ export interface ShipState {
   cargo: CargoLot[];
   poe: number;
   bootyCargoUnits: number;
+  bootyCargo: CargoLot[];
   bootyPoe: number;
   crewCount: number;
   playerStation: StationSlot | null;
@@ -77,6 +78,7 @@ export function createShip(counter: EntityIdCounter, options: ShipOptions): Ship
     cargo: [],
     poe: options.poe ?? 0,
     bootyCargoUnits: 0,
+    bootyCargo: [],
     bootyPoe: 0,
     crewCount: options.crewCount ?? shipClass.swabbieStaffing,
     playerStation: options.playerStation ?? null,

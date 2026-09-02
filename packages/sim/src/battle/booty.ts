@@ -47,7 +47,11 @@ export function holdCapacityOf(ship: ShipState): number {
 
 export function freeHoldOf(ship: ShipState): number {
   return Math.max(
-    holdCapacityOf(ship) - ship.cargoUnits - ship.bootyCargoUnits - cargoLotsMassKgOf(ship.cargo),
+    holdCapacityOf(ship) -
+      ship.cargoUnits -
+      ship.bootyCargoUnits -
+      cargoLotsMassKgOf(ship.cargo) -
+      cargoLotsMassKgOf(ship.bootyCargo),
     0,
   );
 }
