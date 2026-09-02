@@ -322,3 +322,25 @@ test('an oversized replay tick is refused and the harness keeps serving', async 
   const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));
   assert.equal(stepped['tick'], 1);
 });
+
+test('a command count at the dispatch cap is accepted and one over it is refused', async () => {
+  const session = await openSession();
+  const command = { op: 'marker.place', id: 1, x: 4, y: 9 };
+
+  const atCap = resultOf(
+    await harness.call('sim.dispatch', {
+      session,
+      commands: new Array(100000).fill(command),
+    }),
+  );
+  assert.equal((atCap['results'] as unknown[]).length, 100000);
+
+  const overCap = await harness.call('sim.dispatch', {
+    session,
+    commands: new Array(100001).fill(command),
+  });
+  assert.equal(reasonOf(overCap), 'limit-exceeded');
+
+  const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));
+  assert.equal(stepped['tick'], 1);
+});

@@ -1,5 +1,6 @@
 import { errorBodyOf, RpcError, type RpcErrorBody } from './errors.ts';
 import { isRecord } from './json.ts';
+import { MAX_ECHOED_ID_LENGTH } from './limits.ts';
 import type { MethodHandler } from './method.ts';
 import { methods } from './methods/index.ts';
 import type { SessionRegistry } from './sessions.ts';
@@ -22,7 +23,24 @@ export type RpcResponse = RpcSuccess | RpcFailure;
 
 export function handleLine(line: string, registry: SessionRegistry): string | null {
   if (line.trim() === '') return null;
-  return JSON.stringify(respond(line, registry));
+  const response = respond(line, registry);
+  try {
+    return JSON.stringify(response);
+  } catch {
+    return JSON.stringify(serialisationFailure(response.id));
+  }
+}
+
+function serialisationFailure(id: RpcId): RpcFailure {
+  return {
+    jsonrpc: '2.0',
+    id: echoableId(id),
+    error: new RpcError('internal-error', 'the response could not be serialised').body(),
+  };
+}
+
+function echoableId(id: RpcId): RpcId {
+  return typeof id === 'string' && id.length > MAX_ECHOED_ID_LENGTH ? null : id;
 }
 
 function respond(line: string, registry: SessionRegistry): RpcResponse {

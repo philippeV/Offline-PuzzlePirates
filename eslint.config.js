@@ -32,7 +32,7 @@ export const simPurityRules = {
       message: 'The simulation core imports nothing outside itself.',
     },
     {
-      selector: 'TSImportType[argument.value=/^[^.]/]',
+      selector: 'TSImportType[source.value=/^[^.]/]',
       message: 'The simulation core imports nothing outside itself.',
     },
   ],

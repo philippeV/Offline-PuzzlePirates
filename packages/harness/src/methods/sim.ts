@@ -3,12 +3,17 @@ import type { Sim, SimEvent } from '@opp/sim';
 import { parseCommand } from '../commands.ts';
 import { RpcError } from '../errors.ts';
 import { deepEquals } from '../json.ts';
-import { MAX_EVENTS_PER_RESPONSE, MAX_TICKS_PER_RUN, MAX_TICKS_PER_STEP } from '../limits.ts';
+import {
+  MAX_COMMANDS_PER_REQUEST,
+  MAX_EVENTS_PER_RESPONSE,
+  MAX_TICKS_PER_RUN,
+  MAX_TICKS_PER_STEP,
+} from '../limits.ts';
 import type { MethodHandler } from '../method.ts';
 import {
+  boundedArray,
   boundedCount,
   paramsOf,
-  requiredArray,
   requiredMember,
   requiredString,
 } from '../params.ts';
@@ -25,7 +30,7 @@ export const simMethods: Record<string, MethodHandler> = {
   'sim.dispatch': (params, registry) => {
     const fields = paramsOf(params);
     const session = sessionOf(registry, fields);
-    const commands = requiredArray(fields, 'commands').map(parseCommand);
+    const commands = boundedArray(fields, 'commands', MAX_COMMANDS_PER_REQUEST).map(parseCommand);
     const results = commands.map((command) => session.sim.dispatch(command));
     return { results, ...statusOf(session) };
   },
