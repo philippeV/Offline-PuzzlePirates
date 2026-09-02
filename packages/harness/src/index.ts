@@ -1,4 +1,4 @@
-export { BALANCE, loadPuzzleBalance } from './balance.ts';
+export { BALANCE, loadBalance } from './balance.ts';
 export { RpcError, type RpcErrorBody, type RpcErrorReason } from './errors.ts';
 export { methods } from './methods/index.ts';
 export {

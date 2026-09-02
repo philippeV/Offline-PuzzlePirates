@@ -1,18 +1,33 @@
 export { TICKS_PER_SECOND, type Clock } from './clock.ts';
 export type {
   AcceptedCommand,
+  BattleCommand,
   Command,
   CommandResult,
+  CommissionShipCommand,
+  DisengageCommand,
   MarkerCommand,
   MoveMarkerCommand,
   PlaceMarkerCommand,
+  PlanBattleTurnCommand,
   PuzzleCommand,
   RejectedCommand,
   RejectionReason,
+  ShipCommand,
+  StartBattleCommand,
   StartPuzzleCommand,
   SwapBilgeCommand,
 } from './commands.ts';
 export type {
+  BattleCollidedEvent,
+  BattleEndedEvent,
+  BattleEvent,
+  BattleFiredEvent,
+  BattleGrappledEvent,
+  BattleHitEvent,
+  BattleMovedEvent,
+  BattleStartedEvent,
+  BattleTurnEndedEvent,
   BilgeClearedEvent,
   BilgeSwappedEvent,
   BilgeWaterLineMovedEvent,
@@ -20,11 +35,86 @@ export type {
   MarkerEvent,
   MarkerMovedEvent,
   PuzzleEvent,
+  DamageSource,
   PuzzleLevelChangedEvent,
   PuzzleScoredEvent,
+  ShipDamagedEvent,
+  ShipEvent,
+  ShipMeter,
+  ShipMeterBandedEvent,
   SimEvent,
 } from './events.ts';
+export type {
+  Balance,
+  BattleBalance,
+  BootyBalance,
+  BootyOverflowPolicy,
+  BrigandBalance,
+  NpcBalance,
+  ShipBalance,
+} from './balance.ts';
+export { BOOTY_OVERFLOW_POLICIES } from './balance.ts';
+export {
+  BATTLE_BOARD_HEIGHT,
+  BATTLE_BOARD_WIDTH,
+  blocksFire,
+  createBattleBoard,
+  isImpassable,
+  setTile,
+  tileAt,
+  type BattleBoard,
+  type BattleTile,
+} from './battle/board.ts';
+export { BOOTY_POE_STREAM, awardBooty, freeHoldOf, rollBooty, type BootyRoll } from './battle/booty.ts';
+export { BRIGAND_PLAN_STREAM, planBrigandTurn } from './battle/brigand.ts';
+export { resolveMovement, type CollisionOutcome, type CollisionShip } from './battle/collision.ts';
+export { applyBattleCommand, applyCommissionCommand } from './battle/dispatch.ts';
+export { FIRE_RANGE, GRAPPLE_RANGE, grappleReaches, lineOfFire, resolveFire } from './battle/fire.ts';
+export {
+  FACINGS,
+  aheadOf,
+  beamOf,
+  turnedFacing,
+  type BeamSide,
+  type BoardPosition as BattlePosition,
+  type Facing,
+} from './battle/geometry.ts';
+export {
+  PHASES_PER_TURN,
+  idlePhase,
+  idlePlan,
+  planRejectionOf,
+  type BattlePhasePlan,
+  type PhaseFire,
+  type PhaseMove,
+} from './battle/plan.ts';
+export { concludeBattle, startBattle, stepBattle } from './battle/session.ts';
+export { BATTLE_BOARD_STREAM, createBattleLayout, openingPlacements } from './battle/setup.ts';
+export {
+  DISENGAGE_COUNTER_START_TURNS,
+  DISENGAGE_TURNS_PER_HIT,
+  battleShipOf,
+  createBattle,
+  opponentOf,
+  type BattleOutcome,
+  type BattleShip,
+  type BattleState,
+} from './battle/state.ts';
+export {
+  MOVEMENT_TOKEN_LIFETIME_TURNS,
+  MOVE_TOKENS,
+  TICKS_PER_TURN,
+  ageTokens,
+  heldTokensOf,
+  mintMovementTokens,
+  movementTokenMilliPerTurnOf,
+  spendToken,
+  type MoveToken,
+  type TokenPool,
+} from './battle/tokens.ts';
+export { executePhase } from './battle/turn.ts';
 export { canonicalJson, hashCanonical } from './hash.ts';
+export { MAX_BLACK_BLOCK_ROWS, resolveMelee, strengthOf, type MeleeSide } from './melee.ts';
 export type { EntityId } from './ids.ts';
 export { DRIFT_STREAM, FIELD_HEIGHT, FIELD_WIDTH, findMarker } from './marker.ts';
 export type { BilgingBalance, DutyRating, PuzzleBalance } from './puzzle/balance.ts';
@@ -84,6 +174,32 @@ export {
 } from './puzzle/scoring.ts';
 export { startBilging, stepPuzzle, type PuzzleState } from './puzzle/session.ts';
 export type { RngStream, RngStreamCursor, RngStreams } from './rng.ts';
+export { createRngStreams, rngStream } from './rng.ts';
+export {
+  SHIP_CLASSES,
+  SHIP_CLASS_IDS,
+  ballWeightMicroOf,
+  ramSizeRankOf,
+  shipClassOf,
+  type CannonSize,
+  type RamSizeClass,
+  type ShipClass,
+  type ShipClassId,
+} from './ship/classes.ts';
+export { dutyOutputsOf, npcOutputOf, type DutyOutputs } from './ship/duty.ts';
+export { applyShipDamage, bandOf, stepShipMeters } from './ship/meters.ts';
+export { stepShips } from './ship/session.ts';
+export {
+  STATION_SLOTS,
+  createShip,
+  damagePerMilleOf,
+  findShip,
+  isFullyDamaged,
+  type Allegiance,
+  type ShipOptions,
+  type ShipState,
+  type StationSlot,
+} from './ship/state.ts';
 export { deserialise, serialise } from './save.ts';
 export { SCHEMA_VERSION, type Marker, type WorldState } from './state.ts';
 export { Sim, type SimOptions, type Snapshot } from './sim.ts';

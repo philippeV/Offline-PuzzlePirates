@@ -4,6 +4,563 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of the slice 3 repair (PR 3, cycle 1)
+
+The test stage drove a live harness in an isolated worktree across four parallel threads: the
+ship-class guard, the v3 migration, full sea battles, and determinism. Nothing in the three repairs
+blocked. The one thing that did block — an unmergeable PR — was resolved in the stage and is the
+first entry below, because its cause is a pipeline policy rather than a defect in this slice.
+
+### Squash-merging a slice detaches its history and breaks every slice branched from it
+
+This is the finding with the longest reach, and it needs a human decision.
+
+PR 2 was squash-merged into `agent/develop` as `eca8058`. Slice 3 branched from slice 2's feature
+branch and carries its original commits through the merge at `5575426`. Because the squash minted new
+SHAs, git saw slice 2's entire change set arriving independently on both sides and reported PR 3 as
+`CONFLICTING` across twenty-one files, six of them in `packages/sim/src`. None of it was real:
+`agent/develop`'s tree is identical to slice 2's feature tip, and resolving every conflict in favour
+of the feature branch reproduces `6d491e9`'s tree byte for byte.
+
+The queue-test skill instructs `gh pr merge --squash`. Following it here would have detached slice 3's
+history the same way, and **slices 4 and 5 are branched from slice 3** — they would inherit a strictly
+larger version of this conflict. Slice 2b, branched from slice 2, will hit it independently. This
+stage therefore merged PR 3 with a merge commit instead, which costs nothing and stops the
+recurrence, and is recorded in the analysis document as a deliberate deviation.
+
+What needs deciding: whether the queue-test skill should stop saying `--squash`. Changing a skill is
+the human's call, not an agent's, so it is raised here rather than edited. It starts to matter the
+moment the next slice reaches this stage, which is now.
+
+### The sim-side ship-class guard is unreachable over the protocol
+
+The repair added two guards. `parseShipClass` in `packages/harness/src/commands.ts` throws first, so
+every poisoned commission arriving over JSON-RPC comes back as `-32602` / `invalid-params` and the
+sim-side guard at `packages/sim/src/battle/dispatch.ts:23` never returns its
+`{"status":"rejected","reason":"unknown-ship"}`. This confirms from the outside what the review
+established by reverting edits in isolation: the two guards pin each other's disjunction, not either
+half. It is defence in depth on purpose and the `RangeError` throws still cover the `deserialise` and
+`Sim.restore` doors, so nothing is wrong — but no test distinguishes the halves, and a tidying pass
+would meet no resistance.
+
+### The eight prototype member names are twelve
+
+Every record of this repair — the analysis, the review, the task files — says "the eight
+`Object.prototype` member names". `Object.getOwnPropertyNames(Object.prototype)` returns twelve on
+node 24.18.0; the four missed are `__defineGetter__`, `__defineSetter__`, `__lookupGetter__` and
+`__lookupSetter__`. The guard refuses all twelve, so the code is fine and only the description was
+narrow. It matters if anyone ever writes a test from the prose rather than from the prototype.
+
+### `bilge.swap` on a migrated save hides two other rejection reasons
+
+`swapBilge` in `packages/sim/src/puzzle/dispatch.ts` folds two conditions into one reason:
+`puzzle === null || state.balance === null` both return `no-puzzle-running`. On a migrated v3 save the
+puzzle *is* present and the balance is not, so the message is misleading — the review already noted
+that. Driving it found the larger half: because that check runs first, `swap-outside-board` and
+`non-integer-coordinate` become **unreachable** on such a save. `{"x":99,"y":99}` and `{"x":11,"y":0}`
+both report `no-puzzle-running`. Diagnostic quality only; no state is at risk. It starts to matter
+when a client uses the reason to decide whether the input or the session was wrong.
+
+### `MAXIMUM_TURNS = 120` is confirmed unsafe, at one seed in six hundred
+
+Re-measured independently with the cap lifted to 400. The committed 24 seeds all resolve, longest 51
+turns on seed 21 — 69 turns of headroom. Over seeds 1 to 600 exactly one battle exceeds the cap:
+**168 turns at seed 466, root seed 3690254**, next longest 96. So the "168 turns" figure in the record
+is verbatim correct and the committed window dodges it comfortably. Nothing was re-seeded and the cap
+was not touched, per the guardrail. It starts to matter the first time anyone widens the seed set.
+
+### `/battle` is not cleared when a battle ends
+
+After `battle.ended`, `battle.plan` and `battle.disengage` report `no-battle-running` while
+`battle.start` reports `battle-already-running` — the two cannot both be true of the same state. The
+outcome is readable at `/battle/outcome`, which is what a caller should use, so nothing is broken. It
+starts to matter when a session is meant to fight a second battle.
+
+### `meleeDamageSmallMicro` is part of `stateHash`
+
+The melee handicap lives in `WorldState` and therefore in the hash. No committed fixture moved,
+because `packages/fixtures/replays/` holds only `marker-drift*` and `bilge-session` and nothing there
+takes obstacle damage. The first sea-battle replay or golden that anyone records will encode the
+post-change value, and re-deriving it later will require this entry to explain why.
+
+### `pp-sim-harness/SKILL.md` transcripts are stale
+
+The skill still shows `schemaVersion` 3 and gives `marker-drift.json` a tick-0 hash of
+`5a24289acd81a333` ending at `c05ce3b72f5e5b9f`. The live harness reports `schemaVersion` 4 and that
+replay's real trail runs `165150e7121323fa` to `0df21f56de40342e`. The committed fixture and the
+running sim agree with each other; only the copied transcript is out of date. It costs an agent a
+false lead the first time it asserts on a documented hash.
+
+### A fresh worktree checks the v3 fixture out at 1562 bytes, not 1561
+
+`core.autocrlf` is `true` globally, so the single trailing newline is stored as `\n` and checked out
+as `\r\n`. The blob is `e923b3c37240e04b157bd81295f37ef252e4f4d0` at 1561 bytes and `git status`
+stays clean. Two separate task files now instruct the next run to verify "1561 bytes", which on a
+fresh worktree will look like a clobbered fixture and is not. Verify from the blob, not the working
+file.
+
+## 2026-09-02 — independent review of the slice 3 repair (PR 3, cycle 1)
+
+Four lenses over `d5d5c5e..3943f47`. **No blocking findings** — all three repairs do what decisions
+64 to 73 say, every red-before claim reproduced, and the trajectory-invariance claim was confirmed
+independently over 600 seeds. What follows is what the review found that is not worth stopping for.
+
+### `sim.dispatch` atomicity was deferred to a destination that does not exist
+
+Decision 67 left `sim.dispatch` non-atomic on the grounds that "slice 2b is introducing exactly this
+wrapper in `46d90b3`". It is not. That commit is titled "make `sim.step` and `sim.runUntil` atomic"
+and its `atomically<T>` helper wraps `stepWithinEventBudget` and `stepUntilPointerEquals` only; at
+slice 2b's tip `af6d428` the `sim.dispatch` handler still has no wrapper. The collision the decision
+feared could not have happened either — the repair touches no file under
+`packages/harness/src/methods/`. The code is right and the reasoning behind it is not, so the
+original finding's remainder is now unowned. Practical impact today is nil: `parseCommand` maps the
+whole batch before any dispatch, decisions 64 and 66 reject a bad commission before it mutates
+anything, and a rejected commission was measured to leave the state hash unmoved. It starts to
+matter when a command that mutates before it can fail is added.
+
+### The torn-tick test does not detect a torn tick
+
+`tests/sim/migration.test.ts:127` is red before the fix only because `step(1)` throws — neither of
+its assertions runs in the red case. In the green case they cannot fail: `migrations[3]` sets
+`balance: null`, so `stepShips` returns at its guard before touching a ship, and the commissioned
+hull is inert after 1, 10, 1,000 or 40,000 ticks. The test genuinely pins that a migrated save is
+loadable, dispatchable and steppable without throwing, which is worth having. Its name promises
+something stronger than it delivers.
+
+### Repair 1's two guards each make the other untestable
+
+Reverting `commands.ts` alone leaves the prototype-key test green, because the null-prototype
+`SHIP_CLASSES` makes the *old* guard work. Reverting `classes.ts` alone leaves the whole suite green,
+because `SHIP_CLASS_IDS.find` covers it. The suite goes red only when both are reverted, so it pins
+the disjunction rather than either half, and anyone deleting one half gets a green suite. Both were
+kept deliberately as defence in depth, so this is the cost of that choice rather than a mistake.
+
+### Four of repair 1's five production edits have no coverage
+
+Verified by reverting each in isolation against the full suite, which stayed green at 257 every
+time: the sim-side guard at `battle/dispatch.ts:23` (unreachable from tests, because `parseShipClass`
+rejects first at the RPC boundary), the three `RangeError` throws in `ship/classes.ts`, and the
+null-prototyping of `RAM_SIZE_RANKS`, `BALL_WEIGHTS_MICRO` and `ramDamageOverridesOf`. The
+user-visible vulnerability is proven; the hardening behind it is not. The `RangeError`s are exactly
+the defence for the `deserialise` and `restore` doors below, so they are the ones worth a test first.
+
+### `shipClassOf`'s guard is dead code by its own declared type
+
+`SHIP_CLASSES` is annotated `Record<ShipClassId, ShipClass>`, so TypeScript believes the lookup at
+`ship/classes.ts:103` can never be `undefined`. The guard survives only because the annotation is
+narrower than reality — the table is reachable with keys outside `ShipClassId`. A tidying pass that
+trusts the type would delete the check and silently reopen the finding this slice just closed.
+
+### `Sim.restore` is a second unvalidated door, not just `deserialise`
+
+The entry below names `deserialise` as the only way an invalid `shipClass` reaches the new
+`RangeError`. `Sim.restore` is a second: `cloneWorldState` is a `JSON.parse(canonicalJson(...))` with
+no validation, so a snapshot whose `shipClass` was mutated to `toString` restores and then throws
+mid-tick with the tick already advanced. Same reachability class as `deserialise` — a library caller
+fabricating state; the harness only ever stores sim-produced snapshots — so the conclusion is
+unchanged, but the claim of a single door is not accurate.
+
+### A migrated v3 save keeps a permanently inert puzzle
+
+`migrations[2]` nulls `balance` and `puzzle` together; `migrations[3]` nulls `balance` alone, leaving
+a structurally valid puzzle that `stepPuzzle` always skips. Nothing crashes and nothing is lost, and
+this follows the decided trade-off. The state is legible only by accident, though: `puzzle.start`
+honestly reports `balance-missing`, but `bilge.swap` reports `no-puzzle-running` even though
+`state.puzzle` is not null, because `puzzle/dispatch.ts:36` conflates the two. A distinct
+`balance-missing` reason there would make the terminal state say what it is.
+
+### The melee entry lost the counterfactual that sized the tie-break
+
+The rewrite above supplied the post-fix measurement this register asked for, but it dropped the
+sharpest number the old entry carried: re-scoring 900 battles with ties going to the attacker moved
+the player's win rate from 51.0% to 33.7% under mirror play and from 43.0% to 10.0% under a
+heuristic. That measured the tie-break's *stake*; what replaced it measures the *repair's* effect, a
+six-point swing, which is a much smaller number sitting in the same place. The entry exists to hold
+that counterfactual until someone decides the tie-break, so it should be re-run and restored.
+
+### Smaller things
+
+- **The fused rock-and-ram outcome is pinned nowhere.** `tests/ship/meters.test.ts:290` drives
+  `resolveMovement` but never `turn.ts`, re-implementing its `struckObstacle ? 'obstacle' : 'ram'`
+  label rule instead, and `collision.test.ts` covers rock alone and ram alone but never both on one
+  ship. Post-fix the duplication is harmless — `source` no longer affects the melee number — so the
+  gap is the missing integration check, not the copy.
+- **`tests/sim/migration.test.ts:101` is named "keeps everything it already carried"** while its
+  corrected assertion now says `balance` is `null`. Rename it.
+- **The genuineness pin does not assert `schemaVersion`**, despite being named for it. Harmless — the
+  independent-path check catches the old fixture on its own.
+- **`turn.ts:26` names its intermediate local `declared`**, where the three other tables and both
+  precedents use `declared<TableName>`.
+- **The regenerated v3 fixture covers a smaller state shape** than the manufactured one it replaced,
+  which carried a `rngStreams["bilge.refill"]` cursor and `puzzle.moves: 1`. Migration never touches
+  `rngStreams`, so nothing is at risk; the fixture is simply thinner.
+- **`SHIP_CLASSES` now throws on implicit string conversion**, being null-prototype and exported.
+  `Object.keys`, spread, `JSON.stringify`, `canonicalJson` and `structuredClone` are all unaffected
+  and no consumer does it.
+- **`battle.plan`'s `token` and `ship.commission`'s `allegiance` have no sim-side guard**, the
+  asymmetry decision 64 closed for `shipClass`. Both are benign — an unknown token is silently a
+  no-op, an unknown allegiance is only ever compared — but they are the same shape.
+- **`harness/src/json.ts:20` uses `key in right`** rather than `Object.hasOwn`. Probed against five
+  prototype-key cases and it produces no wrong answer; style, not a defect.
+- **`docs/wiki-map/04-world-ports-economy.md:618` lists wear** among the sources that become
+  unbreakable blocks in the boarding puzzle, contradicting `03-ships-sailing-sea-battle.md` and
+  decision 61, which exempt it. The code follows 03.
+
+## 2026-09-02 — repair of the slice 3 review findings (cycle 1)
+
+The three blocking findings from the review below are fixed: the prototype key that passed the
+ship-class guard, the v3 to v4 migration that left `balance` structurally invalid, and rock damage
+being dropped from the melee handicap. The melee entry below now carries the post-fix measurement it
+asked for. What follows is what the repair deliberately did not touch, and when each starts to
+matter.
+
+### Rock and ram damage are one fused integer
+
+`CollisionOutcome` carries a single `damageTakenSmallMicro` labelled by a single `struckObstacle`
+boolean, so a ship that is grounded on a rock and rammed in the same pass reports the whole fused
+amount under one source. Decision 71 makes the label irrelevant to every rule that exists today —
+obstacle and ram damage both raise the melee handicap now, and nothing else reads the source — so
+splitting the field buys nothing here and would widen a slice already three repairs wide. The first
+rule that treats a rock differently from a ram has to unfuse them before it can be written.
+
+### `packages/fixtures/saves/` has no owner skill
+
+`pp-golden-state` owns the goldens, `pp-scenario-author` the scenarios and replays,
+`pp-replay-triage` the trails. The saves directory is named in passing by the skills around it and
+owned by none, and no skill says how one is regenerated — which is how a manufactured v3 fixture was
+committed and survived a review unchallenged. The recipe now exists, in the analysis document rather
+than in a skill: build the state from the tip of the slice that wrote the schema version, through
+`createScenarioSim(seed, scenario)` and `step(ticks)`, and normalise to LF before comparing bytes on
+a checkout with `core.autocrlf` true. Moving it into a skill is the fix, and it was out of scope for
+a repair slice.
+
+### `MAXIMUM_TURNS = 120` is already unsafe
+
+Sharpens the 120-turn entry below, which measured the cap against a different player policy. At 600
+seeds the mirror policy walks past it on its own: one battle runs 168 turns and would score
+`unresolved` against `battle.test.ts`'s cap. That is true *before* this repair as well as after —
+the melee change moves no battle's length by a turn — so the hazard is not something the repair
+introduced. The twenty-four seeds the committed test uses dodge it. The assertion is one seed-list
+change away from flaking, independently of anything this slice touched.
+
+### `deserialise` validates nothing
+
+`deserialise` is a `JSON.parse` and a cast handed straight to `migrate`. Decisions 64 and 66 make an
+unknown `shipClass` unreachable through every command path — the guard fires before `createShip` —
+but a save carrying one walks in behind those guards and reaches the new `RangeError` in
+`shipClassOf`, and a throw inside a tick tears state because `Sim.step` has no transaction. No RPC
+method exposes `deserialise` today, so nothing reachable can trigger it. It starts to matter the
+moment there is a `session.load`.
+
+### The two prototype-carrying defaults
+
+`resolveMovement`'s `ramDamage: RamDamageOverrides = {}` (`battle/collision.ts:38`) is an ordinary
+object literal, and `ramDamageOf` indexes it by a class id (`ram.ts:27`), so an id of `toString`
+would find a function there rather than fall through to the published ram damage. `applyCollisions`
+carries an identical `overrides: RamDamageOverrides = {}` default at `ram.ts:19`, and its default is
+never taken by any caller at all. Both are unreachable in production — every caller passes the
+null-prototype table decision 65 created, and decision 64 refuses the id before there is a ship to
+carry it — but they are the same bug shape that blocked this review, one refactor away. One
+`Object.create(null)` each closes both.
+
+## 2026-09-02 — independent review of slice 3 (OPP-10), PR 3
+
+Four lenses plus an empirical probe, all against `ea34344`. Three findings blocked and went back to
+analysis at cycle 1: the prototype key that passes the ship-class guard, the v3 to v4 migration that
+leaves `balance` structurally invalid, and rock damage being dropped from the melee handicap. What
+follows is everything the review deliberately let through, with why.
+
+### The sweep test is thinner than its claim
+
+`tests/harness/battle.test.ts` is the slice's headline evidence, and 23 mutations run in a scratch
+copy measured what it actually holds. All 252 tests stay green when:
+
+- `battle.plan` accepts the plan and then discards it (`battle/dispatch.ts:66`)
+- the win and loss labels are swapped (`battle/session.ts:143-144`)
+- cannon fire applies no damage to the victim (`gunnery.ts:85`)
+- melee is hard-wired to resolve for either side (`battle/session.ts:159`)
+- obstacle and ram damage attribution are swapped, which is decision 60 itself (`turn.ts:102`)
+
+Only `unresolved === 0` is load-bearing: it catches a brigand that stops re-planning and a noise
+value that makes battles run forever. The behaviour is genuinely implemented — driving the player
+with `idlePlan()` instead of `planBrigandTurn` collapses 12 wins in 24 seeds to 1, so plans do reach
+the ship — which is why this is a thin test and not a false claim. Two assertions would close most of
+it: that the loser is the ship that is fully damaged, and that a resolved hit reduces the victim's
+hull. The `ISSUES.md` entry from development calling this "an honest test of drivability" overstates
+it; drivability is the one thing it does prove.
+
+### The 120-turn cap is tuned to one policy
+
+The committed sweep caps a battle at 120 turns and asserts none is unresolved. Over 300 seeds the
+mirror policy's longest battle is 93 turns, so the cap holds — but a different player policy walks
+straight past it: on seed 1298716 a simple heuristic is unresolved at 120 and wins at turn 156. The
+assertion is safe only while the player is driven by the brigand's own planner. It starts to matter
+the moment slice 5 puts a human, or any other policy, on one side.
+
+### Rules holes that only bite once there is a second party
+
+- **`battle.plan` and `battle.disengage` have no allegiance check** (`battle/dispatch.ts:57,73`).
+  `battleShipOf` matches either combatant, so a client can overwrite the brigand's committed plan
+  every turn — measured, the plan goes to all-idle and the state hash moves — and can end the battle
+  through the opponent's ship. Offline and single-player today; a cheat the moment there is a UI.
+- **An unknown `allegiance` silently coerces to `player`** (`harness/src/commands.ts:46`).
+  `"BRIGAND"` and `"navy"` both commission a player ship. Every sibling enum in the same function
+  throws on an unknown value, and the mis-commission surfaces later as an unrelated `unknown-ship`
+  from `battle.start`.
+- **A finished battle can never be cleared** (`battle/dispatch.ts:39`). Nothing sets `state.battle`
+  back to `null`, so one session runs one battle for its whole life, and afterwards `battle.start`
+  says `battle-already-running` while `battle.plan` says `no-battle-running` — two contradictory
+  answers about the same state, one of them plainly false.
+- **`state.ships` has no ceiling.** `ship.commission` pushes unconditionally and
+  `MAX_COMMANDS_PER_REQUEST` is 100000, so one legal request commissions 100000 ships; at 20000 ships
+  a single `hash()` takes about two seconds, and `statusOf` hashes on every response. Self-inflicted
+  and offline, but it is the first client-driven unbounded collection in the state.
+
+### The melee formula is coarser than the battles it decides
+
+`resolveMelee` has no RNG: the attacker wins if and only if it is strictly stronger, so every tie
+goes to the defender. In this scenario crew is 5 on both sides and rum is never consumed, so
+`strengthOf` collapses to `30 × (6 − blackBlockRows)` — seven possible values. This entry asked for
+a re-measurement and the repair cycle above supplied one, over 600 seeds under the mirror policy
+`tests/harness/battle.test.ts` actually uses, with the turn cap lifted so that nothing scores
+`unresolved`. The numbers below are all post-fix.
+
+The player wins 326 of 600, 54.3%. 464 battles, 77.3%, are decided by `resolveMelee` and 136, 22.7%,
+by sinking. 261 of those 464 melee verdicts are ties, 56.3%, and 218 of the ties are nil against
+nil, 83.5% — both ships pinned at six black rows, strength 0 against strength 0. The longest battle
+runs 168 turns. So the tie-break alone settles 261 of 600 battles, better than two in five, and it
+is invented: nothing published contradicts it, which is why decision 73 re-measured it rather than
+changed it. It remains the single largest rule in the sea battle.
+
+**The tie mass rose because obstacle damage now feeds the handicap.** The analysis measured the same
+600 seeds pre-fix at 202 ties of 464, 43.5%, with 130 nil against nil, 64.4%. Rock damage now raises
+`meleeDamageSmallMicro` as well, so more ships reach the grapple already pinned and more melees are
+0 against 0.
+
+**The battle trajectory is bit-identical before and after.** Melee-decided count, sink count and the
+longest battle are unchanged to the unit — 464, 136 and 168 on both sides of the repair — because
+`meleeDamageSmallMicro` is a write-only sink that nothing reads except `meleeSideOf` at battle end.
+Only the verdict of an already-melee-decided battle can move, and 84 of 464 flip — 60 to the player
+and 24 against, a net of 36. That is what made
+the repair cheap, and it also means the meter carries no gameplay pressure today.
+
+**The player gains from the tie rise only by accident.** The brigand throws the grapple in 343 of
+the 464 melee-decided battles, 73.9%, so it is the attacker in three ties out of four and the tie
+goes to the defender, which is the player. A six-point win-rate swing — 48.3% to 54.3% — resting on
+who happens to grapple is a coin flip dressed as a rule, and it inverts the moment a player planner
+grapples more often than the brigand's does.
+
+### Tuning prose that overstates its own model, again
+
+The same failure mode slice 2's review and test both caught. `balance.json` has an exact 47-key to
+47-`_sources` bijection and every value is honest as a number; the prose is where it drifts.
+
+- **`brigand.planLookaheadPhases`** says a plan "cannot be scored on less" than a full turn.
+  `bestCandidateOf` scores only the immediate resulting pose — the planner is greedy and 1-ply. The
+  key gates which phases may contain a move; the name and the rationale describe an algorithm that
+  does not exist.
+- **`booty.brigandPoePerMightMilli`** says payouts scale with might, crew size and opponent rank and
+  that 1000 makes that scaling linear. There is no might, crew-size or rank input anywhere in
+  `packages/sim/src` — it is a dead multiply by one.
+- **`booty.overflowPolicy`** describes truncate as taking what fits "in descending unit value", but
+  cargo is one undifferentiated scalar with nothing to sort, and `spill-to-sea` falls through to the
+  truncate branch. The development entry records the two identical policies honestly; the `_sources`
+  prose was not updated to match.
+- **`ship.rumPerPiratePerThousandTicks`** says 1 is the slowest rate that still lets a ship run dry.
+  Nothing consumes it, so nothing can run dry.
+- **`brigand.blunderNoisePerMille`** says 30 is "still below the weight of a broadside worth taking".
+  The jitter draws from [−30, +30], so the peak-to-peak swing is 60 against a
+  `weightBroadsideExposure` of exactly 30.
+
+The cheap fix for the whole class is one test asserting the key to `_sources` bijection the file
+itself declares ("a key with no entry is a bug"), which nothing currently enforces.
+
+### The noise retune is defensible but unpinned
+
+30 is not fitted to one sweep — the headline test passes across a plateau from 20 to 150 and fails at
+0, 5, 10, 300 and 1000, and the arithmetic in its `_sources` entry checks out as three tiles of
+`weightCloseDistance`. But instrumenting `bestCandidateOf` over the 24-seed sweep shows the jitter
+still overriding the scorer in 575 of 1435 multi-candidate decisions, 40.1%, against 63.1% at the old
+150. "Variety, not noise" overstates it. And nothing pins it: changing 30 back to 150 leaves every
+behavioural test green and fails only the two goldens, the scenario fixture and the replay — all four
+of which a re-bless silences. The analysis document's own lesson from the cannon rate, that a
+constant whose `_sources` entry states an outcome should have a test asserting that outcome, was not
+applied here.
+
+### A retuned constant is already stale in a test fixture
+
+`tests/ship/meters.test.ts:61,69` restates the whole tuning file inline and two values disagree with
+`balance.json`: `brigand.blunderNoisePerMille` is 150 (the pre-retune value decision 53 exists to
+remove) and `npc.brigandCrewDutyOutputPerMille` is 700 against 900. Both are inert because
+`meters.ts` reads neither, which is exactly why nothing caught them. The same literal is duplicated a
+third time in `tests/battle/brigand.test.ts:48-54`, which has the current values. Three copies, one
+already drifted, four hours after the retune.
+
+### The event-budget escape, re-rated for battles
+
+Slice 2 recorded that a `sim.step` past `MAX_EVENTS_PER_RESPONSE` commits its ticks and discards
+every event behind a `limit-exceeded` error, and the follow-up slice owns the fix. Slice 3 widens the
+blast radius rather than changing the defect, so it stays there rather than blocking here — but the
+new severity is worth stating plainly. On a `sea-battle` session, `sim.step {ticks:100000}` returns
+`limit-exceeded` with the clock at 99886, `/battle/turnIndex` at 18 and `/battle/outcome` already
+`player-lost`: eighteen full battle turns resolved and the battle ended, with `battle.ended` and its
+booty payout thrown away inside a call the caller believes failed. In slice 2 the same defect lost
+marker drift. It should be the first item of whichever slice takes it.
+
+### Coverage notes worth keeping
+
+- **Rejection sampling in `rng.ts:38-40` is unasserted.** Deleting the unbiased limit — plain
+  `draw % span` — passes all 252 tests, because `rng.test.ts:77` asserts membership of the range and
+  never uniformity. It matters: `nextIntInRange(0, 1000)` drives `geniusChancePerMille` and
+  `chartDropChancePerMille`, and 2^32 mod 1000 is 296.
+- **`settleOverlaps` cannot fire below three ships.** Both call sites can be deleted and its
+  fixed-point loop reduced to one pass with the suite green. An exhaustive 2-ship sweep of 2973696
+  configurations produced zero reversions; a 3-ship fuzz of 59155 cases produced 48. It is a safety
+  net for a case this slice cannot reach, not dead code — but nothing tests it, and every battle
+  shipped here has exactly two ships.
+- **The accumulator-zeroing guard at `meters.ts:75` is untested and nearly inert.** Deleting it
+  passes 252 tests; measured, it changes the first per-mille of drain after a full-bilge pin by at
+  most three ticks. The damage-side twin at `:86` is tested. The analysis document's blanket claim
+  that accumulators are zeroed when a meter clamps is only *tested* for damage.
+
+### Small things
+
+- `movedPhasesOf` (`battle/plan.ts:45-47`) is dead — the identifier appears nowhere else in the repo.
+- `setup.ts:58,71,84` hand-rolls `` `${x},${y}` `` three times; `claims.ts:60` already exports
+  `tileKeyOf` for exactly that, in the same package.
+- `ship/state.ts:93` hard-codes `1000` twice where every sibling module imports `PER_MILLE`. Correct
+  value, but it falsifies the entry's "all but two literals are published rules" for the second slice
+  running — the true count is three.
+- `DamageSource` still declares `'wear'` (`events.ts:59`), which decision 61 makes unconstructable.
+  The same unreachable-value shape decision 59 removed `no-cannonball` for.
+- Eight symbols are exported but used only inside their own file (`holdCapacityOf`,
+  `ramDamageOverridesOf`, `TurnScope`, `ramDamageOf`, `createBattleShip`,
+  `PLANNING_SECONDS_PER_TURN`, `RUM_SICK_COLUMNS`, `GunneryScope`). In a codebase with no comments an
+  unnecessary export reads as an intentional seam.
+- `ship.commission` is dispatched from `battle/dispatch.ts` although decision 48 separates
+  commissioning from `battle.start` precisely so slice 4 can commission outside a battle. A
+  `ship/dispatch.ts` would match the `puzzle/dispatch.ts` convention and save the move later.
+- Both token pools start empty and are only minted in `endTurn`, so **both ships are immobile for the
+  whole of turn 1**. Defensible as per-turn sampling of a continuous production rule, but written
+  down nowhere.
+- The brigand commits its opening grapple from the pre-move pose, but `executePhase` runs movement
+  before fire, so on 54 of 1600 configurations its own phase-0 move carries it off the beam and the
+  grapple lands in empty water. The wiki says the NPC "will try", and it does try, so this conforms —
+  one assertion that a phase-0 grapple keeps the ship in reach would close it.
+- `tools/record-replay.ts` still has no check mode, and a blind re-record does launder a real
+  determinism regression: introducing one turned 8 tests red, re-recording the three fixtures brought
+  it to 4. The development entry's non-blocking call stands, and is stronger than it argues — the
+  corrupted fixture committed for `pp-replay-triage` is itself a tripwire, and two more survive — but
+  the healthy fixtures have no equivalent pin.
+- `pp-replay-triage/SKILL.md:632` calls `tests/harness/client.ts` "the 60-line stdio client"; it is
+  77 lines. Inherited boilerplate — the same phrase is in three other skills. All 16 of that skill's
+  transcripts re-execute character for character, which retires the standing invented-transcript
+  finding.
+- The `pp-sim-harness` "real session" transcript is now stale: it shows `schemaVersion` 3 and a
+  `state.get` with no `ships` or `battle`. A run today reports `schemaVersion` 4.
+- The development entry says six new balance keys were invented; the slice adds 34, the other 28
+  coming from the reaped run whose work was kept. True of the run, not of the slice.
+
+## 2026-09-02 — development of slice 3 (OPP-10), ship state and sea battle
+
+Nothing here blocks. A sloop-versus-brigand battle plays to a win and to a loss headlessly, every
+battle in the outcome sweep resolves, and `npm run check` is green from cold. What follows is what
+the slice ships alongside that, and where each item starts to matter.
+
+### Implemented but never placed on a board
+
+`tiles.ts` implements whirlpools exactly as the wiki describes them — a 2x2 tile mapping each corner
+to the diagonally opposite one with a quarter turn clockwise — and `collision.ts` handles the
+`whirl` intent, including the published example where a wind-pushed small ship blocks a large ship's
+whirl. But `setup.ts` scatters only rocks and wind, so no committed scenario ever produces one. The
+placement rules for a 2x2 feature are not published, and the slice's task named rocks and wind only.
+It starts to matter when a battle board is authored by hand rather than scattered, which is a slice 5
+concern.
+
+### The agent that proves the headline claim is the brigand's own planner
+
+`tests/harness/battle.test.ts` drives the player's ship with `planBrigandTurn`, the same policy the
+opponent uses. That is what makes the sweep a fair fight and both outcomes reachable, and it is an
+honest test of *drivability* — the plans go through `battle.plan` like any agent's would. It is not
+a test that a *good* player wins, because there is no separate notion of good play to compare
+against. When slice 5 gives a human the same controls, a scripted opening worth beating is the thing
+to write.
+
+### The speed meter has nothing to read it
+
+`stepShipMeters` computes speed every tick from sailing and rigging, multiplies it by duty
+navigation and caps it by bilge exactly as documented, and no code anywhere consumes
+`ship.speedPerMille`. Speed governs league traversal, and there are no leagues until slice 4. The
+cost of leaving it in is one integer per ship per tick; the cost of taking it out would be
+re-deriving the coupling later from a wiki page already read.
+
+### Two overflow policies that are the same policy today
+
+`booty.overflowPolicy` accepts `truncate`, `refuse` and `spill-to-sea`. With one undifferentiated
+cargo unit there is nothing to sort by value, so `truncate` and `spill-to-sea` both take what fits
+and discard the rest, and only `refuse` behaves differently. The distinction becomes real when
+slice 4 introduces commodities with per-unit values.
+
+### Melee is a strength comparison, not a swordfight
+
+`resolveMelee` scores each side as crew times unblocked rows times unblocked columns and gives the
+tie to the defender. It reproduces the *shape* of the handicap the wiki describes — black blocks
+from cannon damage, narrowed board from rum sickness — with no published formula behind the numbers,
+because there is none to find. It decides real battles today, so its bias is worth measuring before
+the swordfight puzzle replaces it in phase 2.
+
+### `whirlpoolOriginOf` scans the whole board
+
+It walks all 576 tiles looking for a matching whirlpool id, and it is now called from inside the
+per-phase tile step. With no whirlpools placed it is never reached; if one is ever scattered, this
+runs up to eight times a turn. The fix is to carry the origin on the tile rather than search for it.
+
+### Damage attribution collapses one ambiguous case
+
+A collision outcome carries a single `damageTakenSmallMicro`, and the turn step attributes all of it
+to `obstacle` when the ship struck one and to `ram` otherwise. A ship that is both grounded on a rock
+and bumped by a mover in the same pass therefore reports its ram damage as obstacle damage. The
+difference is visible only in the melee handicap, which obstacle damage does not raise and ram damage
+does, and the case needs a mover to bump a ship that is simultaneously stopped by a rock.
+
+### Four sharp edges around replays, found while writing `pp-replay-triage`
+
+Writing the triage skill meant driving every replay path deliberately wrong, which surfaced these.
+None blocks: each is a gap in the tooling around determinism rather than a defect in determinism
+itself, and the skill documents its way around all four.
+
+- **A replay fixture records no schema version.** `Replay` carries `seed`, `scenario`, `lastTick`,
+  `commands`, `hashTrail` and `finalHash`, and nothing that says which schema it was recorded
+  under, although `session.new` already returns one. So a trail made stale by a schema bump cannot
+  be told from a corrupted one by reading the file — you have to go to `git log` on `state.ts`.
+  Goldens pin the version; replays do not. The slice 2 review named this from the other direction,
+  as `divergedAtTick: 0` being indistinguishable from a real determinism bug. It is one field.
+
+- **`tools/record-replay.ts` heals silently.** Run against a deliberately corrupted fixture it
+  replaces the bad hash with the true one and drops any extra field, printing only its usual
+  success line — verified on a scratch copy of the committed diverged fixture, which lost both its
+  `deadbeefdeadbeef` checkpoint and its `note`. There is no `--check` mode that verifies and fails
+  instead of writing. This is the sharpest edge in the area, because re-recording a trail you have
+  not explained is exactly how a real determinism bug gets committed, and the tool makes that the
+  path of least resistance. The skill's re-recording section is built around the gap.
+
+- **`replay.verify` names only the first bad checkpoint.** Nothing in the protocol says whether the
+  divergence persisted afterwards, which is the difference between a bad recording and a real
+  desync. Returning a count, or the last diverging tick alongside the first, would make the skill's
+  whole trail-walking step unnecessary.
+
+- **Nothing pins the final checkpoint of a replay.** The committed diverged fixture corrupts a
+  middle checkpoint — tick 5 of 12 — because that is the better specimen to teach against, so the
+  `tick <= lastTick` boundary of the trail remains unexercised. One assertion against a fixture
+  whose last checkpoint is corrupted would close it.
+
+### Carried forward from slice 2, untouched
+
+The slice 2 review named two follow-ups: the non-atomic `sim.step` that commits a mutation behind a
+`limit-exceeded` return in the 99993-100000 tick window, and the missing test connecting real board
+geometry to the score table. Both belong to the queued slice 2b task and neither was touched here.
+Nothing in this slice makes either worse — the battle's own events are bounded at a handful per
+phase.
 ## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
 
 The run that wrote the entry below died before merging and was reaped; the re-run reproduced every

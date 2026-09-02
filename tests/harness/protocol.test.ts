@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
+import { SCHEMA_VERSION } from '../../packages/sim/src/state.ts';
 import { reasonOf, resultOf, startHarness, type Harness } from './client.ts';
 
 const SEED = 0xc0ffee;
@@ -25,7 +26,7 @@ test('session.new opens a seeded session at tick zero', async () => {
 
   assert.equal(typeof opened['session'], 'string');
   assert.equal(opened['tick'], 0);
-  assert.equal(opened['schemaVersion'], 3);
+  assert.equal(opened['schemaVersion'], SCHEMA_VERSION);
   assert.match(opened['stateHash'] as string, /^[0-9a-f]{16}$/);
 });
 

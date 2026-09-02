@@ -1,6 +1,6 @@
 ---
 name: pp-sim-harness
-description: Drive the Offline Puzzle Pirates simulation headlessly through the pp-harness JSON-RPC server. Use when a task needs to open a seeded session in a named scenario, dispatch marker or puzzle commands, step ticks, assert on state by JSON Pointer, snapshot and restore, record or verify a replay, or triage a determinism desync.
+description: Drive the Offline Puzzle Pirates simulation headlessly through the pp-harness JSON-RPC server. Use when a task needs to open a seeded session in a named scenario, dispatch marker, puzzle or sea-battle commands, step ticks, assert on state by JSON Pointer, snapshot and restore, record or verify a replay, or triage a determinism desync.
 ---
 
 # pp-sim-harness
@@ -42,10 +42,11 @@ Sessions live in the process; killing it discards them.
 | `replay.verify`    | `{seed, scenario?, commands[], hashTrail?, expectedHash}` | `{ok, tick, finalHash, expectedHash, divergedAtTick}` |
 | `rng.cursors`      | `{session}`                                               | `{cursors}`                                           |
 
-`seed` is a safe integer, not a hex string. `scenario` may be omitted. Two scenarios exist:
-`marker-field`, which is the default, and `bilge-session`, which creates the sim with the tuning
-loaded from `balance.json` and dispatches `puzzle.start`. `session.new` reports
-`schemaVersion` 3.
+`seed` is a safe integer, not a hex string. `scenario` may be omitted. Three scenarios exist:
+`marker-field`, which is the default; `bilge-session`, which creates the sim with the tuning loaded
+from `balance.json` and dispatches `puzzle.start`; and `sea-battle`, which does the same and then
+commissions a player sloop and a brigand sloop and opens a battle between them. `session.new`
+reports `schemaVersion` 4.
 
 `sim.dispatch` applies each command **immediately** — it does not queue for the next tick — and
 returns one result per command in order, so rule enforcement is testable without stepping at all.
@@ -147,7 +148,8 @@ every chain — and returns one `bilge.cleared` event per resolve step:
 below `width - 1`. The marker domain still runs here and drifts every tick, so **a long `sim.step`
 or `sim.runUntil` in `bilge-session` returns one `marker.drifted` event per tick** — step in small
 spans and read `/puzzle` with `state.get` rather than mining a huge event list. Reaching
-`waterLineRow` 8 from a fresh board takes 4206 idle ticks.
+`waterLineRow` 8 from a fresh board takes 1193 idle ticks — the figure this line carried before was
+stale from an earlier tuning, and the balance arithmetic contradicted it.
 
 Every rejection the puzzle can produce, `s0` two ticks on and `s1` a fresh `marker-field` session:
 
@@ -162,6 +164,38 @@ Every rejection the puzzle can produce, `s0` two ticks on and `s1` a fresh `mark
 Both `stateHash` values are the ones the sessions already carried: **a rejected command changes
 nothing.** `balance-missing` is what a `marker-field` session gives back, which is why every
 pre-puzzle call site keeps working untouched.
+
+## A sea battle
+
+`sea-battle` opens with two sloops already on a 24x24 board, the player standing at the bilging
+station and NPC crew on every other station of both ships. A turn is 2100 ticks — the wiki's
+35-second planning window — and the four phases all resolve on the tick the turn ends:
+
+```
+-> {"jsonrpc":"2.0","id":1,"method":"session.new","params":{"seed":7919,"scenario":"sea-battle"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"session":"s0","schemaVersion":4,"tick":0,"stateHash":"03c7c65a1bffb9ef"}}
+
+-> {"jsonrpc":"2.0","id":2,"method":"state.get","params":{"session":"s0","pointer":"/ships/0","depth":1}}
+<- {"jsonrpc":"2.0","id":2,"result":{"value":{"id":2,"shipClass":"sloop","allegiance":"player","damageTakenSmallMicro":0,"meleeDamageSmallMicro":0,"damageAccumulator":0,"bilgePerMille":0,"bilgeAccumulator":0,"speedPerMille":0,"cannonsLoaded":0,"cannonLoadAccumulator":0,"rum":20,"cannonballs":40,"cargoUnits":0,"poe":0,"bootyCargoUnits":0,"bootyPoe":0,"crewCount":5,"playerStation":"bilging"}}}
+
+-> {"jsonrpc":"2.0","id":3,"method":"sim.step","params":{"session":"s0","ticks":2100}}
+<- {"jsonrpc":"2.0","id":3,"result":{"events":[{"type":"ship.meterBanded","tick":1,"id":2,"meter":"speed","band":10,"perMille":1000},{"type":"ship.meterBanded","tick":1,"id":3,"meter":"speed","band":10,"perMille":1000},{"type":"ship.meterBanded","tick":100,"id":2,"meter":"speed","band":9,"perMille":999},{"type":"bilge.waterLineMoved","tick":1193,"waterLineRow":8,"bilgePerMille":167},{"type":"battle.turnEnded","tick":2100,"turnIndex":1,"expiredTokens":0}],"tick":2100,"stateHash":"d75be4a61c22c517"}}
+```
+
+The `marker.drifted` events are elided above; the marker domain still drifts every tick here too.
+
+**Commit a plan before the turn ends, or the ship idles.** `battle.plan {shipId, plan}` takes four
+phases, each `{move, fire}`. `move` is `{kind:'none'}`, `{kind:'rest'}` or
+`{kind:'move', token:'left'|'forward'|'right'}`; `fire` is `{kind:'none'}`,
+`{kind:'guns', side:'port'|'starboard', count}` or `{kind:'grapple', side}`. The plan is validated
+on dispatch and cleared at the end of every turn, so an agent submits a fresh one each turn. A class
+that moves in three of the four phases must rest in exactly one — a sloop moves in all four and so
+must rest in none. `battle.disengage {shipId}` ends the battle once that ship's counter has run
+down, and `ship.commission` builds a ship outside a scenario.
+
+The battle's own rejections are `unknown-ship`, `no-battle-running`, `battle-already-running`,
+`plan-wrong-length`, `plan-move-budget`, `too-many-shots`, `no-movement-token`, `no-gun-token` and
+`disengage-not-ready`.
 
 ## Replays
 
@@ -304,7 +338,8 @@ A structurally invalid command (unknown `op`, missing `dx`) fails the whole `sim
 with `invalid-params`. A well-formed command the rules refuse comes back per-command as
 `{"status":"rejected","reason":...}` — the sim's reasons are `unknown-marker`,
 `non-integer-coordinate`, `destination-outside-field`, `balance-missing`, `unknown-puzzle`,
-`puzzle-already-running`, `no-puzzle-running` and `swap-outside-board`.
+`puzzle-already-running`, `no-puzzle-running` and `swap-outside-board`, plus the nine battle
+reasons listed under "A sea battle" above.
 
 ## Where things are
 
