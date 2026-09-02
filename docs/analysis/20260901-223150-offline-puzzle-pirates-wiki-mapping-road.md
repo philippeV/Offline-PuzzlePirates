@@ -1169,3 +1169,68 @@ level, so the shipped 0-2 band scores as a 7-star board. That is the deviation r
 of the development entry above, and the follow-up slice owns it along with star levels past 2. A
 census of all 132 swaps on 260 opening boards again found no line of six and no five-line clear, so
 `comboMultiplierByLineCount[5]` stays unreachable.
+
+### 2026-09-02 - development, slice 2b (OPP-13)
+
+The part of Bilging slice 2 deferred: the three critters, the star levels that gate them, star level
+as an input to scoring, and the below-waterline fall slowdown. Branched from `agent/develop` at
+`eca8058`, in a separate worktree because the main checkout was held by the slice 3 review.
+
+**The two items the slice 2 review named ahead of critters were taken first.** `sim.step` and
+`sim.runUntil` now snapshot before stepping and restore on failure, so a call refused by the event
+budget leaves `tick` and `stateHash` exactly where they were, as every other rejected call in the
+protocol already did. The tests were confirmed to fail on the unfixed code rather than merely to
+pass on the fixed one, and the boundary was re-measured independently across three seeds. And the
+suite no longer passes on a broken scorer: a hand-painted board now clears a 4-run plus a 3-run and
+asserts 16 points on `bilge.cleared`, `puzzle.scored` and `totalScore`, derived from `2L-3` and the
+7-star multiplier table by hand rather than from any recorded hash.
+
+**What is here.** Four new sim modules - `critters.ts`, `gravity.ts`, `swap.ts` and `move.ts` - and
+`resolve.ts` reshaped to take an optional opening clear so a poke or a jelly sweep can start a
+resolve that then cascades normally. `applyGravity` moved out of `board.ts` and became a segmented
+compaction that splits a column at each crab, which is byte-identical to the old loop on a board
+with no crabs. `bilge.poke` is a new command, `crab-not-swappable`, `not-a-puffer` and
+`poke-outside-board` are new rejection reasons, and `bilge.cleared` carries `settleTicks`.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                       | Rationale                                                                                                                                                                                                                                      |
+| -- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 46 | Critters are negative cell sentinels: crab -2, puffer -3, jelly -4                             | `BoardCell` stays a bare number, so no schema bump and no change to canonical hashing. Colours own 0-15 and empty owns -1 already                                                                                                              |
+| 47 | The crab anchors its column and climbs one row per resolve step, clearing above the water line | The only reading that satisfies all three published claims at once: immovable, cleared when it rises above the water line, and a bonus scaling with water height rather than its own height                                                    |
+| 48 | Crab bonus is `floor(9 * n^2 * bilgePerMille / 1000)`                                          | 9 is chosen so two crabs at full water score 36, inside the only published anchor: between a minimum bingo at 27 and a minimum sea donkey at 48                                                                                                |
+| 49 | The puffer pays 0 points per cell                                                              | "Score-negative unless it triggers a chain" only holds if the detonation itself pays nothing while the chain it causes scores normally                                                                                                         |
+| 50 | The jelly is cleared along with the colour it sweeps                                           | A jelly that survives its own sweep is immortal, since nothing else can remove it                                                                                                                                                              |
+| 51 | Every critter effect resolves inside a swap or a poke, never per tick                          | `tests/puzzle/determinism.test.ts` pins that `sim.step` never opens a puzzle RNG stream. A per-tick clear would need a refill draw and would break it                                                                                          |
+| 52 | Critters spawn from a new RNG stream, `bilge.critters`                                         | Adding draws to `bilge.refill` would shift the pinned refill draw order; a separate stream is independent by construction                                                                                                                      |
+| 53 | Each spawn band maps to exactly one critter; a locked gate yields no critter                   | A band that fell through to the next critter would make `crabSpawnPerMille` silently move the puffer rate, so the file would no longer state the rates it produces                                                                             |
+| 54 | The published 3 / 5 / 6 star gates live in code, not `balance.json`                            | Decision 6 and decision 44: the file is for invented numbers, and a sourced value in it blurs the line it exists to draw                                                                                                                       |
+| 55 | `maxStarLevel` is 7                                                                            | The level the wiki anchors: 7 colours published at 7 stars, and every critter unlocked at or below it                                                                                                                                          |
+| 56 | Star level scales the combo multipliers, floored at 1                                          | The published table is headed at 7-star level and the wiki says low levels score lower without publishing figures. Index 7 is 1000 per mille so the published table stays exact, and the floor keeps single lines at their published 3 / 5 / 7 |
+| 57 | The below-waterline slowdown is reported as `settleTicks`, not simulated                       | Decision 40 keeps resolution instant. The number gives slice 5 something to animate with while touching neither score nor state, which is all the wiki's timing claim needs before there is a renderer                                         |
+| 58 | The bonus-token layer is deferred to slice 2c                                                  | It needs a per-piece payload on every cell, which `BoardCell = number` has no room for. The task gated it on fitting without reshaping the engine, and it does not                                                                             |
+| 59 | `ResolveStep.kind` rather than inferring the rate from `chain === 0`                           | A poke and a jelly sweep both open a resolve with a step that is neither a combo nor a chain, and each scores at its own rate                                                                                                                  |
+| 60 | A separate `poke-outside-board` rejection reason                                               | `swap-outside-board` means the horizontal pair does not fit, which is not what a single-cell click can fail                                                                                                                                    |
+
+**The published anchors are reproduced.** Two crabs cleared at full water score 36, between a bingo
+at 27 and a sea donkey at 48. The 15 published combo rows still come out of `comboScoreOf` exactly,
+now asserted at star level 7, which is what the table always was. The three documented interactions
+hold: jelly plus crab does nothing and rejects, jelly plus puffer detonates the puffer and destroys
+the jelly, and a crab caught in an adjacent puffer's blast pays no bonus.
+
+**Nine invented constants**, each with a `_sources` entry: the three spawn rates, the three critter
+scores, the star scale table, and the two fall rates. `maxStarLevel` moved from 2 to 7 and its
+`_sources` entry was amended, since it no longer describes a band with no critter in it.
+
+**The opening board did not move.** Critter gates start at 3 stars and `startingStarLevel` is 0, so
+no critter can spawn on a fresh board and `bilge-opening.json`'s `cells` array is unchanged; only
+its hash moved, with the balance block.
+
+**A correction to a figure recorded this slice.** The event-budget boundary that the atomicity tests
+pin is not the 99992 / 99993 the slice 2 test stage measured. Raising `maxStarLevel` to 7 adds five
+more `puzzle.levelChanged` events to a long step, moving it to 99987 / 99988. The measurement was
+right when it was taken; it is balance-dependent, which is worth knowing before anyone quotes it
+again.
+
+**What is left for the follow-up.** The bonus-shape token layer, per decision 58. A development task
+is queued for it.

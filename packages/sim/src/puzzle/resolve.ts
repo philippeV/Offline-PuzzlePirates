@@ -21,7 +21,7 @@ export interface StepClear {
 }
 
 export interface ResolveStep extends StepClear {
-  crabsCleared: number;
+  crabCells: number[];
   settleTicks: number;
 }
 
@@ -65,7 +65,7 @@ function settleStep(board: Board, context: ResolveContext, clear: StepClear): Re
   refilled.push(...refillBoard(board, context.drawColour));
   refilled.sort((left, right) => left - right);
   spawnCritters(board, refilled, context, context.drawCritter);
-  return { ...clear, crabsCleared: crabs.length, settleTicks: settleTicksOf(falls, context) };
+  return { ...clear, crabCells: crabs, settleTicks: settleTicksOf(falls, context) };
 }
 
 function settleTicksOf(falls: CellFall[], context: ResolveContext): number {

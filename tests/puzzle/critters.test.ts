@@ -46,13 +46,13 @@ test('a crab climbs one row per resolve step and clears once it passes the water
   const climbed = resolveBoard(board, context, { kind: 'poke', cells: [0] });
 
   assert.equal(climbed.length, 1);
-  assert.equal(climbed[0]?.crabsCleared, 0);
+  assert.equal(climbed[0]?.crabCells.length, 0);
   assert.equal(board.cells[flatIndexOf(board, 5, 9)], CRAB_CELL);
 
   const freed = resolveBoard(board, context, { kind: 'poke', cells: [0] });
 
   assert.equal(freed.length, 1);
-  assert.equal(freed[0]?.crabsCleared, 1);
+  assert.equal(freed[0]?.crabCells.length, 1);
   assert.equal(board.cells.includes(CRAB_CELL), false);
   assert.equal(board.cells.includes(-1), false);
 });
@@ -69,7 +69,7 @@ test('two crabs freed by one resolve step at full water score the published thir
   const steps = resolveBoard(board, context, { kind: 'poke', cells: [0] });
 
   assert.equal(steps.length, 1);
-  assert.equal(steps[0]?.crabsCleared, 2);
+  assert.equal(steps[0]?.crabCells.length, 2);
   assert.equal(stepPointsOf(steps[0]!, context), 36);
 });
 
@@ -85,7 +85,7 @@ test('a crab caught in a puffer detonation is removed but pays no crab bonus', (
   const cells = detonationCellsOf(board, 5, 5);
   const steps = resolveBoard(board, context, { kind: 'poke', cells });
 
-  assert.equal(steps[0]?.crabsCleared, 0);
+  assert.equal(steps[0]?.crabCells.length, 0);
   assert.equal(stepPointsOf(steps[0]!, context), 0);
   assert.equal(board.cells.includes(CRAB_CELL), false);
 });

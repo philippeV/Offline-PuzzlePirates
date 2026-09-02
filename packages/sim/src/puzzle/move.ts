@@ -42,7 +42,7 @@ export function applyBilgeMove(
 }
 
 export function stepPointsOf(step: ResolveStep, context: ResolveContext): number {
-  const crabs = crabScoreOf(step.crabsCleared, context.bilgePerMille, context.balance);
+  const crabs = crabScoreOf(step.crabCells.length, context.bilgePerMille, context.balance);
   return clearPointsOf(step, context) + crabs;
 }
 
@@ -71,6 +71,7 @@ function clearedEvent(tick: number, step: ResolveStep, context: ResolveContext):
     tick,
     chain: step.chain,
     cells: step.clearedCells,
+    crabs: step.crabCells,
     points: stepPointsOf(step, context),
     settleTicks: step.settleTicks,
   };

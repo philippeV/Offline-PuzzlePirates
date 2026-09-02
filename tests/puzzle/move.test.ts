@@ -99,6 +99,10 @@ test('crabs freed by a swap at full water add their bonus to the scored move', (
 
   assert.equal(cleared.length, 1);
   assert.equal(cleared[0]?.points, 16 + 36);
+  assert.deepEqual(cleared[0]?.crabs, [
+    flatIndexOf(puzzle.board, 8, 2),
+    flatIndexOf(puzzle.board, 10, 2),
+  ]);
   assert.equal(scoredPointsOf(events), 52);
   assert.equal(puzzle.board.cells.includes(CRAB_CELL), false);
 });

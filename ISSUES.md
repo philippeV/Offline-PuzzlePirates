@@ -4,6 +4,62 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 2b (OPP-13), critters and star levels
+
+What slice 2b left behind. None of it stops the slice: the three critters behave as the wiki
+describes, the published crab anchor is reproduced, and `npm run check` is green at 130 tests.
+
+### Carried in from slice 2 and still open
+
+- **`stepPointsOf` still runs twice per resolve step** (`packages/sim/src/puzzle/move.ts`) — once in
+  the reduction that totals the move and once again when the step's event is built. Pure and cheap;
+  it survived the restructuring into `move.ts` unchanged, so it is now an oversight twice over.
+- **`resolveBoard` still stops silently at its 64-step cap.** Critters do not make a 64-step cascade
+  reachable on a 12x12 board, but a crab climbing one row per step means a long chain now moves the
+  board in a second way, so the cap guards slightly more than it did.
+- **A cursor is still registered by opening a stream, not by drawing from it.** `bilge.critters`
+  inherits this from `bilge.refill`: an accepted swap or poke that clears nothing opens both cursors,
+  draws from neither, and still changes the state hash. Deterministic and harmless, but there are now
+  two streams for which "the hash changed" does not imply "something was drawn".
+
+### Left by the atomicity fix
+
+- **`sim.dispatch` is not atomic across a command array.** `parseCommand` runs over the whole array
+  first, so a parse failure is safe, but if `sim.dispatch` itself throws on command N then commands
+  0 to N-1 have already been applied and the caller is told the call failed. This is the same defect
+  class as the `sim.step` escape that this slice fixed, in a method the review did not measure. It is
+  the obvious next one to close.
+- **Every `sim.step` and `sim.runUntil` now takes a snapshot, including the calls that succeed.** For
+  today's `WorldState` that is a negligible JSON round trip against the per-tick work, but it is a
+  new fixed cost on the hot path and it scales with the state, not with the number of ticks.
+- **The event-budget boundary is balance-dependent.** `tests/harness/containment.test.ts` pins it at
+  99987 / 99988, down from the 99992 / 99993 the slice 2 test stage measured, because
+  `maxStarLevel` 7 adds five more `puzzle.levelChanged` events to a long step. The constant is
+  correct today and will move again with any tuning that changes the per-tick event rate.
+- **`packages/harness/src/limits.ts` is still not exported from the harness index**, so tests
+  hardcode `100000` and friends as literals rather than importing the limit they mean.
+
+### Left by the critters
+
+- **Nothing consumes `settleTicks` yet.** It is a per-step maximum — the slowest single fall — which
+  is the right shape for "how long would this step have taken" and the wrong shape for animating each
+  piece individually. If slice 5 wants per-cell timing it will need the falls themselves, which
+  `applyGravity` already returns and `resolveBoard` currently discards.
+- **Critter density above the water line is lower than the raw rates suggest.** Each spawn band maps
+  to exactly one critter, so a draw in the crab band that lands in a dry cell yields no critter at
+  all rather than falling through to a puffer. That is deliberate — it keeps `balance.json` honest
+  about the rates it states — but it means the effective critter rate is not the sum of the three
+  keys everywhere on the board.
+- **The fixtures are still implementation-generated.** The scenario, the golden and the bilging
+  replay are all change detection rather than validation. What is new is that the behaviour they
+  cover is now also pinned by hand-derived assertions — the 16-point combo, the 36-point crab pair
+  and the three published interactions are all derived from the wiki rather than from a recorded
+  hash, so a wrong scorer no longer passes the suite. The fixtures themselves still would.
+- **`pp-sim-harness/SKILL.md` documents no `crab-not-swappable` transcript.** Reaching a crab needs
+  star level 5, roughly 18000 idle ticks plus a below-waterline spawn roll, which is not a transcript
+  that fits the document. The reason is listed and the intro no longer claims the list is exhaustive.
+  The document's "Reading state" pointer list also omits `/rngStreams/bilge.critters`.
+
 ## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
 
 The run that wrote the entry below died before merging and was reaped; the re-run reproduced every

@@ -35,6 +35,7 @@ export interface BilgeClearedEvent {
   tick: number;
   chain: number;
   cells: number[];
+  crabs: number[];
   points: number;
   settleTicks: number;
 }
