@@ -1891,3 +1891,71 @@ which is what division uses.
 division, with the proceeds going back into the chest. That is a second selling path and a second
 price surface, and the loop closes without it, so it is not built — `market.sell` sells from the
 hold only.
+
+### 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
+
+Four lenses ran concurrently against the branch head `7306a53`, each in its own worktree. The review
+approved: nothing met the blocking test, and the slice went forward to the test stage. Everything
+found is recorded in `ISSUES.md` under the same date. What follows is only what the review changed or
+revealed about the *design*, which is what the next agent needs.
+
+**Two recorded decisions are not implemented as written, and both should be read as open rather than
+settled.**
+
+Decision 83 states `stepWorld`'s rule as ownership — "a battle nobody sailed into is not the world's
+to tidy up". The code guards on `state.voyage === null`, which asks whether *a* voyage is running, not
+whether *this* voyage owns the battle; `settleEncounter` never reads `voyage.shipId`. A probe on the
+pillage-loop scenario at seed 2 — chart an `evade` voyage, which can never spawn an encounter, then
+hand-start a battle and disengage — has the world strike the brigand off a battle no voyage owned.
+Slice 3's regression test passes only because it never has a voyage running. The same seam lets
+`battle.disengage` followed by `voyage.port` orphan a concluded battle until the next voyage's first
+tick. **Decision 83 stands as the intended rule; the implementation is a weaker approximation of it
+and is queued for repair.**
+
+Decision 88 claims the shared mass budget "makes division mass-neutral and removes any need for a
+capacity check when the chest empties". It is not mass-neutral. Mass is floored per lot array, so
+merging the chest into the hold re-floors the combined sum and can gain a kilogram —
+`small-cannon-ball` at 7100 g is the only commodity that triggers it, and it is buyable and
+plunderable. **The conclusion drawn from decision 88 — that no capacity check is needed — does not
+follow from its premise, and a check is queued.** The rest of the decision holds: the budget genuinely
+is shared, and a full hold genuinely does refuse plunder.
+
+**The tuning is tighter than its provenance claims, and the encounter rate is the case that matters.**
+Six `_sources` entries describe outcomes the constants do not deliver, all siblings of the
+`tradeSpawnPenaltyPerMille` defect this slice already found and fixed. The consequential one is
+`world.encounterChancePerMille`: because a pillage always adds both the difficulty term and the 300
+pillage bonus, the base 250 is never the per-leg chance. The real range across the chart is 550 to
+1000 per mille, and the only six-leg route out of Alkaid yields **4.61 expected battles** against the
+entry's stated 1.5. The entry says "a voyage rather than a gauntlet"; the tuning delivers the
+gauntlet. This is a balance decision the roadmap will have to take deliberately once a renderer makes
+a pillage observable — recorded here so slice 5 does not inherit the number as though it were
+measured.
+
+**The verification machinery held, and was checked rather than trusted.** The five re-blessed fixtures
+were independently reproduced: a live state rolled back across exactly the slice-4 delta reproduces
+every committed old hash, and every checkpoint reproduces its new hash live. No tick count, marker
+position or meter value moved. The diverged replay twin still differs from its sibling in exactly the
+tick-5 checkpoint, with its `note` intact. The layering gates were proved to enforce over the new
+`world/` subdirectory by planting a violation in a nested directory and watching them exit 1 — they
+are depth-agnostic by construction, so the fact that they were not modified for `world/` is correct
+rather than an oversight. The `_sources` bijection test bites in both directions.
+
+**Determinism is sound, including the part that looked riskiest.** The two new streams are lazily
+created and therefore path-dependent, but fully determined by the same inputs, and `canonicalJson`
+sorts keys so insertion order never leaks into the hash. Save/load and snapshot/restore were cut at
+six points across four seeds, including cuts inside a running battle, and reproduced identically each
+time. No world code draws from a pre-existing stream.
+
+**The tests defend the arithmetic and not the protocol.** Thirty injected faults, full suite each:
+sixteen died, fourteen survived, and the survivors cluster entirely in the dispatcher. Five of eight
+new events are asserted nowhere, nine of eighteen new rejection reasons are never asserted by name,
+and the one test covering this slice's own headline correction — that plunder is unsellable until
+divided — never reaches `sellCommodity` at all, because its fixture has no market. The production
+code is correct in every case probed; it is the protection that is missing. **This is the pattern
+slice 5 must not copy:** new events and rejection reasons need a test that names them, not a test that
+asserts the status was one of two values.
+
+**A layering drift worth knowing about.** `battle/booty.ts` now imports `cargoLotsMassKgOf` from
+`world/cargo.ts`, so the battle layer depends on the world layer. Decision 80 meant to keep the
+world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
+the dependency runs opposite to the stated intent, and slice 5 should not deepen it.

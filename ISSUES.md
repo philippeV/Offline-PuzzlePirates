@@ -4,6 +4,168 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
+
+A four-lens review of PR 5. Nothing blocked: `npm run check` is 383/383 from cold on two independent
+worktrees, both CI jobs are green, the re-blessed fixtures were independently reproduced and hide
+nothing, and the layering gates were proved to enforce over the new `world/` subdirectory. What
+follows is everything the four lenses substantiated and judged not worth stopping for. Two clusters —
+the settlement guard and the untested dispatcher seam — are queued as a follow-up development task
+rather than left here, because they are small and slice 5 will copy whatever it finds.
+
+### `stepWorld`'s guard asks whether a voyage is running, not whether it owns the battle
+
+`world/session.ts` guards on `state.voyage === null`; `settleEncounter` never reads `voyage.shipId`.
+Decision 83 states the rule as ownership — "a battle nobody sailed into is not the world's to tidy
+up" — and the code does not implement that. Demonstrated: on the pillage-loop scenario at seed 2,
+charting an `evade` voyage (which can never spawn an encounter, `encounterChanceOf` returns 0), then
+hand-starting a battle and disengaging, the world strikes the brigand off a battle no voyage owned.
+Slice 3's test passes only because it never has a voyage running. Bounded — it needs a `battle.start`
+issued mid-voyage, which no scenario drives — and closed by one predicate,
+`battle.ships.some((s) => s.shipId === voyage.shipId)`.
+
+### A concluded battle can be orphaned by `battle.disengage` followed by `voyage.port`
+
+Same seam. `port()` refuses only a *running* battle, and `stepWorld` returns early once
+`voyage === null`, so a battle that concluded by disengagement and was not settled in that tick
+survives the voyage that met it. While orphaned, `battle.start` is refused `battle-already-running`,
+`rollEncounter` returns nothing because `state.battle !== null`, and the brigand hull sits in
+`state.ships`. It self-heals on the first tick of the next voyage, at the cost of one tick of that
+voyage's `stepVoyage`. A second lens reached the same guard from the other side: deleting `port()`'s
+`battle-running` check passes the whole suite and strands the world permanently, because nothing
+asserts that reason.
+
+### `booty.divide` is not mass-neutral, so decision 88's reason for having no capacity check is wrong
+
+Mass is accounted as `floor(sum of grams / 1000)` per lot array, and `freeHoldOf` floors the hold and
+the chest separately. Merging the chest into the hold re-floors the combined sum, which can land 1 kg
+higher. `small-cannon-ball` at 7100 g is the only commodity whose mass is not a whole kilogram, and it
+is buyable and plunderable. Demonstrated: a sloop with 3 cannonballs and 13430 hemp in the hold and 7
+cannonballs in the chest divides to 13501 kg against a 13500 kg hold. One kilogram in 13500, and the
+soak invariant cannot see it because `freeHoldOf` clamps at zero — but decision 88 claims the shared
+budget "makes division mass-neutral and removes any need for a capacity check when the chest empties",
+and that justification does not hold.
+
+### The rule this slice was corrected to enforce is the one rule its tests do not check
+
+`tests/world/division.test.ts`'s "plunder cannot be sold before it is divided" asserts only that the
+result was `rejected`. The fixture sets `state.markets = []`, so `trade()` bails at
+`island-has-no-market` and never reaches `sellCommodity`: the test would pass if the hold/chest split
+did not exist. Confirmed by mutation — making `sellCommodity` fall back to `ship.bootyCargo`, which is
+precisely what decisions 86-89 forbid, passes all 383 tests. The production code is correct; the test
+protecting it is not. Assert the reason is `insufficient-cargo` and give the fixture a real market.
+
+### The dispatcher is untested as a dispatcher
+
+Thirty injected faults, full suite per fault: sixteen died, fourteen survived, and the survivors
+cluster in one place. Five of the eight new events appear in no test at all — `world.started`,
+`voyage.charted`, `voyage.ported`, `market.traded`, `booty.divided` — so the traded side can be
+inverted, the leg count zeroed, the ported island hard-coded, and `crewCutPoe` and `pirateSharePoe`
+swapped, all with a green suite. Nine of the eighteen new rejection reasons are never asserted by
+name. `tests/harness/world-commands.test.ts`'s six well-shaped cases assert only that the status is
+one of `accepted` or `rejected`, so mutating `applyWorldCommand` to refuse every world command
+unconditionally still passes it 17/17. The arithmetic is well defended; the protocol surface is not.
+
+### Rounding is exercised nowhere in the new money or mass arithmetic
+
+Four surviving mutants share one shape. The crew-cut test recomputes its expected value with
+production's own formula *and* picks numbers that divide exactly, so `floor` to `ceil` is invisible.
+`massKgOf` `floor` to `ceil` survives because `small-cannon-ball` — again, the only non-whole-kilogram
+commodity — is never bought or sold in any test. Dropping the floor on plundered units survives even
+though the truncation is genuinely reached (soak seed 95028 draws 5 cannonballs from a 40 kg chest),
+because the test asserts mass bounds and never asserts the unit count is an integer, so fractional
+cargo lots would flow into the hash unnoticed. Dropping the floor in `legTicksRequiredOf` survives
+only because the declared speeds are all round.
+
+### `orientationCostOf` decides 37% of real legs and no test measures it
+
+Decision 76's whole point is which of the two league costs a leg pays. The 40% ratio is tested only by
+handing the constant to `legTicksRequiredOf` directly; no test ever measures a voyage's duration.
+Making `orientationCostOf` always return the diagonal cost passes 383/383. It is not a dead path —
+across island pairs the routes use 52 horizontal legs against 88 diagonal ones, so a third of real
+legs would silently run 40% faster.
+
+### Six `_sources` entries promise an outcome the tuning does not deliver
+
+The same defect class as `tradeSpawnPenaltyPerMille`, which this slice already found and fixed. The
+bijection test is real — it derives both sides independently and bites in both directions — but it
+asserts existence, not accuracy.
+
+- `world.encounterChancePerMille` says a quarter of legs carrying a brigand "makes a six-leg pillage
+  average about one and a half battles, which is a voyage rather than a gauntlet". A pillage always
+  adds the difficulty term *and* the 300 pillage bonus, so 250 is never the per-leg chance: the
+  minimum anywhere on the chart is 550/1000 and the maximum 1000/1000. The only six-leg route out of
+  Alkaid carries 612, 675, 737, 800, 862, 925 — **4.61 expected battles**. The eight-leg route to
+  `mcguffins-isle` reaches 6.60 with the last leg a certainty. It is the gauntlet the entry denies.
+- `world.encounterDifficultyWeightPerMille` says "up to half of its base"; the term adds up to +500
+  against a base of 250, which is twice the base, not half.
+- `world.brigandCrewCount` says 5 sits "just below" the player's crew so an even fight tilts to the
+  player. A commissioned sloop defaults to `swabbieStaffing`, which is also 5.
+- `market.rawBasePricePoe` says a sloop's hold of raw goods is "the same order as a single brigand's
+  purse". The hold is 162,000 PoE; the purse is 800.
+- `market.startingStockUnits` says a dock opens with enough stock to fill a sloop's hold without
+  emptying the island. Buying every unit of every commodity at Alkaid yields 10,050 kg against a
+  13,500 kg hold.
+- `world.startingPoe` says 2000 covers a magazine and a little cargo. `small-cannon-ball` is refined
+  and spawns nowhere, so it prices at the scarcity premium of 56 PoE; the 40-shot magazine is 2240.
+
+### `session.load` casts rather than validates, so a save that parses is a save that loads
+
+`migrate()` ends in `return current as unknown as WorldState`. Anything past the `schemaVersion` gate
+becomes session state: `{"schemaVersion":5}` is accepted and answered with a hash, and the next
+`sim.step` dies `internal-error: Cannot read properties of undefined`. The existing test refuses `{}`
+only for want of a `schemaVersion`. Two related edges: malformed saves surface as `internal-error`
+(-32603) rather than `invalid-params`, because `statusOf()` hashes outside `loadSim`'s try/catch; and
+a save whose `voyage.route` names a league point that does not exist loads cleanly, then throws from
+`stepVoyage` *after* incrementing `legTicks` and `legIndex`, so the session advances a tick and loses
+its events. Local, single-player and self-inflicted, but the RPC contract says bad params yield
+`invalid-params` and this slice's own tests show that intent. The `schemaVersion` gate itself is
+sound: 999, 1e308, 0, -1, 4.5, absent, non-numeric and non-string were each refused cleanly, and no
+prototype-pollution path exists — every domain lookup table is deliberately null-prototype.
+
+### The sim's own command layer accepts negative quantities
+
+`buyCommodity` and `sellCommodity` never check that units are non-negative, and neither does
+`applyWorldCommand`. Every guard reads the wrong way round for a negative: the stock check, the purse
+check and the mass check all pass trivially. Called directly, `market.buy` of -1000 cannonballs is
+accepted, mints 56,000 PoE and writes a negative lot that makes `freeHoldOf` exceed capacity.
+Unreachable over the protocol — `parseCommand`'s `requiredCount` refuses it, and `replay.verify` goes
+through the same parser — which is why it is recorded rather than returned. It is worth noting because
+every other domain rule is enforced in the sim, and `Sim.dispatch`, `applyWorldCommand`,
+`buyCommodity` and `sellCommodity` are all public API of `@opp/sim`.
+
+### Migration 4 silently drops `balance` from a real v4 save
+
+The migration spreads the save and sets `balance: null`. A genuine v4 save keeps its ships and puzzle
+but comes back with no balance, and the migrated session then refuses `world.start` with
+`balance-missing`. This matches migrations 2 and 3 and is probably deliberate, since the `Balance`
+shape changed again this slice — but it is silent, and nothing tests it: `packages/fixtures/saves/`
+holds only v2 and v3 saves, and `tests/sim/migration.test.ts` fabricates its v4 by relabelling a v5
+state of a sim with no ships and no balance.
+
+### The battle layer now depends on the world layer
+
+`battle/booty.ts` imports `cargoLotsMassKgOf` from `../world/cargo.ts` so `freeHoldOf` can count lots.
+Decision 80 meant to keep the world's denomination out of the battle layer entirely; the mass
+accounting now flows the other way. Both gates accept it, so nothing is broken — recorded because the
+decision says otherwise.
+
+### Small duplications in `world/`
+
+`GRAMS_PER_KG` is declared in both `world/cargo.ts` and `world/encounter.ts`, and `encounter.ts`
+open-codes the inverse of `massKgOf` rather than sharing it. The island predicate exists twice, as
+`isIsland` in `voyage.ts` and `isIslandId` in `dispatch.ts`, and `charter()` calls one before
+`chartVoyage` re-checks with the other. In `tests/world/soak.test.ts`, `ladenKgOf` re-implements
+`freeHoldOf`'s arithmetic but omits the booty chest, and `breachesOf` scans the hold for negative lots
+but not the chest; no reachable miss was found across the 12 soak seeds, so it is latent rather than
+live.
+
+### A lost encounter costs the player nothing
+
+The brigand is deleted on a loss exactly as on a win, so a `pillage` voyage carries no downside beyond
+forgone booty and `evade` buys nothing. Unspecified in decisions 74-89 rather than contradicted by
+them, and a balance question rather than a defect.
+
 ## 2026-09-02 — development of slice 4 (OPP-11)
 
 The world, the voyage and the port economy. What follows is what the work turned up that was not
