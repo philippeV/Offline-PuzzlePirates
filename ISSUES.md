@@ -4,6 +4,94 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — independent review of the slice 1 rework (cycle 2), PR 1
+
+Four lenses over commits `bfaeaec` and `24e78b8`. No blocking findings; the three repairs hold and
+every guard was independently re-broken. What follows is everything judged not worth stopping for,
+plus one correction that matters more than the rest of the list.
+
+### The premise that was wrong
+
+- **readline assembles an unbounded input line, and the process dies before either containment layer
+  can see it.** Measured against the real binary: the harness answered `session.new`, then received
+  ~512 MB of the byte `a` with no newline and no JSON validity, and exited — `RangeError: Invalid
+  string length` on a default heap, and under `--max-old-space-size=256` a `FATAL ERROR: Reached heap
+  limit`, exit 134, which is an abort no `catch` can reach. Reproduced independently during the
+  review. The accumulation happens inside `createInterface` (`packages/harness/src/server.ts:15`),
+  before the `line` event that `answer` wraps, so neither layer added this cycle applies.
+
+  **This is not a finding against the rework.** `createInterface` has been there since `8c3d314`, the
+  diff neither introduced nor worsened it, and the requirement the task set — that no *well-formed
+  request* can end the process, and that a serialisation failure becomes an answer — is met and was
+  verified. It is recorded here because it **falsifies a premise this cycle wrote down twice**: both
+  decision 31 and the echo-paths entry below justified leaving other paths uncapped on the grounds
+  that such a request line "could not have been assembled". It can be. Those two sentences are now
+  corrected rather than left to mislead the next cycle.
+
+  What it costs: the harness is killable by a client that writes bytes without a newline, taking every
+  open session with it. What would fix it: a maximum input line length enforced as bytes arrive, which
+  is the same shape of decision as the session and snapshot eviction policy already deferred to slice
+  2, and belongs with it rather than bolted onto a serialisation repair.
+
+- **`sim.dispatch` was not "the only amplifier".** `sim.step` returns 5,826,153 bytes for an 85-byte
+  request — 68,543x, against dispatch's 2.02x at the new cap. It is survivable because
+  `MAX_EVENTS_PER_RESPONSE` hard-bounds it, so decision 31's *conclusion* stands and no cap is needed;
+  only its stated reasoning was too narrow.
+
+### Bounds and stalls, measured rather than estimated
+
+- **`replay.verify`'s quadratic rescan, timed.** `dispatchIssuedAt` (`packages/harness/src/replay.ts:63`)
+  rescans the whole command list per tick. 100,000 commands at tick 0 plus one checkpoint at tick
+  1,000,000 — every value inside its documented cap — blocked the harness for **8 min 4 s**, answering
+  nothing for any session. This confirms the entry already recorded below and replaces its estimate
+  with a measurement.
+- **A refusal that has already advanced the session.** `sim.runUntil` calls
+  `refuseBeyondEventBudget` after `sim.step(1)` has run (`packages/harness/src/methods/sim.ts:88-92`),
+  so a `limit-exceeded` leaves the session 100,001 ticks further on with no `ticksStepped` in the
+  response. Only the caller's own session, and it stays internally consistent. The `sim.step` sibling
+  is already recorded below; `runUntil` is the reachable one.
+
+### The purity gate, past what it now guards
+
+- **The binding test pins one file, not the glob.** It proves the rules reach
+  `packages/sim/src/index.ts`. Narrowing the glob to exactly that file leaves every other sim source
+  unguarded with all 59 tests green. It upgrades "any glob change" to "any glob change that still
+  matches index.ts" — a real improvement, short of the "closes the gap permanently" the analysis
+  claimed.
+- **`assert.equal(selectors.length, 4)` catches deletion but not garbling.** Mutating
+  `NewExpression[callee.name='Date']` to `callee.name='Datte'` leaves all eight purity tests green —
+  the same defect class as the dead `TSImportType` selector this cycle found by hand. Decision 35
+  declined to pin selector spellings because doing so would have cemented the typo; **that reason
+  expired the moment repair 3 landed.** Pinning the four selector strings, in the `includes` style the
+  sibling assertions already use, strictly dominates the count: it catches deletion and garbling both,
+  and fails loudly on the next typescript-eslint major instead of going silently dead. This is the
+  cheapest real improvement on the list.
+- **`severityAsNumber` will fail a valid future rule.** Its non-array branch returns the value
+  untouched, so a rule declared as `eqeqeq: 'error'` prints `[2]` and compares against `'error'` —
+  a spurious failure on a correct config, contradicting decision 32's "no test maintenance" claim.
+  Normalising both sides to array form is one line.
+- **The custom message strings are untested prose.** Rewriting them to nonsense leaves all eight
+  purity tests green; the binding test compares the config to itself and the fixtures match only
+  ESLint's generated prefixes.
+
+### Tidy-ups
+
+- `printedConfigFor` JSON-parses stdout and stderr concatenated, so any warning on stderr would
+  surface as a syntax error that reads like a config fault. Parsing stdout alone is safer.
+- `answers()` in `containment.test.ts` re-implements `readResponses` from `client.ts` — but buffers
+  lines the older one drops, so it is the better implementation and the natural seed for the
+  `client.ts` fix already recorded below.
+- The `JSON.stringify` stub restores in a `finally`, which does not run if a body hangs rather than
+  throws. Contained today only because the affected test is last in its file — an ordering dependency
+  nobody wrote down. A `t.after()` restore removes it.
+- The containment test never tears down `serve`, its two `createInterface`s or its `PassThrough`s.
+- Two coverage gaps in decision 30's own guarantees: nothing asserts the fallback message is a
+  *literal* rather than `String(cause)`, and `MAX_ECHOED_ID_LENGTH` is exercised at 257 but not at its
+  256 boundary, so an off-by-one would pass.
+- `echoableId` bounds `id.length` in UTF-16 code units, so 128 astral characters pass a 256 check and
+  serialise to ~1 KB — above decision 30's "under about 400 bytes". No failure mode.
+- `optionalArray` (`packages/harness/src/params.ts:74`) now has no callers.
+
 ## 2026-09-02 — analysis of the cycle 1 review findings (cycle 2)
 
 Found while prototyping the two repairs. None of them blocks that work.
@@ -11,7 +99,7 @@ Found while prototyping the two repairs. None of them blocks that work.
 ### Resources nothing bounds
 
 - **`SessionRegistry` caps neither sessions per process nor snapshots per session.** `snapshot.take` in a loop grows the heap without limit, and so does opening sessions. This is resource exhaustion rather than response size, so the containment layers added this cycle do not help — an OOM kill is not a throw anything can catch. It is out of scope here because it is a different failure mode from the one under repair and needs its own decision about eviction policy, which slice 2's session lifetime work is the natural place for. Worth a ticket of its own rather than an entry here if it is still open by then.
-- **The echo paths are unbounded but cannot currently overflow.** `replay.verify` echoes `expectedHash` verbatim, and the `method-unknown`, `scenario-unknown` and `pointer-unknown` messages echo the offending name. All are 1x or smaller, so a response cannot exceed the maximum string length unless the request line already did — which readline could not have assembled. A `MAX_ECHOED_STRING_LENGTH` truncation inside `RpcError` message construction would cover all of them at once and is the obvious belt-and-braces, but there is no reachable failure to justify it today.
+- **The echo paths are unbounded but cannot currently overflow.** `replay.verify` echoes `expectedHash` verbatim, and the `method-unknown`, `scenario-unknown` and `pointer-unknown` messages echo the offending name. All are 1x or smaller, so a response cannot exceed the maximum string length unless the request line already did. **The clause that once followed here — that readline could not have assembled such a line — was false, and is corrected in the cycle 2 review entry above.** A `MAX_ECHOED_STRING_LENGTH` truncation inside `RpcError` message construction would cover all of them at once and is the obvious belt-and-braces, but there is no reachable failure to justify it today.
 
 ### The last unguarded throw
 

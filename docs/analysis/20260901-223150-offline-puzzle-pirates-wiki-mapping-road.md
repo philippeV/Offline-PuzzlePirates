@@ -791,3 +791,64 @@ review identified, reproduced and now closed.
 
 **Deviation, as in cycles 1 and 2.** This entry is committed to the feature branch, not
 `agent/develop`, for the reason recorded in decision 23. It reaches `agent/develop` when PR 1 merges.
+
+### 2026-09-02 — independent review of the slice 1 rework (cycle 2)
+
+Four lenses over `bfaeaec` and `24e78b8`. **No blocking findings. PR 1 approved and forwarded to the
+test stage.** All ten decisions (27 to 36) are implemented as recorded, verified decision by decision
+against an isolated checkout rather than against the author's account of them.
+
+**The six-break table was re-run independently and is accurate in all six rows**, including the two
+cross-claims that matter most: with layer 1 removed the layer 2 test still passes, and with layer 2
+removed the layer 1 tests still pass. The review added a seventh break the rework did not claim —
+neutering `echoableId` — and the id-bounding test caught it. No test in the change is vacuous; every
+one was falsified by at least one mutation.
+
+#### A premise this cycle recorded twice, and got wrong
+
+Decision 31 justified leaving the 1x echo paths uncapped on the grounds that for any of them to
+overflow a response, "the request line would already have had to exceed the maximum string length,
+which readline could not have assembled." The same sentence went into `ISSUES.md`.
+
+**readline assembles it.** Measured against the real binary, and reproduced independently: the harness
+answers `session.new`, then takes ~512 MB of a single repeated byte with no newline and no JSON
+validity, and exits — `RangeError: Invalid string length` on a default heap, `FATAL ERROR: Reached
+heap limit` and exit 134 under a 256 MB one, which is an abort no `catch` can reach. The accumulation
+happens inside `createInterface` in `server.ts`, before the `line` event that layer 2 wraps, so
+neither containment layer applies.
+
+**Decision 31's conclusion survives; only its reasoning was wrong.** No cap belongs on the echo paths
+— they are 1x, and the thing that kills the process is the input line, not the response. So this
+changes no code in the slice. Both statements of the false premise have been corrected in place
+rather than left for the next cycle to inherit, which is the whole reason this document exists.
+
+**Why it is not blocking, recorded so the judgement can be challenged.** `createInterface` has been in
+`server.ts` since `8c3d314`; the rework neither introduced nor worsened it, so it is not a regression.
+The requirement the task set — no *well-formed request* ends the process, and a serialisation failure
+becomes an answer — is met, and was verified rather than assumed. The failure is resource exhaustion
+by an unterminated non-request, the same family as the unbounded sessions and snapshots already
+deferred to slice 2 with the same observation that containment cannot help. It needs a maximum input
+line length enforced as bytes arrive, which is a slice 2 decision about limits and eviction, not a
+patch to a serialisation repair. At cycle 2 of a ceiling of 3, spending the last cycle on a
+pre-existing defect outside the task's scope would have stopped the lineage for something this PR did
+not cause. It is recorded in `ISSUES.md` with the reproduction.
+
+**A related correction.** `sim.dispatch` was not "the only amplifier" — `sim.step` returns 5,826,153
+bytes for an 85-byte request, 68,543x against dispatch's 2.02x at the new cap. It is survivable
+because `MAX_EVENTS_PER_RESPONSE` bounds it, so again the conclusion stands and only the reasoning was
+too narrow.
+
+#### What the review says about the gate the cycle just built
+
+The binding test proves the rules reach `packages/sim/src/index.ts` — not that they reach the glob.
+Narrowing the glob to that one file leaves every other sim source unguarded with all 59 tests green.
+It is a genuine improvement over cycle 1, and less than "closes the coverage gap permanently".
+
+More usefully: `assert.equal(selectors.length, 4)` catches a deleted selector but not a garbled one —
+mutating `callee.name='Date'` to `'Datte'` leaves the suite green, which is precisely the defect class
+repair 3 fixed by hand. Decision 35 declined to pin selector spellings because that would have
+cemented the typo; **that reason expired when repair 3 landed.** Pinning the four strings now
+dominates the count on every axis. It is in `ISSUES.md` as the cheapest real improvement available,
+and is the natural first thing to pick up if slice 1 is ever reopened.
+
+**Deviation, as in cycles 1 and 2.** Committed to the feature branch for the reason in decision 23.
