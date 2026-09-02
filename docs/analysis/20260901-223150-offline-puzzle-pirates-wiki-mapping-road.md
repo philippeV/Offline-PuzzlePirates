@@ -852,3 +852,54 @@ dominates the count on every axis. It is in `ISSUES.md` as the cheapest real imp
 and is the natural first thing to pick up if slice 1 is ever reopened.
 
 **Deviation, as in cycles 1 and 2.** Committed to the feature branch for the reason in decision 23.
+
+### 2026-09-02 — physical test of the slice 1 rework (cycle 2)
+
+PR 1 at `a32f235` driven as a real process — `node packages/harness/bin/pp-harness.ts`, request
+lines written to stdin, response lines read back off stdout. Nothing was exercised by importing the
+modules; the cycle 2 review already did that, and the point of this stage is the wire. **Everything
+the task asked for passed. No blocking failures. PR 1 merged into `agent/develop`.**
+
+`git status` was clean before the run and clean after it. The two wire scenarios ran concurrently,
+which is safe here for a reason worth writing down rather than re-deriving: the harness imports only
+`node:readline`, holds sessions and snapshots in a per-process `Map`, and writes nothing to disk, so
+a test run cannot dirty the tree the way the three concurrent review checkouts did.
+
+| What was exercised over the wire                      | Observed                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `sim.dispatch` of exactly 100000 commands             | Accepted. 100000 results, all `accepted`, tick 0, hash `64888294451645b8`, an 8,575,087-byte reply line |
+| `sim.dispatch` of exactly 100001 commands             | Refused: `-32005`, `params.commands must not exceed 100000 entries`, `data.reason` `limit-exceeded`     |
+| The request immediately after each refusal            | Answered normally                                                                                       |
+| A second session held open across the refusal         | `/markers` byte-identical, tick still 0 — the refusal neither advanced nor lost it                      |
+| The refusal repeated a second time                    | Still serving; same error, then two more answered requests                                              |
+| `session.new` → dispatch → `sim.step` 5 → `state.get` | Tick advanced by exactly 5, marker at (8,9), coherent with the emitted event stream                     |
+| `snapshot.take`, diverge, `snapshot.restore`          | Restore returned tick 5 and hash `5f9b4c06037ce0f5`, identical to the snapshot; `/markers` identical    |
+| `replay.verify` against the committed fixture         | `ok: true`, tick 12, `finalHash` `bf6370fad4b0fb94` equal to the fixture's, `divergedAtTick` null       |
+| `session-unknown`, `method-unknown`, `parse-error`    | `-32001`, `-32601`, `-32700` with `id: null`; the stream did not desync and the next request answered   |
+| Termination                                           | Exit 0 on stdin EOF, stderr empty, exactly one response line per request in both scenarios              |
+| `npm run check` from cold                             | Exit 0 — 59 tests, 0 failures                                                                           |
+| CI on PR 1                                            | Both `check` jobs green                                                                                 |
+
+**The cap's boundary is exact-inclusive on the wire**, matching what `protocol.test.ts` asserts in
+process: 100000 is served, 100001 is refused, and the refusal is the same `limit-exceeded` shape
+every other cap produces. The survival claim is the one that needed a real process to mean anything,
+and it holds twice over — the harness refuses, keeps its heap, and answers again.
+
+**The regression sweep is the result that matters most.** Both containment wrappers sit on the path
+every single response takes, so the risk in this rework was never the cap; it was the wrappers
+quietly changing ordinary traffic. They do not. Hashes are reproducible, restore is bit-exact, the
+committed fixture verifies to its committed hash, and all three error classes still carry their own
+codes and reasons rather than being flattened into the fallback.
+
+**Deliberately not exercised**, per the task and `ISSUES.md`: the unterminated input line that kills
+the process (pre-existing since `8c3d314`, deferred to slice 2), `replay.verify` at 100000 commands
+against a distant checkpoint, and `sim.runUntil` refusing on the event budget. Rediscovering a
+documented, deferred defect is not a use of the last cycle.
+
+**One non-blocking observation**, recorded in `ISSUES.md`: `marker.place` is a move-to-absolute on
+an existing marker and emits `marker.moved`. Both testers assumed the name meant creation and had a
+command rejected before reading the source. The behaviour is right; the name is what misleads.
+
+**No deviation this time.** This entry is committed to the feature branch as the last commit of PR
+1, and reaches `agent/develop` with the merge that immediately follows it — which is the moment
+decision 23 was waiting for.

@@ -4,6 +4,34 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of the slice 1 rework (cycle 2), PR 1
+
+The real binary driven over stdin and stdout: the dispatch cap at both sides of its boundary,
+survival across repeated refusals, a full ordinary session, the committed replay fixture, `npm run
+check` from cold and both CI jobs. All green, and PR 1 merged into `agent/develop`. One observation,
+surfaced only because this stage spoke the protocol instead of calling the modules.
+
+### `marker.place` neither places nor reports placing
+
+- **It is a move-to-absolute on a marker that must already exist.** `packages/sim/src/marker.ts`
+  looks the id up first and answers `{"status":"rejected","reason":"unknown-marker"}` when it is
+  absent, so `marker.place` against any id the scenario did not spawn is refused — the
+  `marker-field` scenario spawns exactly one, id 1. It then emits `marker.moved`, not a placement
+  event. Both testers guessed creation from the name and had a command rejected before they read the
+  source.
+
+  **Not blocking, and not a defect.** The behaviour is correct, internally consistent and covered by
+  the suite; only the name points the wrong way. What it costs is a wrong first guess from every
+  future client author, paid again each time. What it will cost later: slice 2 adds a real command
+  set and inherits this vocabulary, so the misnomer either gets fixed there or becomes the
+  convention.
+
+  **Why it was not fixed here.** The name is baked into
+  `packages/fixtures/replays/marker-drift.json`, so renaming it to something honest —
+  `marker.moveTo` — is a protocol change plus a re-recorded fixture, not a rename. That belongs with
+  slice 2's command-set decisions, alongside the selector pinning recorded in the cycle 2 review
+  entry below, as the other cheap improvement waiting for slice 1 to reopen.
+
 ## 2026-09-02 — independent review of the slice 1 rework (cycle 2), PR 1
 
 Four lenses over commits `bfaeaec` and `24e78b8`. No blocking findings; the three repairs hold and
