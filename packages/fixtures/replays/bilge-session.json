@@ -1,0 +1,94 @@
+{
+  "seed": 20260902,
+  "scenario": "bilge-session",
+  "lastTick": 14,
+  "commands": [
+    {
+      "tick": 0,
+      "command": {
+        "op": "bilge.swap",
+        "x": 1,
+        "y": 0
+      }
+    },
+    {
+      "tick": 4,
+      "command": {
+        "op": "bilge.swap",
+        "x": 10,
+        "y": 0
+      }
+    },
+    {
+      "tick": 9,
+      "command": {
+        "op": "bilge.swap",
+        "x": 0,
+        "y": 1
+      }
+    }
+  ],
+  "hashTrail": [
+    {
+      "tick": 0,
+      "hash": "5333c090320400b8"
+    },
+    {
+      "tick": 1,
+      "hash": "9ce426bf0410e617"
+    },
+    {
+      "tick": 2,
+      "hash": "e64464c39228428b"
+    },
+    {
+      "tick": 3,
+      "hash": "039bc6ddd2923bca"
+    },
+    {
+      "tick": 4,
+      "hash": "3e62dddd91538d0c"
+    },
+    {
+      "tick": 5,
+      "hash": "bfcb611f7e132ddc"
+    },
+    {
+      "tick": 6,
+      "hash": "0e825224a5e4f17b"
+    },
+    {
+      "tick": 7,
+      "hash": "dc8498571a724a6f"
+    },
+    {
+      "tick": 8,
+      "hash": "f0e385027158aaf0"
+    },
+    {
+      "tick": 9,
+      "hash": "1fa5cbc10fc7f788"
+    },
+    {
+      "tick": 10,
+      "hash": "16fec2cf40275e34"
+    },
+    {
+      "tick": 11,
+      "hash": "605cb3ec92e89b7c"
+    },
+    {
+      "tick": 12,
+      "hash": "65d04b5180c780e5"
+    },
+    {
+      "tick": 13,
+      "hash": "fca5616120366678"
+    },
+    {
+      "tick": 14,
+      "hash": "f7ec793955e4d75f"
+    }
+  ],
+  "finalHash": "f7ec793955e4d75f"
+}

@@ -1,3 +1,31 @@
 {
-  "_note": "Constants the Puzzle Pirates wiki does not publish are invented here and nowhere else, so invented numbers stay visibly separate from sourced ones and tuning stays a data change. Empty until a slice needs a value."
+  "_note": "Constants the Puzzle Pirates wiki does not publish are invented here and nowhere else, so invented numbers stay visibly separate from sourced ones and tuning stays a data change. Every key carries an entry in _sources saying where its value came from; a key with no entry is a bug.",
+  "_sources": {
+    "bilging.boardWidth": "invented; the wiki never states the grid dimensions",
+    "bilging.boardHeight": "invented; the wiki only requires at least 3 water rows and at least 3 dry top rows, so the height must be at least 6",
+    "bilging.colourCountByStarLevel": "invented, anchored on the published 7 colours at star level 7",
+    "bilging.maxStarLevel": "scope decision; star levels 0-2 carry no critter, and no critter has a published score",
+    "bilging.startingStarLevel": "scope decision; an offline pirate starts with no standing to draw a difficulty from",
+    "bilging.ticksPerStarStep": "invented; one star level per minute of play at 60 ticks per second",
+    "bilging.comboMultiplierByLineCount": "published for 1, 2 and 3 lines; index 4 is the low end of the published range at least 4, maybe 5; index 5 is invented",
+    "bilging.vegasMultiplier": "the low end of the published range at least 5, maybe 6-7",
+    "bilging.chainPointsPerCell": "published; a chain is worth no more than 1 point per block cleared",
+    "bilging.inflowPerMillePerThousandTicks": "invented; the bilge-to-performance coupling rate is nowhere on the wiki. An ignored board floods from empty to full in about 119 seconds",
+    "bilging.pumpPerMillePerThousandTicks": "invented; the board drains at any efficiency above 467 per mille and empties from full in about 104 seconds at 100 per cent efficiency",
+    "bilging.ratingBandsPerMille": "invented; the lower bound of poor, fine, good, excellent and incredible, honouring the published fine at about 100 per cent and sparkly at 4 points per move"
+  },
+  "bilging": {
+    "boardWidth": 12,
+    "boardHeight": 12,
+    "colourCountByStarLevel": [4, 4, 5, 5, 6, 6, 7, 7, 7, 7],
+    "maxStarLevel": 2,
+    "startingStarLevel": 0,
+    "ticksPerStarStep": 3600,
+    "comboMultiplierByLineCount": [0, 1, 2, 3, 4, 6],
+    "vegasMultiplier": 5,
+    "chainPointsPerCell": 1,
+    "inflowPerMillePerThousandTicks": 140,
+    "pumpPerMillePerThousandTicks": 300,
+    "ratingBandsPerMille": [500, 900, 1100, 1333, 1667]
+  }
 }

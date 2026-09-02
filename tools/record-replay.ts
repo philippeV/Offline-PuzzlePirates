@@ -14,6 +14,7 @@ export interface ReplayPlan {
 
 export interface ReplayFixture extends Replay {
   scenario: string;
+  lastTick?: number;
 }
 
 export async function recordReplay(harness: Harness, plan: ReplayPlan): Promise<Replay> {
@@ -41,7 +42,7 @@ export async function recordReplay(harness: Harness, plan: ReplayPlan): Promise<
 export function lastTickOf(fixture: ReplayFixture): number {
   const commandTicks = fixture.commands.map((entry) => entry.tick);
   const trailTicks = fixture.hashTrail.map((checkpoint) => checkpoint.tick);
-  return Math.max(0, ...commandTicks, ...trailTicks);
+  return Math.max(0, fixture.lastTick ?? 0, ...commandTicks, ...trailTicks);
 }
 
 function commandsIssuedAt(commands: ReplayCommand[], tick: number): ReplayCommand['command'][] {
@@ -66,6 +67,7 @@ async function rerecord(path: string): Promise<void> {
   const written: ReplayFixture = {
     seed: recorded.seed,
     scenario: fixture.scenario,
+    lastTick: lastTickOf(fixture),
     commands: recorded.commands,
     hashTrail: recorded.hashTrail,
     finalHash: recorded.finalHash,

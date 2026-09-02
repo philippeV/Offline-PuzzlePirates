@@ -2,12 +2,16 @@ import { advanceTick } from './clock.ts';
 import type { Command, CommandResult } from './commands.ts';
 import type { SimEvent } from './events.ts';
 import { hashCanonical } from './hash.ts';
-import { applyCommand, driftMarkers, spawnMarker } from './marker.ts';
+import { applyMarkerCommand, driftMarkers, spawnMarker } from './marker.ts';
+import type { PuzzleBalance } from './puzzle/balance.ts';
+import { applyPuzzleCommand } from './puzzle/dispatch.ts';
+import { stepPuzzle } from './puzzle/session.ts';
 import { deserialise, serialise } from './save.ts';
 import { cloneWorldState, createWorldState, type WorldState } from './state.ts';
 
 export interface SimOptions {
   seed: number;
+  balance?: PuzzleBalance;
 }
 
 export type Snapshot = WorldState;
@@ -20,7 +24,7 @@ export class Sim {
   }
 
   static create(options: SimOptions): Sim {
-    const state = createWorldState(options.seed);
+    const state = createWorldState(options.seed, options.balance ?? null);
     spawnMarker(state);
     return new Sim(state);
   }
@@ -34,7 +38,10 @@ export class Sim {
   }
 
   dispatch(command: Command): CommandResult {
-    return applyCommand(this.#state, command);
+    if (command.op === 'marker.move' || command.op === 'marker.place') {
+      return applyMarkerCommand(this.#state, command);
+    }
+    return applyPuzzleCommand(this.#state, command);
   }
 
   step(ticks: number): SimEvent[] {
@@ -42,6 +49,7 @@ export class Sim {
     for (let remaining = ticks; remaining > 0; remaining -= 1) {
       advanceTick(this.#state);
       events.push(...driftMarkers(this.#state));
+      events.push(...stepPuzzle(this.#state));
     }
     return events;
   }

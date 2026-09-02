@@ -1,3 +1,4 @@
+export { BALANCE, loadPuzzleBalance } from './balance.ts';
 export { RpcError, type RpcErrorBody, type RpcErrorReason } from './errors.ts';
 export { methods } from './methods/index.ts';
 export {
@@ -15,6 +16,6 @@ export {
   type RpcResponse,
   type RpcSuccess,
 } from './rpc.ts';
-export { DEFAULT_SCENARIO } from './scenarios.ts';
+export { BILGE_SCENARIO, DEFAULT_SCENARIO, createScenarioSim } from './scenarios.ts';
 export { serve } from './server.ts';
 export { SessionRegistry, type Session, type SimStatus } from './sessions.ts';

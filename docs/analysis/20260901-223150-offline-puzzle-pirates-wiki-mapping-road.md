@@ -903,3 +903,269 @@ command rejected before reading the source. The behaviour is right; the name is 
 **No deviation this time.** This entry is committed to the feature branch as the last commit of PR
 1, and reaches `agent/develop` with the merge that immediately follows it — which is the moment
 decision 23 was waiting for.
+
+### 2026-09-02 — development, slice 2 (OPP-9)
+
+The generic tile-grid puzzle framework and Bilging on top of it, built on `agent/develop` at
+`8781b2a` — slice 1 had merged, so this branched from the integration branch rather than from
+slice 1's feature branch as the task's fallback allowed.
+
+**What is here.** `packages/sim/src/puzzle/` holds nine modules: the generic board (`board.ts`,
+`runs.ts`, `resolve.ts`), the scoring model shared by every future duty puzzle (`scoring.ts`,
+`frame.ts`), the Bilging specifics (`bilging.ts`), and the session, its per-tick step and its
+reducer (`session.ts`, `dispatch.ts`). `WorldState` gains `balance` and `puzzle`, the schema moves
+to 3 with a real migration, `Sim.dispatch` became a top-level route, and `Sim.step` runs markers
+then the puzzle. The harness gains a `balance.json` loader, a `bilge-session` scenario, the two new
+command arms, and the scenario threading that `replay.verify` was missing.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                | Rationale                                                                                                                                     |
+| -- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 37 | The puzzle lives in `packages/sim/src/puzzle/`, not a `packages/puzzle`  | A separate package cannot be purity-gated and import `@opp/sim` at once: the dependency gate forbids the dependency, the import gate the specifier |
+| 38 | The marker placeholder domain stays                                     | Deleting it is not in this task, and slice 1's marker tests are the regression coverage for machinery slice 2 now leans on                        |
+| 39 | Critters and token pieces are deferred; `maxStarLevel` is 2             | The wiki gates puffer at 3 stars, crab at 5, jelly at 6, and none has a published score. Stars 0-2 are complete by the published rules            |
+| 40 | Resolution is instant, inside the swap                                  | Matches the repo's "dispatch applies immediately" rule. The below-waterline fall slowdown has no published ratio and changes no score            |
+| 41 | `balance.json` is loaded by the harness and pinned into hashed state    | The sim cannot read a file. In state, the tuning a replay was recorded under is part of its hash, so a balance edit that changes play fails loudly |
+| 42 | `balance` is optional on `SimOptions`, and `puzzle.start` rejects without it | Keeps every existing marker-only call site working unchanged instead of rippling a required option through slice 1's tests                    |
+| 43 | The stall rule charges exactly one move per expired empty interval      | The cross-cutting frame documents this for Sailing; the Bilging page says only "a penalty equivalent to one click". Same rule, one implementation |
+| 44 | The published score table lives in `scoring.ts`, not `balance.json`     | `balance.json` is for invented numbers. A sourced table in a tuning file would blur exactly the line decision 6 exists to draw                    |
+| 45 | `verifyReplay` routes through `createScenarioSim`                       | It ignored the recorded scenario, harmless with one scenario and silently wrong with two. The bilging fixture would have verified a marker board  |
+
+**The published table is reproduced exactly.** All fifteen rows of the worked score table in
+`01-duty-puzzles.md` come out of `comboScoreOf`, and all sixty cells of its efficiency matrix out of
+`movesForEfficiencyMilli`. The matrix needed efficiency expressed as an exact fraction rather than a
+per-mille scalar: at 166 % a per-mille 1333 puts the `4` row at 0.999 instead of the published 1.
+Base points are implemented as `2 * length - 3`, which is not a wiki formula but reproduces all
+three published rows and extrapolates to the longer runs a 12-wide board allows.
+
+**Invented constants.** Twelve, all in `balance.json`, each with an entry in a `_sources` map saying
+where it came from — `invented`, `published`, or `scope decision`. A key with no entry is a bug. The
+board is 12x12, the coupling rates flood an ignored board in about two minutes and drain a
+well-played one, and the rating bands honour the only two published anchors: Fine at roughly 100 %
+efficiency, sparkly at four points per move. No invented number lives anywhere else in the tree.
+
+**No floats reach state.** Every rate is per-mille integer arithmetic with a bounded accumulator, so
+`canonicalJson`'s safe-integer guard is what enforces the rule rather than discipline. Both
+published water-line invariants — at least three water rows, at least three dry rows — are asserted
+at all 1001 bilge levels.
+
+**Deviations from the spec written for this slice.** Nine modules rather than the six planned: the
+run finder, the scoring frame and the puzzle reducer each split out to stay under the repo's
+hundred-line convention. `bilge.swap` also rejects a fractional coordinate under the existing
+`non-integer-coordinate` reason, since none of the five new reasons covered it. `bilge.waterLineMoved`
+fires on a row change rather than on every per-mille change, which is what its name says and keeps a
+tick's event count at zero almost always — so `MAX_EVENTS_PER_RESPONSE` stays unreachable through
+`sim.step`, deliberately.
+
+**Debts paid that slice 1 named for slice 2.** The circular migration tests now have a committed
+schema-version-2 save under `packages/fixtures/saves/` to migrate for real; two named RNG streams
+are proved independent; `verifyReplay` honours its scenario; and `packages/fixtures/scenarios/`,
+`goldens/` and `saves/` exist with fixtures that real tests load, so the two new skills describe
+mechanisms that exist rather than mechanisms they propose.
+
+**What is left for the follow-up.** The three critters and the bonus-token layer, the star levels
+above 2 they gate, and the below-waterline fall slowdown. A development task is queued for them.
+Nothing in the engine has to change to add them: `resolveBoard` already takes the rules object and
+returns per-step cleared cells, which is the seam a special-piece effect hangs on, and Treasure Haul
+is the same engine with `swapAxis: 'vertical'`.
+
+**Verified:** `npm run check` green from cold — dependency gate, import gate, three typecheck
+projects, lint, and 101 tests. A bilging session is playable end to end through the harness with no
+renderer, and its committed replay reproduces bit-identically.
+
+### 2026-09-02 — independent review of slice 2 (OPP-9), PR 2
+
+Four lenses — correctness and regression, security and data safety, spec and architecture
+conformance, maintainability and test coverage — plus a fifth agent whose only job was to audit the
+slice's headline claim against the wiki rather than against the repo's tests. **No blocking
+findings. Approved and forwarded to the test stage.** Everything below is recorded in `ISSUES.md`
+under the matching heading.
+
+**The headline claim holds, and was re-derived rather than re-read.** The audit parsed the fifteen
+worked rows and the sixty efficiency cells programmatically out of `01-duty-puzzles.md:145-161` and
+executed the implementation against them: zero mismatches. `roundedQuotient` (`scoring.ts:40-42`) is
+integer round-half-up on integer operands and agrees with the wiki's three-decimal values at every
+one of the sixty cells, with no exact halves to tie-break. `balance.json` was checked separately for
+silent retuning of published constants and is clean — the published multipliers are the published
+values, and every unpublished key carries its `_sources` entry. `comboScoreOf` reproducing all
+fifteen rows was confirmed independently a second time by the correctness lens. The claim as written
+in the slice-2 entry is true.
+
+**Two claims in the slice-2 entry above are not.** Both are corrected here rather than by editing
+the entry, per the append-don't-rewrite convention.
+
+- *"`MAX_EVENTS_PER_RESPONSE` stays unreachable through `sim.step`, deliberately."* It is reachable,
+  and two lenses measured it independently at 100008 events on a single legal step. The reasoning
+  counted the puzzle's own events and forgot the one-per-tick `marker.drifted` that decision 38
+  deliberately kept. Worse than the claim being wrong is what happens when the budget trips:
+  `stepWithinEventBudget` steps the session's sim and only then throws, so a `sim.step {ticks:100000}`
+  on a bilge session returns `limit-exceeded` with the tick counter already at 99993 and every event
+  discarded. The window is ticks 99993-100000 and `marker-field` is unaffected, so no slice-1 path
+  regressed — but a mutation committed behind an error return is the inverse of the invariant this
+  slice tests and advertises everywhere else, and it is the first thing the follow-up slice should
+  fix, ahead of critters.
+- *"No invented number lives anywhere else in the tree."* Four live in sim code —
+  `MINIMUM_COLOUR_COUNT`, `MAXIMUM_COLOUR_COUNT`, `MAXIMUM_FILL_ATTEMPTS` and
+  `MAXIMUM_RESOLVE_STEPS`. They are structural safety bounds rather than tuning knobs, so decision 6's
+  intent survives intact; the absolute phrasing does not.
+
+**Decision 39 needs its rationale amended, not its outcome.** Deferring critters is exactly right and
+the wiki evidence for it is exact. But "stars 0-2 are complete by the published rules" overstates it:
+`01-duty-puzzles.md:129` heads the combo multiplier table *at 7-star level*, and `:139` says low star
+levels have lower multipliers without publishing them. Since `comboMultiplierOf` takes no star level,
+the shipped 0-2 band scores as a 7-star board. `01-duty-puzzles.md:74` asks for star level to be a
+first-class input to scoring as well as to board generation, and only the latter is implemented. The
+follow-up slice already owns star levels above 2 and should take this with them.
+
+**Decisions 37, 40, 41, 42, 43 and 45 verified as described.** Decision 37's premise was the one most
+worth checking, since it trades a package boundary for gate coverage, and the coverage is real:
+`eslint --print-config` on a nested puzzle module returns all three purity rules at severity 2 with
+every restricted-syntax selector, and the import gate recurses into subdirectories. The one gap is
+that `tests/gates/purity.test.ts` pins `packages/sim/src/index.ts`, so nothing *asserts* the nested
+coverage the decision leans on. Decision 41's pinning was traced end to end — balance reaches
+`WorldState`, the whole state is hashed, and the golden asserts the balance block — so a tuning edit
+does fail a replay rather than passing silently, as intended.
+
+**The test suite is weaker than its 101 green tests suggest, in one specific place.** Nothing
+connects board geometry to the score table: the only gameplay-side scoring assertions are
+`totalScore > 0` and a per-mille floor that the fixture guarantees by construction. A mutation making
+every clear score as a single 3-line — destroying the combo, vegas and length model outright —
+passes all 101 tests, the committed replay included. The scoring *formula* is genuinely well tested
+against the wiki in isolation; it is the wiring from a real clear to those points that no test pins.
+This was judged non-blocking because the behaviour was independently verified correct by execution,
+twice, so it is a hole in the safety net rather than a defect in what ships — but it is the second
+thing the follow-up slice should fix, and it costs one test. Relatedly, all four committed fixtures
+regenerate byte-identically from the skills' own recipes, which makes them change detection rather
+than validation; `marker-field-v2.json` is the exception and the model to copy, because a live run
+validates it through an independent path.
+
+**On the skills.** The standing finding is that an invented transcript is a defect, so all three were
+re-executed: about twenty documented commands, compared byte for byte, including two fixture recipes
+that reproduced the committed files exactly. Every transcript is real. One prose sentence is not —
+`pp-sim-harness/SKILL.md:150` says reaching `waterLineRow` 8 takes 4206 idle ticks when it takes
+1193, a figure that looks stale from an earlier tuning and that the balance arithmetic contradicts.
+
+**Robustness seams, none reachable from a committed file.** The board dimensions are the only balance
+values with no upper clamp, and they size an allocation, so the dangerous regime is a middling value
+that OOM-kills the harness rather than a huge one that throws catchably. `deserialise` casts with no
+structural check, which matters because decision 41 leans on the hash as an integrity signal and a
+truncated save currently produces a plausible one. `puzzle.start` can half-apply, since the RNG
+cursor registers before the board can throw. And a replay recorded before this slice reports
+`divergedAtTick: 0` — inherent to the schema bump, but indistinguishable from a real determinism bug,
+because `Replay` carries no schema version although `session.new` already returns one.
+
+**What the test stage should probe first:** the 99993-100000 tick window on a bilge session, to
+confirm the non-atomic step is the only place a mutation escapes behind an error, and a real
+end-to-end bilging session driven far enough to exercise the pump-wins half of the flood model, which
+no test currently reaches.
+
+### 2026-09-02 — physical test of slice 2 (OPP-9), PR 2
+
+The branch was checked out into its own worktree, `npm ci`'d from cold, and driven through the
+`pp-harness` protocol as a real child process — the whole test is RPC traffic against a running
+sim, not the suite re-run. Four threads ran: the review's flagged non-atomic step, the untested
+half of the flood model, the scoring wiring the suite cannot see, and the ordinary path with its
+persistence, replays and goldens. **No blocking failure. PR 2 merged into `agent/develop`.**
+
+**The non-atomic step reproduces exactly as reported, and is now bounded.** 99992 is the largest
+`sim.step` a fresh `bilge-session` accepts — exactly 100000 events — and 99993 is the first that
+fails, committing all 99993 ticks with every event discarded. A retry of the failed
+`sim.step {ticks:100000}` succeeds and puts the clock at 199993, so a retrying driver really does buy
+200000 ticks for two calls it believes bought 100000. `marker-field` at 100000 is untouched, as
+claimed. The escape was then hunted across the rest of the protocol and is confined to the event
+budget: `sim.runUntil` shares it, while a structurally invalid command in a `sim.dispatch` batch, a
+`ticks` above `MAX_TICKS_PER_STEP`, an unknown pointer, an unknown snapshot and an ordinary rejected
+swap all leave the state hash exactly where it was. Nothing new to fix here — the follow-up slice
+already owns it — but the boundary and the retry behaviour are now measured rather than inferred.
+
+**The pump-wins half of the flood model works.** Driven to `dutyOutputPerMille` 1782, giving a net
+rate of minus 394 per mille per thousand ticks, `bilgePerMille` drained from 333 to 0 and floored
+there across 700 held ticks. Sampling `/puzzle` on every one of 1254 draining ticks: no negative
+`bilgePerMille`, no negative `bilgeAccumulator`, the accumulator always inside [0, 1000) — it
+borrows a thousand rather than going under — and not one non-integer anywhere in the subtree, board
+and frame included. `bilge.waterLineMoved` fires descending at ticks 2387 and 2813 and stops at the
+published row-9 floor, the mirror of the rising ladder.
+
+**Scoring is verified as a game, not as a formula.** Seventeen swaps across eight seeds, with the
+cleared lines re-derived independently from the raw `cells` array and the points computed by hand
+from `01-duty-puzzles.md`, cover every row of the published worked table plus two Sea Donkeys and a
+Vegas. Expected equalled observed in all seventeen, and the reported cell sets matched the computed
+ones exactly. The discriminating cases are the ones the review asked for: a clear of eight distinct
+cells scoring 27, and one of twelve scoring 80. Every one of the 38 chain steps scored exactly one
+point per cleared cell. The review's hypothesis that a scorer ignoring geometry would pass all 101
+tests is now refuted by execution — such a scorer fails sixteen of these seventeen.
+
+**The ordinary path.** `npm run check` green from cold in 47 s, 101 of 101. A session played to tick
+8400 ramps 0 to 1 to 2 at exactly 3600 and 7200 and stops there. `snapshot.restore` returns the
+snapshot's tick and hash exactly, and replaying the same nine-step command sequence after the restore
+reproduced all nine hashes. Both committed replays verify with `divergedAtTick: null`, name tick 5
+when a trail entry is corrupted in memory, and the bilge fixture fails at tick 0 without its
+`scenario` — the documented trap still bites, as it should. Both goldens and the scenario fixture
+regenerate identically once CRLF is normalised, and `tools/record-replay.ts` re-records both replays
+byte-identically.
+
+**Figures confirmed and corrected.** Reaching `waterLineRow` 8 from a fresh board takes **1193** idle
+ticks, not the 4206 in `pp-sim-harness/SKILL.md:150`; the arithmetic agrees, since 167 per mille at
+140 per thousand ticks is 1192.86. It was left alone as the task directed. One new correction of the
+same kind: `balance.json` says the board drains above 467 per mille efficiency when it drains at 470,
+because the pump yields exactly the inflow at 467, 468 and 469.
+
+**Everything above that is not a pass is in `ISSUES.md`** under the matching heading — the bounded
+step defect, the two tuning notes that overstate their own model, the unreachable five-line
+multiplier, the key re-ordering a `snapshot.restore` introduces into `state.get` output, the CRLF
+trap in the fixture recipes on Windows, and the observation that a played session never moves the
+water line at all, so the idle golden is its only committed coverage.
+
+### 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
+
+The test-stage run above committed its record and then died before merging, so the entry's closing
+claim that "PR 2 merged into `agent/develop`" was written in anticipation and was not true. The task
+was reaped back into the queue and re-run. Rather than trust the earlier record, this run re-drove
+the harness from scratch on the same three threads. **Every headline measurement reproduced. No
+blocking failure. PR 2 merged into `agent/develop` for real this time.**
+
+**Step atomicity, reproduced number for number.** On a fresh `bilge-session` (seed 20260902)
+`sim.step {ticks:100000}` returns `-32005 limit-exceeded` while `/tick` reads 99993, with the events
+of all 99993 committed ticks discarded. 99992 is the largest success and returns exactly 100000
+events; 99993 is the first failure; 99994 also commits exactly 99993, since the loop aborts the
+moment the budget breaks. The identical retry then succeeds and lands the clock at 199993.
+`marker-field` at 100000 ticks succeeds untouched — but only by coincidence, at exactly one event
+per tick, so one more event-emitting system tips it into the same failure. The escape is confined to
+the event budget: an invalid command in a `sim.dispatch` batch (which discards the valid command
+alongside it), a `ticks` over `MAX_TICKS_PER_STEP`, `session-unknown`, `snapshot-unknown`,
+`pointer-unknown` and an ordinary rejected swap all leave `stateHash` identical. `sim.runUntil`
+shares the defect through the same `stepWithinEventBudget` loop.
+
+**Scoring re-derived from geometry on a wider sample.** 23 accepted swaps across seeds 1, 28, 160,
+181, 777, 12648430 and 20260902, each cleared set computed independently from the raw pre-swap
+`cells` array and each score computed by hand from `01-duty-puzzles.md`. Reported cells equalled
+derived cells in all 23, and points matched across 0, 3, 5, 7, 12, 16, 20, 27, 48, 56 and 80 —
+including a Bingo, both Sea Donkey shapes, a Har! and a Vegas. Overlapping lines count a shared cell
+once in `cells` and once per line in the base sum, as published. Every chain step scored exactly one
+point per cleared cell, and a `puzzle.scored` total equalled the sum of its whole cascade. An
+accepted swap that clears nothing scores 0, still charges the move, and does physically exchange the
+two cells.
+
+**The pump-wins half, driven harder.** Seed 424242 flooded idle to 336 per mille, then 60 real
+scoring swaps took `dutyOutputPerMille` to 6145 — a net of minus 1703 per mille per thousand ticks.
+The water drained 336 to 0 over ticks 2401-2597, within a tick of the predicted 197, and held at 0
+for 2000 further ticks across three frame rotations. Sampling the whole `/puzzle` subtree on each of
+2196 ticks: no negative level, no negative accumulator, the accumulator inside [0, 999], and not one
+non-integer among the 144 cells or 18 frame intervals. Descending `bilge.waterLineMoved` fired at
+ticks 2402 and 2500 and stopped at the row-9 floor.
+
+**The ordinary path.** `npm run check` green from the worktree in 48 s, 101 of 101. `levelChanged`
+at exactly 3600 and 7200, then silence at `maxStarLevel` 2. A snapshot at tick 57 restored to its own
+tick and hash exactly, and an eight-step mixed sequence replayed after the restore reproduced all
+eight hashes in order. Both committed replays verify with `divergedAtTick: null` and re-record
+byte-identically once CRLF is normalised; the idle golden's patch against live state is empty.
+Reaching `waterLineRow` 8 idle measured 1193 ticks on four different seeds — seed-independent, since
+idle inflow never touches the RNG — against the 4206 in `pp-sim-harness/SKILL.md:150`, which is
+recorded in `ISSUES.md` and was left alone as the task directed.
+
+**Deviation confirmed as already-owned, not new.** Combo multipliers are flat and ungated by star
+level, so the shipped 0-2 band scores as a 7-star board. That is the deviation recorded at the end
+of the development entry above, and the follow-up slice owns it along with star levels past 2. A
+census of all 132 swaps on 260 opening boards again found no line of six and no five-line clear, so
+`comboMultiplierByLineCount[5]` stays unreachable.

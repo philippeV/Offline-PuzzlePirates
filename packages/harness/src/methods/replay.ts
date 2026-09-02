@@ -5,6 +5,7 @@ import {
   boundedArray,
   boundedCount,
   optionalBoundedArray,
+  optionalString,
   paramsOf,
   requiredInteger,
   requiredMember,
@@ -17,6 +18,7 @@ export const replayMethods: Record<string, MethodHandler> = {
     const fields = paramsOf(params);
     return verifyReplay({
       seed: requiredInteger(fields, 'seed'),
+      scenario: optionalString(fields, 'scenario'),
       commands: boundedArray(fields, 'commands', MAX_REPLAY_ENTRIES).map(parseReplayCommand),
       hashTrail: (optionalBoundedArray(fields, 'hashTrail', MAX_REPLAY_ENTRIES) ?? []).map(
         parseCheckpoint,

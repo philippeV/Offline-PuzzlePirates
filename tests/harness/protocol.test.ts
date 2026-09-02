@@ -25,7 +25,7 @@ test('session.new opens a seeded session at tick zero', async () => {
 
   assert.equal(typeof opened['session'], 'string');
   assert.equal(opened['tick'], 0);
-  assert.equal(opened['schemaVersion'], 2);
+  assert.equal(opened['schemaVersion'], 3);
   assert.match(opened['stateHash'] as string, /^[0-9a-f]{16}$/);
 });
 
@@ -37,6 +37,86 @@ test('session.new accepts the named default scenario and rejects an unknown one'
 
   const unknown = await harness.call('session.new', { seed: SEED, scenario: 'no-such-scenario' });
   assert.equal(reasonOf(unknown), 'scenario-unknown');
+});
+
+test('session.new accepts the named bilging scenario with a puzzle already running', async () => {
+  const opened = resultOf(
+    await harness.call('session.new', { seed: SEED, scenario: 'bilge-session' }),
+  );
+  const session = opened['session'] as string;
+
+  const puzzle = resultOf(await harness.call('state.get', { session, pointer: '/puzzle', depth: 1 }));
+  const fields = puzzle['value'] as Record<string, unknown>;
+
+  assert.equal(opened['tick'], 0);
+  assert.equal(fields['puzzle'], 'bilging');
+  assert.equal(fields['moves'], 0);
+});
+
+test('the puzzle command arms reach the sim rather than failing as invalid params', async () => {
+  const session = await openSession();
+
+  const dispatched = resultOf(
+    await harness.call('sim.dispatch', {
+      session,
+      commands: [
+        { op: 'puzzle.start', puzzle: 'bilging' },
+        { op: 'bilge.swap', x: 0, y: 0 },
+      ],
+    }),
+  );
+  const results = dispatched['results'] as { status: string; reason?: string }[];
+
+  assert.deepEqual(
+    results.map((result) => [result.status, result.reason]),
+    [
+      ['rejected', 'balance-missing'],
+      ['rejected', 'no-puzzle-running'],
+    ],
+  );
+});
+
+test('a bilge.swap dispatched into a bilging session is accepted', async () => {
+  const opened = resultOf(
+    await harness.call('session.new', { seed: SEED, scenario: 'bilge-session' }),
+  );
+  const session = opened['session'] as string;
+
+  const dispatched = resultOf(
+    await harness.call('sim.dispatch', {
+      session,
+      commands: [
+        { op: 'puzzle.start', puzzle: 'bilging' },
+        { op: 'bilge.swap', x: 0, y: 0 },
+      ],
+    }),
+  );
+  const results = dispatched['results'] as { status: string; reason?: string }[];
+
+  assert.equal(results[0]?.reason, 'puzzle-already-running');
+  assert.equal(results[1]?.status, 'accepted');
+  assert.notEqual(dispatched['stateHash'], opened['stateHash']);
+});
+
+test('a puzzle command missing a field fails with invalid-params', async () => {
+  const session = await openSession();
+
+  const noPuzzle = await harness.call('sim.dispatch', {
+    session,
+    commands: [{ op: 'puzzle.start' }],
+  });
+  const noCoordinate = await harness.call('sim.dispatch', {
+    session,
+    commands: [{ op: 'bilge.swap', x: 0 }],
+  });
+  const fractional = await harness.call('sim.dispatch', {
+    session,
+    commands: [{ op: 'bilge.swap', x: 0.5, y: 0 }],
+  });
+
+  assert.equal(reasonOf(noPuzzle), 'invalid-params');
+  assert.equal(reasonOf(noCoordinate), 'invalid-params');
+  assert.equal(reasonOf(fractional), 'invalid-params');
 });
 
 test('sim.dispatch reports per-command results without stepping', async () => {

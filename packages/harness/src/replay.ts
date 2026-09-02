@@ -1,4 +1,6 @@
-import { Sim, type Command } from '@opp/sim';
+import type { Command, Sim } from '@opp/sim';
+
+import { createScenarioSim } from './scenarios.ts';
 
 export interface ReplayCommand {
   tick: number;
@@ -27,13 +29,14 @@ export interface ReplayVerification {
 
 export interface ReplayRun {
   seed: number;
+  scenario?: string | undefined;
   commands: ReplayCommand[];
   hashTrail: ReplayCheckpoint[];
   expectedHash: string;
 }
 
 export function verifyReplay(run: ReplayRun): ReplayVerification {
-  const sim = Sim.create({ seed: run.seed });
+  const sim = createScenarioSim(run.seed, run.scenario);
   const recorded = new Map(run.hashTrail.map((checkpoint) => [checkpoint.tick, checkpoint.hash]));
   const lastTick = lastTickOf(run);
   let divergedAtTick: number | null = null;

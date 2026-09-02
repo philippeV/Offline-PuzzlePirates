@@ -1,6 +1,7 @@
 {
   "seed": 12648430,
   "scenario": "marker-field",
+  "lastTick": 12,
   "commands": [
     {
       "tick": 0,
@@ -33,56 +34,56 @@
   "hashTrail": [
     {
       "tick": 0,
-      "hash": "a147801784293628"
+      "hash": "5a24289acd81a333"
     },
     {
       "tick": 1,
-      "hash": "cf51698cdc80fdda"
+      "hash": "74015bd72a149df1"
     },
     {
       "tick": 2,
-      "hash": "9400fa38b2dd2035"
+      "hash": "aabdb282fe430ece"
     },
     {
       "tick": 3,
-      "hash": "2864b451dcca1802"
+      "hash": "4d63eb95e84600e9"
     },
     {
       "tick": 4,
-      "hash": "027122a3ce9b088e"
+      "hash": "366a2dba72be0725"
     },
     {
       "tick": 5,
-      "hash": "5f9b4c06037ce0f5"
+      "hash": "b3d98ef667bb640e"
     },
     {
       "tick": 6,
-      "hash": "34fb3c5b4703457a"
+      "hash": "7b03f17540ea3761"
     },
     {
       "tick": 7,
-      "hash": "0dd99362255cf246"
+      "hash": "8b954bcdc8587175"
     },
     {
       "tick": 8,
-      "hash": "63f537cbe7b3a358"
+      "hash": "3420d1ce0176ec8b"
     },
     {
       "tick": 9,
-      "hash": "53faf936df1fbbdb"
+      "hash": "079145eea7b0a598"
     },
     {
       "tick": 10,
-      "hash": "de8d660029621392"
+      "hash": "6699bfeb41b4cff9"
     },
     {
       "tick": 11,
-      "hash": "4be3fafae056d2fe"
+      "hash": "17cec1780b298185"
     },
     {
       "tick": 12,
-      "hash": "bf6370fad4b0fb94"
+      "hash": "c05ce3b72f5e5b9f"
     }
   ],
-  "finalHash": "bf6370fad4b0fb94"
+  "finalHash": "c05ce3b72f5e5b9f"
 }
