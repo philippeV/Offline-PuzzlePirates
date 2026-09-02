@@ -3,8 +3,9 @@ import { test } from 'node:test';
 
 import { BALANCE } from '../../packages/harness/src/balance.ts';
 import { FIRST_ENTITY_ID } from '../../packages/sim/src/ids.ts';
-import { holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
+import { freeHoldOf, holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
 import { createShip, type ShipState } from '../../packages/sim/src/ship/state.ts';
+import { cargoLotsMassKgOf } from '../../packages/sim/src/world/cargo.ts';
 import { COMMODITY_IDS, type CommodityId } from '../../packages/sim/src/world/commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from '../../packages/sim/src/world/islands.ts';
 import {
@@ -26,6 +27,9 @@ const SPAWNING_ISLAND: IslandId = 'doyle';
 const SCARCE_ISLAND: IslandId = 'alkaid';
 const SPAWNED_COMMODITY: CommodityId = 'hemp';
 const OTHER_COMMODITY: CommodityId = 'stone';
+const PART_KILOGRAM_COMMODITY: CommodityId = 'small-cannon-ball';
+const PART_KILOGRAM_UNITS = 3;
+const PART_KILOGRAM_MASS_KG = 21;
 
 const A_FEW_UNITS = 10;
 const AMPLE_POE = 100000;
@@ -300,6 +304,32 @@ test('a purchase that exactly fills the free hold is allowed', () => {
 
   assert.ok(outcome.ok);
   assert.deepEqual(laden.cargo, [{ commodityId: SPAWNED_COMMODITY, units: A_FEW_UNITS }]);
+});
+
+test('the one commodity that is not whole kilograms is weighed down to the kilogram', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SCARCE_ISLAND);
+  const ship = sloop(holdCapacityOf(sloop()) - PART_KILOGRAM_MASS_KG);
+  const pirate = pirateAt(SCARCE_ISLAND);
+
+  const bought = buyCommodity(dock, ship, pirate, PART_KILOGRAM_COMMODITY, PART_KILOGRAM_UNITS);
+
+  assert.ok(bought.ok);
+  assert.equal(cargoLotsMassKgOf(ship.cargo), PART_KILOGRAM_MASS_KG);
+  assert.equal(freeHoldOf(ship), 0);
+
+  const sold = sellCommodity(
+    dock,
+    ship,
+    pirate,
+    PART_KILOGRAM_COMMODITY,
+    PART_KILOGRAM_UNITS,
+    MARKET,
+  );
+
+  assert.ok(sold.ok);
+  assert.deepEqual(ship.cargo, []);
+  assert.equal(freeHoldOf(ship), PART_KILOGRAM_MASS_KG);
 });
 
 test('a pirate cannot sell cargo the ship does not carry', () => {

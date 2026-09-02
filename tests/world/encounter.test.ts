@@ -149,6 +149,7 @@ test('plunder becomes a booty chest lot of the same mass to within the floor', (
     assert.equal(plundered.shipId, ship.id);
     assert.equal(ship.bootyCargoUnits, 0);
     assert.ok(COMMODITY_IDS.includes(plundered.commodityId));
+    assert.ok(Number.isSafeInteger(plundered.units), String(seed));
     drawn.add(plundered.commodityId);
 
     const massGramsPerUnit = commodityOf(plundered.commodityId).massGramsPerUnit;
