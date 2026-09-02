@@ -1,0 +1,13 @@
+{
+  "name": "@opp/view",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opp/sim": "*",
+    "pixi.js": "^8.20.1"
+  }
+}
