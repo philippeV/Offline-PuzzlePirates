@@ -2314,3 +2314,44 @@ loop needs them — `open('duty')` is deliberately a no-op rather than a lie. Ch
 an event feed, since decision 9 puts every multiplayer surface after the MVP. Sound, animation polish
 and art quality were out of scope by the task. `packages/view` has no owning skill beyond the render
 smoke; `pp-render-smoke` documents the smoke, not the view's architecture.
+
+### 2026-09-02 — development, slice 5 integration: merging agent/develop after PR 5 landed (OPP-12)
+
+Slices 2b and 4 reached `agent/develop` while slice 5 was being built, and the branch was left
+mid-merge when its run ended. Resumed, finished and verified. Three files conflicted; two were
+document unions, and the third needed real work.
+
+**The balance parser collided with itself.** Decision 92 moved the parser into `packages/sim` as
+`balanceOf`, leaving `packages/harness/src/balance.ts` a five-line wrapper. On the other side of the
+merge, slices 2b and 4 had extended the *harness-side* parser with the `market` and `division`
+blocks, the critter and cascade tuning, and `rumPerPiratePerThousandTicks`. Resolved by keeping the
+wrapper and carrying every field the develop-side parser had gained into
+`packages/sim/src/balanceParse.ts`; the two key sets were then compared mechanically and are
+identical.
+
+That comparison is the kind of thing that should not depend on someone remembering to do it, so
+`tests/sim/balance.test.ts` now asserts, for every block, that the set of non-underscore keys the
+file declares equals the set the parser reads. A future parser move cannot silently drop tuning, and
+a tuning key added to `balance.json` without a reader fails the suite rather than being ignored.
+
+**The view had to learn the critters.** Slice 2b's `bilge.poke`, crab, puffer and jelly arrived
+through the merge into a scene written before they existed. `packages/view/src/scenes/puzzle.ts`
+now dispatches `bilge.poke` when the clicked tile is a puffer and `bilge.swap` otherwise, draws the
+three critter cells as their own art rather than letting them fall through the colour table modulo,
+and `packages/view/src/client/log.ts` gains refusal lines for `poke-outside-board`,
+`crab-not-swappable` and `not-a-puffer`. Keyboard and pointer go through the same `performAt`, so
+the two input paths cannot diverge. No game rule moved into the view: which tiles are pokable is
+read from the board's own cell constants, and the sim decides every outcome.
+
+**A collision the next merge will have to settle.** Slice 4b, on its own branch, numbered its
+decisions 90 to 96 — and this slice numbered its own 90 to 100. Both were written against the same
+document while neither could see the other. Whichever merges into `agent/develop` second has to
+renumber, and the decisions referenced from commit messages, `ISSUES.md` entries and the two PR
+descriptions have to be renumbered with it. Nothing is wrong in either branch; they simply cannot
+both be right about what decision 92 means. Flagging it here rather than picking a winner, because
+the choice belongs to whoever integrates them.
+
+**Verified after the merge, from cold.** `npm run check` green at **453 tests** — the deps, imports
+and view-boundary gates, five typecheck projects, lint and the suite. `npm run build` succeeds. The
+four render smoke tests pass against freshly built assets: the iso port scene, the ship deck, the
+bilging board and the battle grid.
