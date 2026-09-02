@@ -1218,3 +1218,82 @@ projects, lint, and the full suite. The headline claim is a test rather than a c
 drives a sloop against a brigand across 24 seeds and reaches both a win and a loss, with no battle
 left unresolved inside 120 turns. Booty is asserted on a real win: the chest is paid, the brigand's
 hold is emptied into it, and a loss pays nothing.
+
+### 2026-09-02 — independent review of slice 3 (OPP-10), PR 3
+
+Four lenses and an empirical probe against `ea34344`, none of them the author. `npm run check` green
+from cold, 252 of 252. **Three blocking findings; the slice does not merge yet.** An analysis task
+carrying them is queued at cycle 1, the review is posted on PR 3 as `5086620130` with four inline
+comments, and everything deliberately let through is in `ISSUES.md` under the matching heading.
+
+**What blocks.**
+
+1. **A prototype key passes the ship-class guard and permanently bricks a session.**
+   `SHIP_CLASSES[shipClass] === undefined` is an inherited-property lookup on an object literal, so
+   eight strings — `__proto__`, `toString`, `constructor`, `valueOf`, `hasOwnProperty`,
+   `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString` — pass both the harness parser
+   (`commands.ts:66`) and the sim guard (`battle/dispatch.ts:23`). The ship is pushed before
+   `statusOf` hashes, so the malformed ship commits and the error arrives after the fact; the next
+   tick writes `NaN` into three fields, and every later call that hashes fails. `battle/ram.ts:27`
+   has the same shape through `overrides[shipClass] ?? …`. The repo already prefers `Array.find` and
+   `Object.create(null)` elsewhere, and `SHIP_CLASS_IDS` exists unused for exactly this.
+
+2. **The v3 to v4 migration leaves `balance` structurally invalid.** The slice widened
+   `WorldState.balance` from `PuzzleBalance` to `Balance` but `migrations[3]` only adds `ships` and
+   `battle`. A save written by the slice-2 build (`balance` keys `_note`, `bilging`) migrates
+   without complaint, accepts a `ship.commission`, then throws on the first tick reading
+   `balance.npc.crewDutyOutputPerMille`, with the tick already committed. Migration 2 handled the
+   identical situation correctly by setting `balance: null`, which every consumer guards for, so the
+   precedent is one line above the defect. The committed `bilge-session-v3.json` cannot catch it: it
+   carries all six v4 balance blocks with `schemaVersion` stamped to 3, which is a downgrade of a
+   slice-3 state rather than a save slice 2 could have written — and it also predates six later
+   `battle` keys, so `battle.start` from it puts `NaN` into ship placements. **The convention this
+   breaks is the repo's own**: slice 2 paid the debt of committing a real earlier-version save to
+   migrate for real, and slice 3 quietly replaced that with a manufactured one.
+
+3. **Rock and board-edge damage never reaches the melee handicap.** `ship/meters.ts:48` gates the
+   melee accumulator on `shot` or `ram`, so `obstacle` raises hull damage alone. The wiki denominates
+   rock damage in swordfight blocks — "exactly 3 SF blocks … one twelfth of full SF damage" — and
+   names wear and tear as the only damage producing no melee blocks. `rockDamageSmallMicro` is
+   derived as `maxSf/12` for all 14 classes, so the value is computed on the swordfight scale and
+   then refused entry to it. Decision 61 covers wear, not obstacle, and
+   `tests/ship/meters.test.ts:252` pins the exclusion as though it were the rule. It decides
+   outcomes: 92 of 120 seeded battles end in a grapple resolved by `resolveMelee`, and in 202 of 240
+   ship-battles counting obstacle damage would change the black-block row count. This also settles
+   decision 60's open question — the grounded-and-rammed case **is** reachable, and under the current
+   gate the ram half is discarded rather than mis-attributed.
+
+**What the review confirmed, so it need not be re-derived.** `runTurn` is atomic on every reachable
+path — slice 2's commit-behind-an-error shape is not repeated in any battle command, and the only
+reachable throw inside a turn is finding 2's degenerate balance. Both halves of the 2100-tick
+plan-window argument hold, and the unaffordable-move degradation is currently unreachable because
+`affordable` and `candidatesOf` both gate ahead of it. The collision algorithm matches the wiki case
+by case, including the class-independence of a blocked turn and rock damage at the board edge, and
+all 14 class rows match the published tables. The ram-damage override's default path is bit-identical
+across all 196 ordered class pairs. No invented coupling rate is hard-coded; the cannon-load fix is
+arithmetically right at 1.995 cannons per turn and no sibling rate carries at the wrong scale. The
+sim layer holds no `Math.random`, `Date.now` or `node:` import, and the two gates cover the new
+subdirectories without modification, which is the property this document predicted when the boundary
+was drawn.
+
+**Two things the review learned about the design, beyond the defects.**
+
+- **The battle is winnable by play, not decided by the seed.** 1200 battles over three player
+  policies: 3.7% wins playing passively, 43.0% on a simple heuristic, 51.0% mirroring the brigand's
+  own planner, with the policy changing the outcome on 217 of 300 seeds. Every battle terminated;
+  the longest ran 156 turns, which is past the committed sweep's 120-turn cap — that cap is safe only
+  for the policy it was tuned against, and slice 5 will put a different one on the board.
+- **The melee tie-break is the largest rule in the sea battle, and it is invented.** `strengthOf`
+  collapses to seven buckets when crew is equal and rum is never consumed, so ties run at 28.7% of
+  melee-decided battles and 45.1% under equal play, and every one goes to the defender. Re-scoring
+  the same 900 battles with ties to the attacker moves the player from 51.0% to 33.7%. Nothing
+  published contradicts it, so it does not block — but finding 3 changes this formula's input, so
+  whoever fixes the handicap should re-measure the tie mass in the same slice rather than after it.
+
+**Standing failure mode, retired and recurring.** All 16 `pp-replay-triage` transcripts re-execute
+character for character, which is the first slice where a committed skill's transcripts were real on
+first inspection. The prose failure mode moved rather than disappeared: five `_sources` entries now
+describe behaviour the code does not have, including a `planLookaheadPhases` that gates phases rather
+than any lookahead the greedy planner performs. The bijection the file itself declares — a key with
+no entry is a bug — is enforced by nothing, and one test asserting it would have caught the whole
+class automatically.
