@@ -1059,3 +1059,60 @@ because `Replay` carries no schema version although `session.new` already return
 confirm the non-atomic step is the only place a mutation escapes behind an error, and a real
 end-to-end bilging session driven far enough to exercise the pump-wins half of the flood model, which
 no test currently reaches.
+
+### 2026-09-02 — physical test of slice 2 (OPP-9), PR 2
+
+The branch was checked out into its own worktree, `npm ci`'d from cold, and driven through the
+`pp-harness` protocol as a real child process — the whole test is RPC traffic against a running
+sim, not the suite re-run. Four threads ran: the review's flagged non-atomic step, the untested
+half of the flood model, the scoring wiring the suite cannot see, and the ordinary path with its
+persistence, replays and goldens. **No blocking failure. PR 2 merged into `agent/develop`.**
+
+**The non-atomic step reproduces exactly as reported, and is now bounded.** 99992 is the largest
+`sim.step` a fresh `bilge-session` accepts — exactly 100000 events — and 99993 is the first that
+fails, committing all 99993 ticks with every event discarded. A retry of the failed
+`sim.step {ticks:100000}` succeeds and puts the clock at 199993, so a retrying driver really does buy
+200000 ticks for two calls it believes bought 100000. `marker-field` at 100000 is untouched, as
+claimed. The escape was then hunted across the rest of the protocol and is confined to the event
+budget: `sim.runUntil` shares it, while a structurally invalid command in a `sim.dispatch` batch, a
+`ticks` above `MAX_TICKS_PER_STEP`, an unknown pointer, an unknown snapshot and an ordinary rejected
+swap all leave the state hash exactly where it was. Nothing new to fix here — the follow-up slice
+already owns it — but the boundary and the retry behaviour are now measured rather than inferred.
+
+**The pump-wins half of the flood model works.** Driven to `dutyOutputPerMille` 1782, giving a net
+rate of minus 394 per mille per thousand ticks, `bilgePerMille` drained from 333 to 0 and floored
+there across 700 held ticks. Sampling `/puzzle` on every one of 1254 draining ticks: no negative
+`bilgePerMille`, no negative `bilgeAccumulator`, the accumulator always inside [0, 1000) — it
+borrows a thousand rather than going under — and not one non-integer anywhere in the subtree, board
+and frame included. `bilge.waterLineMoved` fires descending at ticks 2387 and 2813 and stops at the
+published row-9 floor, the mirror of the rising ladder.
+
+**Scoring is verified as a game, not as a formula.** Seventeen swaps across eight seeds, with the
+cleared lines re-derived independently from the raw `cells` array and the points computed by hand
+from `01-duty-puzzles.md`, cover every row of the published worked table plus two Sea Donkeys and a
+Vegas. Expected equalled observed in all seventeen, and the reported cell sets matched the computed
+ones exactly. The discriminating cases are the ones the review asked for: a clear of eight distinct
+cells scoring 27, and one of twelve scoring 80. Every one of the 38 chain steps scored exactly one
+point per cleared cell. The review's hypothesis that a scorer ignoring geometry would pass all 101
+tests is now refuted by execution — such a scorer fails sixteen of these seventeen.
+
+**The ordinary path.** `npm run check` green from cold in 47 s, 101 of 101. A session played to tick
+8400 ramps 0 to 1 to 2 at exactly 3600 and 7200 and stops there. `snapshot.restore` returns the
+snapshot's tick and hash exactly, and replaying the same nine-step command sequence after the restore
+reproduced all nine hashes. Both committed replays verify with `divergedAtTick: null`, name tick 5
+when a trail entry is corrupted in memory, and the bilge fixture fails at tick 0 without its
+`scenario` — the documented trap still bites, as it should. Both goldens and the scenario fixture
+regenerate identically once CRLF is normalised, and `tools/record-replay.ts` re-records both replays
+byte-identically.
+
+**Figures confirmed and corrected.** Reaching `waterLineRow` 8 from a fresh board takes **1193** idle
+ticks, not the 4206 in `pp-sim-harness/SKILL.md:150`; the arithmetic agrees, since 167 per mille at
+140 per thousand ticks is 1192.86. It was left alone as the task directed. One new correction of the
+same kind: `balance.json` says the board drains above 467 per mille efficiency when it drains at 470,
+because the pump yields exactly the inflow at 467, 468 and 469.
+
+**Everything above that is not a pass is in `ISSUES.md`** under the matching heading — the bounded
+step defect, the two tuning notes that overstate their own model, the unreachable five-line
+multiplier, the key re-ordering a `snapshot.restore` introduces into `state.get` output, the CRLF
+trap in the fixture recipes on Windows, and the observation that a played session never moves the
+water line at all, so the idle golden is its only committed coverage.
