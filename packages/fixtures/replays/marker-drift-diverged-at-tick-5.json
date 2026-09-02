@@ -1,0 +1,90 @@
+{
+  "note": "A copy of marker-drift.json with the tick 5 checkpoint replaced by deadbeefdeadbeef. Deliberately unverifiable: replay.verify must report divergedAtTick 5. Do not re-record it - see .claude/skills/pp-replay-triage/SKILL.md.",
+  "seed": 12648430,
+  "scenario": "marker-field",
+  "lastTick": 12,
+  "commands": [
+    {
+      "tick": 0,
+      "command": {
+        "op": "marker.place",
+        "id": 1,
+        "x": 4,
+        "y": 9
+      }
+    },
+    {
+      "tick": 3,
+      "command": {
+        "op": "marker.move",
+        "id": 1,
+        "dx": 2,
+        "dy": 0
+      }
+    },
+    {
+      "tick": 7,
+      "command": {
+        "op": "marker.move",
+        "id": 1,
+        "dx": -3,
+        "dy": 1
+      }
+    }
+  ],
+  "hashTrail": [
+    {
+      "tick": 0,
+      "hash": "165150e7121323fa"
+    },
+    {
+      "tick": 1,
+      "hash": "66ddaa8161375b70"
+    },
+    {
+      "tick": 2,
+      "hash": "59cc75334c752f17"
+    },
+    {
+      "tick": 3,
+      "hash": "fb40c7b8fe92d948"
+    },
+    {
+      "tick": 4,
+      "hash": "e28ff53e843bed8c"
+    },
+    {
+      "tick": 5,
+      "hash": "deadbeefdeadbeef"
+    },
+    {
+      "tick": 6,
+      "hash": "d8971c7092f6f298"
+    },
+    {
+      "tick": 7,
+      "hash": "ff7bc5fedf094bdc"
+    },
+    {
+      "tick": 8,
+      "hash": "16721d520935697a"
+    },
+    {
+      "tick": 9,
+      "hash": "52e4e06d6700dd39"
+    },
+    {
+      "tick": 10,
+      "hash": "f9e61d39cfec5c30"
+    },
+    {
+      "tick": 11,
+      "hash": "b687aa5538295bc4"
+    },
+    {
+      "tick": 12,
+      "hash": "0df21f56de40342e"
+    }
+  ],
+  "finalHash": "0df21f56de40342e"
+}
