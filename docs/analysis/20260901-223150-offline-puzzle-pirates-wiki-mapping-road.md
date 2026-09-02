@@ -1990,14 +1990,14 @@ entry and without paying. With only 5 crabs in the sample this excludes nothing 
 
 **Nothing blocking was found, so PR 4 was merged. Two decisions were taken to get there.**
 
-61. *The integration merge is the test stage's to make.* PR 4 was `CONFLICTING` because slice 3
+74. *The integration merge is the test stage's to make.* PR 4 was `CONFLICTING` because slice 3
     landed on `agent/develop` after this branch left it. `agent/develop` was merged into the branch
     at `e40293d`; the resolutions are in that commit message. One of them matters beyond the merge:
     git auto-merged `sim.ts` cleanly to slice 3's explicit command routing, which **silently dropped
     `bilge.poke`**, because slice 2b had reached `applyPuzzleCommand` through a fallthrough. A clean
     auto-merge was wrong, the typecheck caught it, and `bilge.poke` is routed explicitly now. Every
     probe above was re-run on the merged tree and reproduced byte for byte apart from the state hash.
-62. *PR 4 is merged with a merge commit, not a squash.* This repeats the deviation recorded for
+75. *PR 4 is merged with a merge commit, not a squash.* This repeats the deviation recorded for
     PR 3 and for the same reason: squashing detaches the history that slices 4 and 5 are branched
     from and mints exactly the conflict resolved here. It remains raised for the human in
     `ISSUES.md` rather than settled quietly.
