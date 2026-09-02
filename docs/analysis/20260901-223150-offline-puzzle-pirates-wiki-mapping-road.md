@@ -2042,3 +2042,80 @@ them, and the id keeps the misleading word.
 `ship.rumPerPiratePerThousandTicks` key that decision 58 left unread — see decision 94. Charts,
 chart decay and league-point memorization remain phase 2, untouched by this slice despite the task
 id: the task body scopes them out in its own second paragraph.
+
+## 2026-09-02 — independent review, slice 4b (PR 7, cycle 0)
+
+Four lenses, each in its own worktree, each given the slice diff `566abd3..a125881` and decisions 90
+to 96. The review requests changes. One cluster blocks; the rest is in `ISSUES.md` under the PR 7
+heading.
+
+**Decision 90 was answered for one direction only, and that is what blocks.** The decision settles
+the representation — "buying a ship supply moves units into them rather than stowing a lot" — and the
+buy path implements it exactly. But the five ship-supply commodities still arrive aboard as *cargo
+lots* by a second route the decision never considered: `materialisePlunder`
+(`world/encounter.ts:76,83`) draws the plundered commodity uniformly from `COMMODITY_IDS` and stows a
+lot in `ship.bootyCargo`, and `divideBooty` (`world/division.ts:28`) transfers that lot into
+`ship.cargo`. `heldUnitsOf` and `withdrawUnits` (`market.ts:107-124`) read and write only
+`ship.cannonballs` and `ship.rum` for those ids, and never look at `ship.cargo`. So after this slice
+a ship can hold the same commodity in two places, and the sell path can only see one of them.
+
+Three of the four lenses reached this independently, two of them with executed transcripts on the
+project's own soak seeds:
+
+- Seed 7919: chest is 40 swill, `ship.cargo` is `[{swill,40}]` after `booty.divide`, and
+  `market.sell 40 swill` is refused `insufficient-cargo` while `ship.rum` reads 20. 40 kg of hold is
+  lost for the life of the save.
+- Seed 95028: `ship.cargo` is `[{small-cannon-ball,5}]`, magazine 33. `market.sell 5 small-cannon-ball`
+  is **accepted**, pays 210 PoE, adds 5 to the dock's stock — and takes the units out of the
+  magazine, 33 to 28, leaving the cargo lot untouched. The command sold the ammunition rather than
+  the plunder, and the plunder is now unsellable.
+- A sloop that plunders `large-cannon-ball` is refused `wrong-cannon-ball-size` on every attempt
+  forever, because the size guard sits ahead of everything: 100 units is 2130 kg of a 13500 kg hold
+  gone permanently, with no command that can free it.
+
+**It is a regression, not an inheritance, and this slice widened its own exposure.**
+`git show 566abd3:packages/sim/src/world/market.ts` sells every commodity through
+`lotOf(ship.cargo, ...)`, so before this slice all three cases above sold correctly out of the hold
+and left the magazine alone. And the slice grew `COMMODITY_IDS` from 14 to 16 by adding
+`medium-cannon-ball` and `large-cannon-ball`, so the share of plunder rolls landing in a container the
+sell path cannot reach went from 3 in 14 to 5 in 16.
+
+**What the review is not asking for.** It is not asking for the magazine representation to be
+reverted — decision 90 is sound and the buy path is right. The gap is that the sell path, and
+whatever puts plunder into the hold, need to agree about where those five commodities live. That
+reconciliation is an analysis decision, not a patch, which is why it goes back to analysis rather
+than straight to development.
+
+**The named risk of the slice is clean.** The task pointed the lenses at the mass question — balls
+left `ship.cargo`, where `cargoLotsMassKgOf` weighed them, for `ship.cannonballs`, which nothing
+weighed until decision 91 put `magazineMassKgOf` into `freeHoldOf`. `freeHoldOf` is the only capacity
+gate in the repo and every caller of it, of `cargoLotsMassKgOf` and of `holdCapacityOf` was swept:
+`takenCargoOf`, `awardBooty`, `buyCommodity` and the soak's laden-hold invariant all pass through it.
+There is no free hold space, and the double floor is conservative on the buy path — searched
+exhaustively, worst overshoot 0 kg. `npm run check` is green from cold at 397 on two independent
+worktrees.
+
+**Two claims the task asked to be attacked, upheld.** Decision 94's deferral of rum proof is right
+for a reason stronger than the one recorded: after `depositUnits` there is no per-commodity key left
+to index a proof table with, so proof genuinely needs per-type lots. And `market.test.ts`'s widened
+`snapshotOf` strengthens rather than weakens — it is an eagerly evaluated `JSON.stringify` of
+`[market, ship, pirate]`, all plain numbers, strings, `null` and arrays with no `undefined` fields, so
+it is a true deep snapshot; injecting `ship.cannonballs += 1` into the `insufficient-stock` rejection
+makes a pre-existing test fail, and the same injection under the old cargo-only snapshot does not.
+
+**Decision 96 clears decision 59, but does not say why.** `negative-units` is returnable from
+`applyWorldCommand`, which `index.ts:229` exports as public API; the RPC path refuses it earlier in
+`requiredCount` via `Number.isSafeInteger`. That is the same argument decision 92 spells out for its
+own reason, and decision 96 should carry it too.
+
+**What the mutation pass says about the tests.** Twenty-five of thirty deliberate mutations were
+killed, including every mutation of the slice's central claim. The survivors — the entire rum sell
+path, the medium cannon ball in both its mapping and its mass, and the magazine's rounding direction
+— are in `ISSUES.md`. One of them is not merely a gap: no test constructs a ship holding both a
+magazine and a `ship.cargo` lot of a magazine commodity, which is the state `booty.divide` produces
+and the reason the blocking finding survived the slice's own suite.
+
+**Practicalities for whoever picks this up.** PR 7 conflicts with `agent/develop` in
+`docs/analysis/20260901-223150-offline-puzzle-pirates-wiki-mapping-road.md` and nothing else —
+verified with `git merge-tree`; PR 5 has since merged, so the PR's own diff is now exactly the two
+slice-4b commits.

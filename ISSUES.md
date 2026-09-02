@@ -4,6 +4,125 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — independent review of slice 4b (PR 7, cycle 0)
+
+A four-lens review of PR 7. One cluster blocked and went back to analysis: the sell path routes the
+five magazine commodities to the counters and never looks at `ship.cargo`, so a plundered lot of any
+of them is unsellable, and a sale that is accepted is paid out of the magazine while the lot stays
+aboard. Everything else the four lenses substantiated is below.
+
+The named risk of the slice came up clean, and is recorded here so nobody hunts it twice.
+`freeHoldOf` is the only capacity gate in the repo, `magazineMassKgOf` now reaches it, and every
+caller of `freeHoldOf`, `cargoLotsMassKgOf` and `holdCapacityOf` was swept — `takenCargoOf`,
+`awardBooty`, `buyCommodity` and the soak's laden-hold invariant all go through it. There is no free
+hold space. `npm run check` is green from cold at 397 on two independent worktrees, the save format
+needs no schema bump and a stocked magazine round-trips exactly, both the v2 and v3 fixture saves
+still migrate, and the slice adds no dependency and no comment.
+
+### The double floor got wider, and the plunder roll got heavier
+
+`ISSUES.md` records `small-cannon-ball` at 7100 g as "the only commodity whose mass is not a whole
+kilogram". This slice adds 14200 g and 21300 g, and `freeHoldOf`
+(`packages/sim/src/battle/booty.ts:50-56`) now floors three sums separately — cargo, booty cargo,
+magazine — where it floored two, taking the worst-case slack from 1 kg to 2 kg. Searched exhaustively
+on the buy path (every `n` balls aboard by every bulk size `k`, `n + k <= 1910`, fresh stock each
+time) the worst over-capacity overshoot is **0 kg**: the double floor is conservative there. The
+largest magazine reachable one ball at a time is 1901 balls = 13497 kg against a 13500 kg hold.
+
+Separately, `materialisePlunder` (`world/encounter.ts:78`) computes
+`floor(bootyCargoUnits * 1000 / massGramsPerUnit)`, so a heavier commodity loses more of the chest to
+the floor. A 40 kg chest rolled as `large-cannon-ball` materialises as 1 unit = 21.3 kg — 47% of the
+chest evaporates, where before this slice the heaviest draw was 7100 g and the worst loss was ~7 kg.
+
+### Swill and grog are the same thing aboard ship
+
+`depositUnits`, `heldUnitsOf` and `withdrawUnits` (`packages/sim/src/world/market.ts:95-124`) route
+both rum ids to the single `ship.rum` counter, so a dock will convert one into the other: buy 100
+swill, sell 100 grog having never held grog. It is PoE-neutral today only because `openingStockOf`
+prices both identically — buy 42, sell 56 at alkaid, doyle, marlowe and sayers-rock, neither on any
+island's `spawnCommodities`. The moment either price diverges, from a spawning island or from
+per-commodity refined pricing, this is an unbounded PoE printer. Decision 94 records the deferred
+proof; it does not record this coupling, which is the same deferral's other half.
+
+### Load-time validation now reaches the hold guards
+
+`magazineMassKgOf` feeds `freeHoldOf`, and neither `ship.cannonballs` nor `ship.rum` is validated on
+load — `save.ts:32-34` is a `JSON.parse` and a cast. With `cannonballs` set to a string,
+`magazineMassKgOf` is `NaN`, `freeHoldOf` is `NaN`, and `buyCommodity` accepts 400 units because
+`massKgOf(...) > NaN` is false. The door itself is already recorded as "`deserialise` validates
+nothing", and it is a player corrupting their own save, so this is a widening rather than a new hole.
+A `Number.isFinite` guard in `magazineMassKgOf` closes it. Related and harmless:
+`packages/harness/src/commands.ts:50-51` takes `cannonballs` and `rum` as `optionalCount` rather than
+`boundedCount`, so `ship.commission` with `2^53 - 1` produces a magazine of 6.4e16 kg — precision is
+lost, `freeHoldOf` clamps to 0, nothing crashes.
+
+### Two guards answer before they have looked
+
+- `sellCommodity`'s `withdrawUnits` (`market.ts:121`) silently no-ops when the lot is missing.
+  `heldUnitsOf` makes it unreachable today, but it is the same "the units are not where I think they
+  are" shape as the blocking finding, and it fails silently rather than loudly.
+- The `units === 0` early return precedes the size check on both paths (`market.ts:48,75`), so
+  `market.buy 0 large-cannon-ball` on a sloop reports `ok` rather than `wrong-cannon-ball-size`.
+  Contract inconsistency only; no state changes either way.
+
+### The coverage the mutation pass found missing
+
+Thirty deliberate mutations to `market.ts`, `cargo.ts`, `commodities.ts` and `booty.ts`; twenty-five
+were killed, including every mutation of the slice's central claim. The five survivors:
+
+- **The whole rum sell path is unverified.** Mutating `heldUnitsOf`'s rum branch (`market.ts:109`) to
+  read a cargo lot leaves 397/397 green, and deleting `withdrawUnits`'s rum branch
+  (`market.ts:118-121`) also leaves 397/397 green — under which selling 10 swill credits the purse,
+  adds 10 to the dock's stock and leaves `ship.rum` untouched. The equivalent cannon-ball mutations
+  are both killed. `tests/world/market.test.ts:227` buys rum and never sells it.
+- **The medium cannon ball is invisible.** `medium: 'medium-cannon-ball'` to `'small-cannon-ball'`
+  (`commodities.ts:64`) survives, and `14200` to `14000` (`commodities.ts:33`) survives. The five
+  medium-gunned classes could silently restock with 7.1 kg small shot, which is the failure decision
+  93 exists to prevent. Small and large are both pinned.
+- **The magazine's rounding direction is asserted nowhere.** `Math.floor` to `Math.ceil` in
+  `magazineMassKgOf` (`cargo.ts:30`) survives, because every test uses ten balls and 71000 g is an
+  exact kilogram multiple.
+- No test constructs a ship holding **both** a magazine and a `ship.cargo` lot of a magazine
+  commodity — which is exactly the state `booty.divide` produces, and exactly why the blocking
+  finding was not caught here.
+
+### Shape
+
+- The three-way cannon-ball / rum / cargo-lot branch is written three times (`market.ts:95-124`), so
+  a fourth ship store means editing three functions in lockstep; the two surviving rum mutations are
+  a direct symptom. `isCannonBall` derives from `CANNON_BALL_IDS` (`commodities.ts:87`) while
+  `isRum` hardcodes two ids four lines later.
+- The gram-to-kilogram floor is written three times in `world/cargo.ts` (`:14`, `:22`, `:30`);
+  extracting it is also what would let the triple floor above be fixed in one place. On adjacent
+  lines `:28` reads a mass through `commodityOf(...).massGramsPerUnit` and `:29` reads one from the
+  bare `RUM_MASS_GRAMS_PER_UNIT` — two routes to the same kind of figure.
+- `magazineMassKgOf` is the only function in `world/cargo.ts` taking a `ShipState` rather than
+  `CargoLot[]`, which is what forces that file to import `ship/classes.ts` and `ship/state.ts`, and
+  it adds a second `world` import to `battle/booty.ts` — the dependency direction the previous
+  analysis entry asked slice 5 not to deepen. Placing it in `ship/` keeps the coupling out of
+  `battle/`.
+- `cannonBallOf`, `isCannonBall` and `isRum` are exported from `packages/sim/src/index.ts` with no
+  consumer outside `packages/sim/src`. `magazineMassKgOf` has a real one in the soak.
+
+### `_sources`
+
+`balance.json`'s `market.refinedBasePricePoe` claims prices follow the wiki's recipe inputs, and
+`docs/wiki-map/04-world-ports-economy.md:373-375` gives small iron 5 / wood 1, medium 8 / 3, large
+12 / 4 — yet all three ball sizes price identically at 56 PoE, so a war galleon restocks three times
+the mass for the same coin as a sloop. Decision 95 rewrote two `_sources` entries for truthfulness
+and left this one, which decision 93 falsified.
+
+### Recorded rather than argued
+
+Decision 94's deferral of the published rum proof equivalence is right, and the review agrees with
+it: after `depositUnits` there is no per-commodity key left to index a proof table with, so proof
+needs per-type lots exactly as the decision says. Decision 96's `negative-units` clears decision 59 —
+it is returnable from `applyWorldCommand`, which `index.ts:229` exports as public API, while the RPC
+path refuses it earlier in `requiredCount`. What decision 96 omits is the reachability argument
+decision 92 spells out for its own reason. Guard ordering needed no separate record: validity before
+resource is already the house pattern in `world/dispatch.ts:100-110` and in `buyCommodity` before
+this slice.
+
 ## 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
 
 A four-lens review of PR 5. Nothing blocked: `npm run check` is 383/383 from cold on two independent
