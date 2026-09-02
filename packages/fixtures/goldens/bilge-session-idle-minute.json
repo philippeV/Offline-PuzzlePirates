@@ -2,9 +2,9 @@
   "scenario": "bilge-session",
   "seed": 12648430,
   "ticks": 3600,
-  "stateHash": "8757ccc5d6f518e4",
+  "stateHash": "a69c08db56fb3db1",
   "state": {
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "seed": 12648430,
     "tick": 3600,
     "nextEntityId": 2,
@@ -83,6 +83,51 @@
           1333,
           1667
         ]
+      },
+      "ship": {
+        "bilgeInflowPerMillePerThousandTicks": 28,
+        "damageBilgeCoefficientPerMille": 1000,
+        "carpentryBilgeSlowingPerMille": 300,
+        "wearDamagePerMillePerThousandTicks": 2,
+        "carpentryRepairPerMillePerThousandTicksAtFullDuty": 33,
+        "bilgePumpPerMillePerThousandTicksAtFullDuty": 300,
+        "bilgeSpeedCapPerMille": 800,
+        "navigationBonusMaxPerMille": 500,
+        "warGalleonRamDamageSmallMicro": 2000000,
+        "rumPerPiratePerThousandTicks": 1
+      },
+      "battle": {
+        "movementTokenMilliPerThousandTicksAtFullDuty": 1900,
+        "bilgeTokenThrottlePerMille": 700,
+        "cannonLoadMilliPerThousandTicksAtFullDuty": 950,
+        "tallRockCount": 6,
+        "smallRockCount": 10,
+        "windTileCount": 4,
+        "startingSeparationTiles": 17,
+        "startingCannonballs": 40,
+        "startingRum": 20
+      },
+      "npc": {
+        "crewDutyOutputPerMille": 900,
+        "brigandCrewDutyOutputPerMille": 900
+      },
+      "brigand": {
+        "planLookaheadPhases": 4,
+        "weightCloseDistance": 10,
+        "weightBroadsideExposure": 30,
+        "weightIncomingBroadside": 25,
+        "weightRockCollision": 200,
+        "geniusChancePerMille": 100,
+        "blunderNoisePerMille": 30,
+        "disengageAtDamagePerMille": 700
+      },
+      "booty": {
+        "brigandPoeBase": 800,
+        "brigandPoePerMightMilli": 1000,
+        "brigandPoeVariancePerMille": 250,
+        "brigandCargoUnitsBase": 40,
+        "chartDropChancePerMille": 200,
+        "overflowPolicy": "truncate"
       }
     },
     "puzzle": {
@@ -322,6 +367,8 @@
       "bilgeAccumulator": 0,
       "waterLineRow": 6,
       "dutyOutputPerMille": 0
-    }
+    },
+    "ships": [],
+    "battle": null
   }
 }
