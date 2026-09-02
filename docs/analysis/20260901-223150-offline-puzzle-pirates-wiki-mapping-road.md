@@ -576,3 +576,165 @@ handler, not the method handler.
 **On the cycle budget.** Both blocking findings are small, local repairs. Neither disturbs the design
 recorded above — the conventions, the limits table and the post-dispatch replay convention all stand,
 and the confirmed fixes for findings 2, 4 and 5 need no rework.
+
+### 2026-09-02 — analysis of review findings, slice 1 (cycle 2)
+
+Re-analysis of the two blocking findings only. The sixteen non-blocking findings from the cycle 1
+review stay in `ISSUES.md` and are out of scope. One development task is emitted, against the existing
+branch and PR 1, so the slice still lands as one reviewed unit.
+
+Both repairs were **prototyped and proven before being written down here**, in throwaway worktrees, for
+the reason this lineage keeps rediscovering: a design asserted is a design that fails in the next
+cycle. That pass changed both designs and found a third defect nobody had seen.
+
+**What the two findings have in common.** Cycle 1's fixes were correct wherever they were applied and
+absent one step to the side. The bounds work capped every array it was pointed at and missed the
+sibling array in the same file; the gate work proved the rules' *contents* and never proved their
+*attachment*. Neither is a wrong idea — both are a right idea stopped one member short of its own
+boundary. The repairs below are therefore framed as closing the *class* rather than the instance,
+because at cycle 2 of a ceiling of 3 there is no room to discover a third member of either family.
+
+#### The uncapped dispatch, and the containment behind it (blocking 1)
+
+`sim.dispatch` was left on `requiredArray` while `replay.verify` moved to `boundedArray`, and it is the
+only method that **amplifies**: a 40-byte command yields about 86 bytes of response, so the response
+crosses V8's maximum string length while the request is still around 250 MB. `JSON.stringify` then
+throws in `handleLine`, outside `invoke`'s try, and the readline listener has no containment, so the
+process dies with every session in it.
+
+Measured rather than guessed. Worst-case accepted result, at the widest field values the types permit,
+is 108 bytes including its separator; `MAX_STRING_LENGTH` on Node 24.18 is 536,870,888, putting the
+cliff at about 4.97 million commands.
+
+**Decision: `MAX_COMMANDS_PER_REQUEST = 100000`**, which leaves roughly 50x headroom and — the reason
+it is this number and not 1,000,000 — makes the consistency argument exact. An accepted dispatch result
+embeds exactly one event, so a dispatch at the cap carries exactly 100000 events, which is precisely
+what `MAX_EVENTS_PER_RESPONSE` already allows a response to hold. `sim.dispatch.results` is the direct
+analogue of `sim.step.events` and takes the same bound. A cap of 1,000,000 would mean a 108 MB response
+line, which is hostile whether or not it is survivable.
+
+**Capping the array is not the fix, only half of it.** The prototype confirmed both halves are needed
+and that the obvious half alone is insufficient:
+
+- Wrapping `JSON.stringify` in `handleLine` so a serialisation failure becomes a JSON-RPC error
+  carrying the request's id — **not sufficient alone.** `respond(line, registry)` is called outside
+  that try, and `invoke`'s catch calls `errorBodyOf(cause)`, which is outside `invoke`'s try. Anything
+  thrown in either place still escapes. Demonstrated, not reasoned: with the fallback also poisoned the
+  process still exited 1.
+- Wrapping the readline `line` listener — **sufficient to keep the process alive, but alone it answers
+  `id: null`**, so a client correlating by id cannot tell which request failed.
+
+**Decision: ship both.** The first preserves id correlation and gives a specific reason; the second is
+what actually makes "no future uncapped path can kill the process" true. The second is also the one
+that must not itself depend on serialisation, so its response is computed once at module load and is
+thereafter a constant string.
+
+Two details the prototype forced into the design. The fallback must echo a **bounded** id — a caller
+can send a 64 MB string as `id`, and re-echoing it in the error would reintroduce the very failure
+being handled; ids longer than `MAX_ECHOED_ID_LENGTH` (256) become `null`. And the fallback must carry
+a **literal** message rather than the cause's, because `String(cause)` on an arbitrary throw is
+unbounded and can itself throw. With both, the fallback is a compile-time-fixed shape under about 400
+bytes and cannot fail for a length reason.
+
+**No other method needs a cap.** All nine were reviewed. `sim.dispatch` was the only amplifier; every
+other caller-controlled path — `replay.verify`'s `expectedHash`, and the error messages that echo a
+method, scenario, pointer or member name — is a 1x or smaller echo, and for any of those to overflow a
+response the request line would already have had to exceed the maximum string length, which readline
+could not have assembled. They are left alone deliberately, and layer two makes them survivable
+regardless.
+
+#### The gate that guarded nothing in particular (blocking 2)
+
+Exporting `simPurityRules` and applying the same object to the sim block and the fixtures block proves
+the two cannot drift apart in contents. It proves nothing about whether the block carrying them still
+selects `packages/sim/src`, and the negative tests probe the rules through the *fixtures* block, so
+they are structurally blind to the sim block. One token — `.ts` to `.tsx` — detaches every purity rule
+with all six tests green.
+
+**Decision: assert the binding directly**, with a committed test that runs
+`eslint --print-config packages/sim/src/index.ts`, parses the JSON, and requires every rule
+`simPurityRules` declares to be present, at the same severity and with the same options, in the config
+that actually reaches a real simulation source file. Verified against both holes: the glob change makes
+it fail with `no-restricted-globals does not reach packages/sim/src/index.ts`, and deleting a rule from
+`simPurityRules` fails the accompanying floor assertion. It also covers any rule added later with no
+test maintenance, which is what closes the seven-of-thirteen coverage gap permanently rather than one
+fixture at a time.
+
+Three things the prototype discovered that the implementation must carry:
+
+- `--print-config` **does not require the target file to exist** — it prints the full ruleset for
+  `packages/sim/src/nope.ts` and exits 0, because matching is pure path-glob. If `index.ts` is ever
+  renamed the test goes silently vacuous, so it must assert the file exists first.
+- An **ignored** file prints the literal string `undefined` with exit 0, so the test must reject that
+  explicitly rather than letting `JSON.parse` fail with a cryptic message.
+- Importing `eslint.config.js` from a `.ts` test needs `"allowJs": true` in `tsconfig.json`, otherwise
+  `tsc` fails with TS7016. Resolution succeeds; it is `noImplicitAny` on an untyped JS module.
+
+**Decision: add `allowJs`** rather than the alternative of extracting the rules through a second
+subprocess. `checkJs` stays off and `include` still globs only `.ts`, so the flag changes nothing else,
+and the test stays readable with inferred types. The subprocess alternative works and was verified, but
+costs a spawn and loses the types for no gain.
+
+**A binding assertion still cannot prove a rule does anything** — and that is not hypothetical here.
+
+#### Hole three, found while validating the fix for hole two
+
+`TSImportType[argument.value=/^[^.]/]` in `simPurityRules` **matches nothing**. typescript-eslint
+renamed that node's field from `argument` to `source` in v6; against the installed version the selector
+is dead. Confirmed both ways: a sim file using `import('node:path').ParsedPath` in type position raises
+no error, and correcting the selector to `source` makes it fire immediately.
+
+The **boundary is not open** — `tools/check-sim-imports.ts` independently catches bare specifiers
+including type-position imports, which is why the cycle 1 review found every import route closed. So
+this is a dead rule, not an escape route, and it is not a new blocking finding.
+
+It matters for sequencing. The binding test compares the config to itself, so it is structurally
+incapable of noticing a rule that lints nothing, and a floor assertion naming the selector would
+**cement the typo**. **Decision: fix the selector first**, in the same task, before any test pins its
+spelling. This is also the honest limit of the whole approach, and it is recorded rather than papered
+over: the binding test proves attachment, the fixtures prove effect, and neither proves that a rule's
+*selector* still matches the AST that the current parser produces. Only a violation exercised through
+the real glob does that, which is why the fixture set is kept rather than replaced.
+
+**Rejected: a sim-resident fixture containing every violation, including the bare imports.** It is the
+strongest single guard — it exercises the real glob and the real rules together — but the three bare
+imports would trip `tools/check-sim-imports.ts`, which recurses every `.ts` under `packages/sim/src`
+with no exclusion hook. Making it pass would mean teaching that script to skip a filename suffix, which
+carves a blind spot into an adjacent gate: anything hidden in a `*.fixture.ts` under the sim would then
+be invisible to the import boundary. Trading a hole in one gate for coverage in another is the wrong
+direction in a slice whose entire subject is gates that do less than they claim. If a sim-resident
+fixture is added later it must contain only the global, property and syntax violations, which need no
+change to the import gate at all.
+
+**Rejected: consolidating the two fixture sets and deleting the `tests/gates/fixtures` block.** It is
+the tidier end state, and the second block is what made this hole possible. But with the binding test in
+place the redundancy is harmless, and restructuring the gate suite at cycle 2 of 3 spends the remaining
+cycle on churn rather than on the defect. Recorded in `ISSUES.md` as the tidy-up it is.
+
+#### Decisions taken without a human, continuing the series above
+
+| #  | Decision                                                                  | Why                                                                                                                  |
+| -- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 27 | `MAX_COMMANDS_PER_REQUEST` is 100000                                      | A dispatch result embeds one event, so the cap equals `MAX_EVENTS_PER_RESPONSE` exactly; ~50x headroom to the string cliff |
+| 28 | Close the class as well as the instance, with both containment layers     | The `handleLine` wrapper alone provably still dies, since `respond` and `errorBodyOf` sit outside its try                 |
+| 29 | The last-resort response is a module-load constant                        | The layer that guarantees survival must not itself depend on the thing that failed                                        |
+| 30 | The fallback bounds the echoed id and uses a literal message              | A 64 MB `id`, or `String(cause)` on an arbitrary throw, would reintroduce the failure inside its own handler              |
+| 31 | No cap on the 1x echo paths                                               | Only `sim.dispatch` amplifies; an echo cannot overflow a response unless the request already exceeded the string cap      |
+| 32 | Assert the gate's binding with `eslint --print-config`, not another fixture | It proves attachment, and covers every rule including ones added later, which no per-rule fixture does                    |
+| 33 | The binding test asserts the target file exists and is not ignored        | `--print-config` succeeds for a nonexistent file and prints `undefined` for an ignored one; both go silently vacuous      |
+| 34 | `allowJs: true` rather than a second subprocess to read the config        | One flag with no other effect, against a spawn that loses the types; `checkJs` stays off and `include` still globs `.ts`  |
+| 35 | Fix the dead `TSImportType` selector before the tests pin its spelling    | A floor assertion naming the broken selector would cement it; the binding test cannot see a rule that matches nothing     |
+| 36 | Keep both fixture sets; do not restructure the gate suite this cycle      | The binding test makes the redundancy harmless, and cycle 2 of 3 is not the place to spend the remaining cycle on churn   |
+
+**Constraints discovered.** A git worktree of this repository is created from `main`, which holds only
+a README — the slice lives on the feature branch, so any worktree used for this work must be moved onto
+`agent/feature/20260902-000100-opp-slice-1-sim-core-and-agent-harness` before anything will build.
+`MAX_STRING_LENGTH` is 536,870,888 on the installed Node 24.18.0. `--print-config` resolves its target
+by glob alone and reports success in three distinct situations that all mean "no rules apply", which is
+why the test needs its two guards.
+
+**Deviation from the stage contract, as in cycle 1 (decision 23).** This entry is committed to the
+feature branch rather than `agent/develop`, because the development stage works on PR 1's branch and
+would not otherwise see it. It reaches `agent/develop` when PR 1 merges.
+
+**One development task** is emitted: both repairs on the existing branch, extending PR 1.
