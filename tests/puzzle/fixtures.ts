@@ -2,15 +2,23 @@ import { BALANCE } from '../../packages/harness/src/index.ts';
 import {
   BILGE_RULES,
   MINIMUM_RUN_LENGTH,
+  PER_MILLE,
   Sim,
   findRuns,
   swapCells,
   type Board,
+  type BoardCell,
   type BoardPosition,
   type PuzzleState,
+  type ResolveContext,
 } from '../../packages/sim/src/index.ts';
 
 export { BALANCE };
+
+export const QUIET_COLOURS = 4;
+
+const UNIQUE_COLOUR_BASE = 100;
+const NO_CRITTER_DRAW = PER_MILLE - 1;
 
 export function bilgingSim(seed: number): Sim {
   const sim = Sim.create({ seed, balance: BALANCE });
@@ -34,4 +42,41 @@ export function clearingSwapOf(board: Board): BoardPosition {
     }
   }
   throw new Error('the board offers no clearing swap');
+}
+
+export function quietCellAt(x: number, y: number): BoardCell {
+  return (x + 2 * y) % QUIET_COLOURS;
+}
+
+export function paintQuietBoard(board: Board): void {
+  for (let index = 0; index < board.cells.length; index += 1) {
+    board.cells[index] = quietCellAt(index % board.width, Math.floor(index / board.width));
+  }
+}
+
+export function quietBoard(width: number, height: number): Board {
+  const board: Board = { width, height, cells: new Array<BoardCell>(width * height).fill(0) };
+  paintQuietBoard(board);
+  return board;
+}
+
+export function uniqueColours(): () => BoardCell {
+  let drawn = UNIQUE_COLOUR_BASE;
+  return () => {
+    drawn += 1;
+    return drawn;
+  };
+}
+
+export function resolveContext(overrides: Partial<ResolveContext> = {}): ResolveContext {
+  return {
+    balance: BALANCE.bilging,
+    rules: BILGE_RULES,
+    starLevel: BALANCE.bilging.maxStarLevel,
+    waterLineRow: 9,
+    bilgePerMille: 0,
+    drawColour: uniqueColours(),
+    drawCritter: () => NO_CRITTER_DRAW,
+    ...overrides,
+  };
 }

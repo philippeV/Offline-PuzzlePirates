@@ -10,8 +10,8 @@ import {
   SessionRegistry,
 } from '../../packages/harness/src/index.ts';
 
-const TICKS_AT_EVENT_BUDGET = 99992;
-const TICKS_OVER_EVENT_BUDGET = 99993;
+const TICKS_AT_EVENT_BUDGET = 99987;
+const TICKS_OVER_EVENT_BUDGET = 99988;
 const MAX_EVENTS_PER_RESPONSE = 100000;
 
 interface AnsweredFailure {

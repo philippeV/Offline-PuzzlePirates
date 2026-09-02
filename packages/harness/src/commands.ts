@@ -24,6 +24,7 @@ export function parseCommand(value: unknown): Command {
     case 'puzzle.start':
       return { op, puzzle: requiredString(fields, 'puzzle') };
     case 'bilge.swap':
+    case 'bilge.poke':
       return { op, x: requiredInteger(fields, 'x'), y: requiredInteger(fields, 'y') };
     default:
       throw new RpcError('invalid-params', `unknown command op "${op}"`);

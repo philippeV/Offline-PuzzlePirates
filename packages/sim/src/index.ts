@@ -6,6 +6,7 @@ export type {
   MarkerCommand,
   MoveMarkerCommand,
   PlaceMarkerCommand,
+  PokeBilgeCommand,
   PuzzleCommand,
   RejectedCommand,
   RejectionReason,
@@ -14,6 +15,7 @@ export type {
 } from './commands.ts';
 export type {
   BilgeClearedEvent,
+  BilgePokedEvent,
   BilgeSwappedEvent,
   BilgeWaterLineMovedEvent,
   MarkerDriftedEvent,
@@ -43,13 +45,17 @@ export {
   waterRowsOf,
 } from './puzzle/bilging.ts';
 export {
+  CRAB_CELL,
   EMPTY_CELL,
-  applyGravity,
+  JELLY_CELL,
+  PUFFER_CELL,
   cellAt,
   clearCells,
   flatIndexOf,
+  isColourCell,
   isInsideBoard,
   refillBoard,
+  rowOf,
   swapCells,
   swapPartnerOf,
   type Board,
@@ -58,7 +64,20 @@ export {
   type BoardPosition,
   type BoardRules,
 } from './puzzle/board.ts';
+export {
+  BILGE_CRITTER_STREAM,
+  CRAB_MIN_STAR_LEVEL,
+  JELLY_MIN_STAR_LEVEL,
+  PUFFER_MIN_STAR_LEVEL,
+  climbCrabs,
+  colourCellsOf,
+  crabsAboveWaterLine,
+  detonationCellsOf,
+  spawnCritters,
+  type CritterRules,
+} from './puzzle/critters.ts';
 export { applyPuzzleCommand } from './puzzle/dispatch.ts';
+export { applyGravity, type CellFall } from './puzzle/gravity.ts';
 export {
   INTERVALS_PER_FRAME,
   TICKS_PER_INTERVAL,
@@ -71,7 +90,16 @@ export {
   type IntervalSample,
   type ScoringFrame,
 } from './puzzle/frame.ts';
-export { MAXIMUM_RESOLVE_STEPS, resolveBoard, type ResolveStep } from './puzzle/resolve.ts';
+export { stepPointsOf } from './puzzle/move.ts';
+export {
+  MAXIMUM_RESOLVE_STEPS,
+  resolveBoard,
+  type OpeningClear,
+  type ResolveContext,
+  type ResolveKind,
+  type ResolveStep,
+  type StepClear,
+} from './puzzle/resolve.ts';
 export { cellsOfRuns, findRuns, type Run } from './puzzle/runs.ts';
 export {
   PER_MILLE,
@@ -80,9 +108,11 @@ export {
   chainScoreOf,
   comboMultiplierOf,
   comboScoreOf,
+  crabScoreOf,
   movesForEfficiencyMilli,
 } from './puzzle/scoring.ts';
 export { startBilging, stepPuzzle, type PuzzleState } from './puzzle/session.ts';
+export { applyBilgeSwap } from './puzzle/swap.ts';
 export type { RngStream, RngStreamCursor, RngStreams } from './rng.ts';
 export { deserialise, serialise } from './save.ts';
 export { SCHEMA_VERSION, type Marker, type WorldState } from './state.ts';

@@ -26,9 +26,15 @@ export interface SwapBilgeCommand {
   y: number;
 }
 
+export interface PokeBilgeCommand {
+  op: 'bilge.poke';
+  x: number;
+  y: number;
+}
+
 export type MarkerCommand = MoveMarkerCommand | PlaceMarkerCommand;
 
-export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand;
+export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand | PokeBilgeCommand;
 
 export type Command = MarkerCommand | PuzzleCommand;
 
@@ -40,7 +46,10 @@ export type RejectionReason =
   | 'unknown-puzzle'
   | 'puzzle-already-running'
   | 'no-puzzle-running'
-  | 'swap-outside-board';
+  | 'swap-outside-board'
+  | 'poke-outside-board'
+  | 'crab-not-swappable'
+  | 'not-a-puffer';
 
 export interface AcceptedCommand {
   status: 'accepted';
