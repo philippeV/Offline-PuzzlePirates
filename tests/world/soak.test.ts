@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   cargoLotsMassKgOf,
+  magazineMassKgOf,
   shipClassOf,
   type ShipState,
   type Sim,
@@ -162,7 +163,13 @@ function breachesOf(state: WorldState, ship: ShipState): string[] {
 }
 
 function ladenKgOf(ship: ShipState): number {
-  return ship.cargoUnits + ship.bootyCargoUnits + cargoLotsMassKgOf(ship.cargo);
+  return (
+    ship.cargoUnits +
+    ship.bootyCargoUnits +
+    cargoLotsMassKgOf(ship.cargo) +
+    cargoLotsMassKgOf(ship.bootyCargo) +
+    magazineMassKgOf(ship)
+  );
 }
 
 function tallyOf(runs: SoakRun[]): Map<VoyageOutcome, number> {

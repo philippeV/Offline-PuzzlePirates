@@ -1994,6 +1994,50 @@ become counters. Three facts decided it:
 | 95 | `battle.startingCannonballs` and `startingRum` keep their values and get truthful `_sources` prose   | They are already only a commissioned ship's opening stock — the brigand's at `world/encounter.ts:52` and the scenario player's at `harness/scenarios.ts:42`. Nothing in the sim reads them as a port substitute any more, so the honest fix is the sentence, not the number. `_sources` is not loaded into `Balance`, so this moves no hash |
 | 96 | `buyCommodity` and `sellCommodity` refuse a negative unit count                                     | `ISSUES.md` already records that the sim's command layer accepts one and that `market.buy` of -1000 mints PoE. This slice makes a negative buy write a negative *magazine*, so leaving the hole open would widen a recorded defect rather than merely inherit it. Two lines, and the RPC path was already safe via `requiredCount` |
 
+**What is here.** `buyCommodity` no longer stows every purchase as cargo. A cannon ball of the
+ship's own size goes into `ship.cannonballs`, rum goes into `ship.rum`, and everything else still
+stows a lot; `sellCommodity` withdraws from the same three places, so a ship can sell what it
+bought. `medium-cannon-ball` and `large-cannon-ball` join the catalogue at their published 14.2 kg
+and 21.3 kg, which is what makes the size rule bite for the eleven classes that are not small — until
+now only a sloop, cutter or longship could have been restocked at all. `cannonBallOf` maps a class's
+existing `cannonSize` to the commodity that supplies it, and a mismatch is `wrong-cannon-ball-size`
+on both the buy and the sell path.
+
+**The one thing that would have been a silent regression.** Moving balls out of `cargo` and into a
+counter takes them out of `cargoLotsMassKgOf`, so without decision 91 a bought ball would have
+weighed nothing and the hold would have gained free capacity — a mass leak this slice would have
+introduced rather than inherited. `freeHoldOf` now subtracts `magazineMassKgOf`, and
+`tests/world/soak.test.ts`'s `ladenKgOf` was counting neither the magazine nor the booty chest, so
+its overfull-hold invariant could not have caught it either. Both are fixed, and the boundary is
+pinned by a test: a sloop with 13429 kg aboard takes ten balls at 71 kg and refuses eleven at 78 kg.
+
+**A coverage hole found while writing the tests, and closed.** `market.test.ts`'s `snapshotOf`
+helper stringified `ship.cargo` alone, so every pre-existing "a rejected trade changes nothing" test
+was blind to `ship.cannonballs` and `ship.rum`. A trade that corrupted the magazine on a rejection
+would have passed all of them. It now snapshots the whole ship.
+
+**Verified.** `npm run check` green from cold at **397 tests**, up from 383 — the dependency gate,
+the import gate, three typecheck projects, lint and the suite. The soak's four assertions hold,
+including the one that matters to the task: the pillage loop stays winnable but not a guaranteed
+payout across its twelve seeds, re-run rather than assumed, and now with the magazine counted in its
+overfull-hold check. The headline acceptance criterion is a single test driven over stdio against
+the real `pp-harness`, `tests/harness/restocking.test.ts`: it opens `pillage-loop`, charts a pillage,
+fights the encounter turn by turn, and observes the magazine fall **40 to 29** through
+`stepCannonLoading` — which spends a ball at *load* time, not at fire time, so a magazine drains
+whenever gunnery runs with a slot free. It then ports, buys ten balls at the dock's 56 PoE, and
+reads back `cannonballs` at 39 and the purse at 1440 from 2000, refuses a `large-cannon-ball` on a
+sloop with `wrong-cannon-ball-size` as a per-command rejection over the wire, and charts a fresh
+voyage home.
+
+**What the numbers say about the loop.** The recorded worry that `world.startingPoe` of 2000 cannot
+buy the 40-ball opening magazine at 56 PoE a ball — 2240 — is real but does not bite a restock: a
+ship that spends eleven balls buys them back for 616 and keeps 1384. The `_sources` mismatch
+`ISSUES.md` records stands as written; this slice does not change either number.
+
+**Deviation from the task body, recorded.** The task's title carries "and charts", and its own
+second paragraph scopes charts, chart decay and memorization out as phase 2. Nothing here touches
+them, and the id keeps the misleading word.
+
 **Deferred, with the reason.** The proof-denominated rum store, and with it rum consumption and the
 `ship.rumPerPiratePerThousandTicks` key that decision 58 left unread — see decision 94. Charts,
 chart decay and league-point memorization remain phase 2, untouched by this slice despite the task

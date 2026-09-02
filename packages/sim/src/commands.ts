@@ -148,7 +148,9 @@ export type RejectionReason =
   | 'insufficient-cargo'
   | 'market-stock-full'
   | 'hold-full'
-  | 'no-booty';
+  | 'no-booty'
+  | 'wrong-cannon-ball-size'
+  | 'negative-units';
 
 export interface AcceptedCommand {
   status: 'accepted';

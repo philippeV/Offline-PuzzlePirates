@@ -24,9 +24,15 @@ const RAW_IDS: CommodityId[] = [
   'iris-root',
 ];
 
-const REFINED_IDS: CommodityId[] = ['small-cannon-ball', 'swill', 'grog'];
+const REFINED_IDS: CommodityId[] = [
+  'small-cannon-ball',
+  'medium-cannon-ball',
+  'large-cannon-ball',
+  'swill',
+  'grog',
+];
 
-test('the catalogue holds the eleven ursa raw commodities and three ship supplies', () => {
+test('the catalogue holds the eleven ursa raw commodities and five ship supplies', () => {
   assert.deepEqual(COMMODITY_IDS, [...RAW_IDS, ...REFINED_IDS]);
 });
 
