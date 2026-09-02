@@ -30,6 +30,17 @@ const AGENT_PLAN_STREAM = 'agent.plan';
 const MAXIMUM_TURNS = 120;
 const OUTCOME_SEEDS = 24;
 const SEED = 20260902;
+const PROTOTYPE_MEMBER_NAMES = [
+  'constructor',
+  'toString',
+  'valueOf',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  '__proto__',
+];
+const COMMISSION_CREWS = [undefined, 12];
 
 let harness: Harness;
 
@@ -263,6 +274,42 @@ test('an unknown ship class cannot be commissioned', async () => {
     commands: [{ op: 'ship.commission', shipClass: 'raft', allegiance: 'player' }],
   });
   assert.equal(reasonOf(refused), 'invalid-params');
+});
+
+test('a prototype member name cannot be commissioned, crewed or not', async () => {
+  const clean = resultOf(await harness.call('session.new', { seed: SEED }));
+  const cleanShips = resultOf(
+    await harness.call('state.get', { session: clean['session'], pointer: '/ships' }),
+  );
+  const cleanNextEntityId = resultOf(
+    await harness.call('state.get', { session: clean['session'], pointer: '/nextEntityId' }),
+  );
+
+  for (const shipClass of PROTOTYPE_MEMBER_NAMES) {
+    for (const crewCount of COMMISSION_CREWS) {
+      const where = `${shipClass} with crewCount ${String(crewCount)}`;
+      const opened = resultOf(await harness.call('session.new', { seed: SEED }));
+      const session = opened['session'];
+
+      const refused = await harness.call('sim.dispatch', {
+        session,
+        commands: [{ op: 'ship.commission', shipClass, allegiance: 'player', crewCount }],
+      });
+      assert.equal(reasonOf(refused), 'invalid-params', where);
+
+      const ships = resultOf(await harness.call('state.get', { session, pointer: '/ships' }));
+      assert.deepEqual(ships['value'], cleanShips['value'], where);
+      const nextEntityId = resultOf(
+        await harness.call('state.get', { session, pointer: '/nextEntityId' }),
+      );
+      assert.equal(nextEntityId['value'], cleanNextEntityId['value'], where);
+
+      const taken = resultOf(await harness.call('snapshot.take', { session }));
+      assert.equal(taken['stateHash'], clean['stateHash'], where);
+      const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));
+      assert.equal(stepped['tick'], 1, where);
+    }
+  }
 });
 
 function withFire(fire: BattlePhasePlan['fire']): BattlePhasePlan[] {

@@ -23,7 +23,10 @@ export interface TurnScope {
 }
 
 export function ramDamageOverridesOf(balance: Balance): RamDamageOverrides {
-  return { 'war-galleon': balance.ship.warGalleonRamDamageSmallMicro };
+  const declared: RamDamageOverrides = {
+    'war-galleon': balance.ship.warGalleonRamDamageSmallMicro,
+  };
+  return Object.assign(Object.create(null), declared);
 }
 
 export function executePhase(scope: TurnScope, phase: number): SimEvent[] {

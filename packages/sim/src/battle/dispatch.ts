@@ -7,7 +7,7 @@ import type {
   RejectionReason,
   StartBattleCommand,
 } from '../commands.ts';
-import { SHIP_CLASSES } from '../ship/classes.ts';
+import { SHIP_CLASS_IDS } from '../ship/classes.ts';
 import { createShip, findShip, type ShipState } from '../ship/state.ts';
 import type { EntityId } from '../ids.ts';
 import type { WorldState } from '../state.ts';
@@ -20,7 +20,8 @@ export function applyCommissionCommand(
   state: WorldState,
   command: CommissionShipCommand,
 ): CommandResult {
-  if (SHIP_CLASSES[command.shipClass] === undefined) {
+  const found = SHIP_CLASS_IDS.find((candidate) => candidate === command.shipClass);
+  if (found === undefined) {
     return { status: 'rejected', reason: 'unknown-ship' };
   }
   state.ships.push(createShip(state, command));

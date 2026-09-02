@@ -52,7 +52,7 @@ export const BALL_WEIGHT_SMALL_MICRO = 1000000;
 export const BALL_WEIGHT_MEDIUM_MICRO = 1500000;
 export const BALL_WEIGHT_LARGE_MICRO = 2000000;
 
-export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
+const declaredShipClasses: Record<ShipClassId, ShipClass> = {
   'sloop': { id: 'sloop', name: 'Sloop', pirateCap: 7, sailStations: 3, carpStations: 2, bilgeStations: 2, gunStations: 1, cannonSize: 'small', shots: 4, holdMassKg: 13500, holdVolumeL: 20250, movesPerTurn: 4, shotsPerSidePerPhase: 1, ramSizeClass: 'small', ramDamageSmallMicro: 500000, maxSfDamageSmallMicro: 6000000, fullDamageSmallMicro: 10000000, rockDamageSmallMicro: 500000, minSpeedSecondsPerLP: MIN_SPEED_SECONDS_PER_LP, maxSpeedSecondsPerLP: 60, influenceDiameter: 1, swabbieStaffing: 5, swabbieCutoff: 6, minCarp: 1, minBilge: 1 },
   'cutter': { id: 'cutter', name: 'Cutter', pirateCap: 12, sailStations: 5, carpStations: 3, bilgeStations: 2, gunStations: 2, cannonSize: 'small', shots: 8, holdMassKg: 40500, holdVolumeL: 60750, movesPerTurn: 4, shotsPerSidePerPhase: 1, ramSizeClass: 'small', ramDamageSmallMicro: 500000, maxSfDamageSmallMicro: 7500000, fullDamageSmallMicro: 12000000, rockDamageSmallMicro: 625000, minSpeedSecondsPerLP: MIN_SPEED_SECONDS_PER_LP, maxSpeedSecondsPerLP: 60, influenceDiameter: 2, swabbieStaffing: 10, swabbieCutoff: 11, minCarp: 1, minBilge: 1 },
   'dhow': { id: 'dhow', name: 'Dhow', pirateCap: 12, sailStations: 5, carpStations: 3, bilgeStations: 2, gunStations: 1, cannonSize: 'medium', shots: 4, holdMassKg: 13500, holdVolumeL: 20250, movesPerTurn: 4, shotsPerSidePerPhase: 1, ramSizeClass: 'small', ramDamageSmallMicro: 500000, maxSfDamageSmallMicro: 7500000, fullDamageSmallMicro: 12000000, rockDamageSmallMicro: 625000, minSpeedSecondsPerLP: MIN_SPEED_SECONDS_PER_LP, maxSpeedSecondsPerLP: 60, influenceDiameter: 2, swabbieStaffing: 10, swabbieCutoff: 11, minCarp: 1, minBilge: 1 },
@@ -69,24 +69,50 @@ export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
   'grand-frigate': { id: 'grand-frigate', name: 'Grand frigate', pirateCap: 159, sailStations: 30, carpStations: 24, bilgeStations: 16, gunStations: 6, cannonSize: 'large', shots: 24, holdMassKg: 540000, holdVolumeL: 810000, movesPerTurn: 3, shotsPerSidePerPhase: 2, ramSizeClass: 'grand', ramDamageSmallMicro: 4000000, maxSfDamageSmallMicro: 36000000, fullDamageSmallMicro: 60000000, rockDamageSmallMicro: 3000000, minSpeedSecondsPerLP: MIN_SPEED_SECONDS_PER_LP, maxSpeedSecondsPerLP: 100, influenceDiameter: 10, swabbieStaffing: 75, swabbieCutoff: 76, minCarp: 12, minBilge: 4 },
 };
 
+export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = Object.assign(
+  Object.create(null),
+  declaredShipClasses,
+);
+
 export const SHIP_CLASS_IDS = Object.keys(SHIP_CLASSES) as ShipClassId[];
 
-const RAM_SIZE_RANKS: Record<RamSizeClass, number> = { small: 0, medium: 1, large: 2, grand: 3 };
+const declaredRamSizeRanks: Record<RamSizeClass, number> = {
+  small: 0,
+  medium: 1,
+  large: 2,
+  grand: 3,
+};
 
-const BALL_WEIGHTS_MICRO: Record<CannonSize, number> = {
+const RAM_SIZE_RANKS: Record<RamSizeClass, number> = Object.assign(
+  Object.create(null),
+  declaredRamSizeRanks,
+);
+
+const declaredBallWeightsMicro: Record<CannonSize, number> = {
   small: BALL_WEIGHT_SMALL_MICRO,
   medium: BALL_WEIGHT_MEDIUM_MICRO,
   large: BALL_WEIGHT_LARGE_MICRO,
 };
 
+const BALL_WEIGHTS_MICRO: Record<CannonSize, number> = Object.assign(
+  Object.create(null),
+  declaredBallWeightsMicro,
+);
+
 export function shipClassOf(id: ShipClassId): ShipClass {
-  return SHIP_CLASSES[id];
+  const shipClass = SHIP_CLASSES[id];
+  if (shipClass === undefined) throw new RangeError(`no ship class named "${id}"`);
+  return shipClass;
 }
 
 export function ramSizeRankOf(size: RamSizeClass): number {
-  return RAM_SIZE_RANKS[size];
+  const rank = RAM_SIZE_RANKS[size];
+  if (rank === undefined) throw new RangeError(`no ram size class named "${size}"`);
+  return rank;
 }
 
 export function ballWeightMicroOf(size: CannonSize): number {
-  return BALL_WEIGHTS_MICRO[size];
+  const weight = BALL_WEIGHTS_MICRO[size];
+  if (weight === undefined) throw new RangeError(`no cannon size named "${size}"`);
+  return weight;
 }

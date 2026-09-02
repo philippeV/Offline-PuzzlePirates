@@ -1,5 +1,5 @@
 import {
-  SHIP_CLASSES,
+  SHIP_CLASS_IDS,
   STATION_SLOTS,
   type Command,
   type ShipClassId,
@@ -63,10 +63,11 @@ export function parseCommand(value: unknown): Command {
 }
 
 function parseShipClass(shipClass: string): ShipClassId {
-  if (SHIP_CLASSES[shipClass as ShipClassId] === undefined) {
+  const found = SHIP_CLASS_IDS.find((candidate) => candidate === shipClass);
+  if (found === undefined) {
     throw new RpcError('invalid-params', `unknown ship class "${shipClass}"`);
   }
-  return shipClass as ShipClassId;
+  return found;
 }
 
 function parseStation(station: string | undefined): StationSlot | null {
