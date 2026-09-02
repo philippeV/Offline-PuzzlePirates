@@ -3,7 +3,7 @@ import { PER_MILLE } from '../puzzle/scoring.ts';
 import type { RngStream } from '../rng.ts';
 import { shipClassOf } from '../ship/classes.ts';
 import type { ShipState } from '../ship/state.ts';
-import { cargoLotsMassKgOf } from '../world/cargo.ts';
+import { stowedMassKgOf } from '../world/cargo.ts';
 
 export const BOOTY_POE_STREAM = 'booty.poe';
 
@@ -50,8 +50,7 @@ export function freeHoldOf(ship: ShipState): number {
     holdCapacityOf(ship) -
       ship.cargoUnits -
       ship.bootyCargoUnits -
-      cargoLotsMassKgOf(ship.cargo) -
-      cargoLotsMassKgOf(ship.bootyCargo),
+      stowedMassKgOf(ship.cargo, ship.bootyCargo),
     0,
   );
 }
