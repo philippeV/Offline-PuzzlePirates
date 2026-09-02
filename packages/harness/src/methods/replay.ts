@@ -1,10 +1,11 @@
 import { parseCommand } from '../commands.ts';
+import { MAX_REPLAY_ENTRIES, MAX_REPLAY_TICK } from '../limits.ts';
 import type { MethodHandler } from '../method.ts';
 import {
-  optionalArray,
+  boundedArray,
+  boundedCount,
+  optionalBoundedArray,
   paramsOf,
-  requiredArray,
-  requiredCount,
   requiredInteger,
   requiredMember,
   requiredString,
@@ -16,8 +17,10 @@ export const replayMethods: Record<string, MethodHandler> = {
     const fields = paramsOf(params);
     return verifyReplay({
       seed: requiredInteger(fields, 'seed'),
-      commands: requiredArray(fields, 'commands').map(parseReplayCommand),
-      hashTrail: (optionalArray(fields, 'hashTrail') ?? []).map(parseCheckpoint),
+      commands: boundedArray(fields, 'commands', MAX_REPLAY_ENTRIES).map(parseReplayCommand),
+      hashTrail: (optionalBoundedArray(fields, 'hashTrail', MAX_REPLAY_ENTRIES) ?? []).map(
+        parseCheckpoint,
+      ),
       expectedHash: requiredString(fields, 'expectedHash'),
     });
   },
@@ -26,10 +29,13 @@ export const replayMethods: Record<string, MethodHandler> = {
 function parseReplayCommand(value: unknown): ReplayCommand {
   const fields = paramsOf(value);
   const command = parseCommand(requiredMember(fields, 'command'));
-  return { tick: requiredCount(fields, 'tick'), command };
+  return { tick: boundedCount(fields, 'tick', MAX_REPLAY_TICK), command };
 }
 
 function parseCheckpoint(value: unknown): ReplayCheckpoint {
   const fields = paramsOf(value);
-  return { tick: requiredCount(fields, 'tick'), hash: requiredString(fields, 'hash') };
+  return {
+    tick: boundedCount(fields, 'tick', MAX_REPLAY_TICK),
+    hash: requiredString(fields, 'hash'),
+  };
 }

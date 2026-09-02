@@ -7,7 +7,7 @@ import { simMethods } from './sim.ts';
 import { snapshotMethods } from './snapshot.ts';
 import { stateMethods } from './state.ts';
 
-export const methods: Record<string, MethodHandler> = {
+const declaredMethods: Record<string, MethodHandler> = {
   ...sessionMethods,
   ...simMethods,
   ...stateMethods,
@@ -15,3 +15,8 @@ export const methods: Record<string, MethodHandler> = {
   ...replayMethods,
   ...rngMethods,
 };
+
+export const methods: Record<string, MethodHandler> = Object.assign(
+  Object.create(null),
+  declaredMethods,
+);

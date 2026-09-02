@@ -4,12 +4,24 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type { Replay } from '../../packages/harness/src/index.ts';
+import { recordReplay, type ReplayPlan } from '../../tools/record-replay.ts';
 
 import { resultOf, startHarness, type Harness } from './client.ts';
 
 const FIXTURE = fileURLToPath(
   new URL('../../packages/fixtures/replays/marker-drift.json', import.meta.url),
 );
+
+const PLAN: ReplayPlan = {
+  seed: 20260902,
+  scenario: 'marker-field',
+  commands: [
+    { tick: 0, command: { op: 'marker.place', id: 1, x: 4, y: 9 } },
+    { tick: 2, command: { op: 'marker.move', id: 1, dx: 1, dy: -1 } },
+    { tick: 5, command: { op: 'marker.move', id: 1, dx: -2, dy: 0 } },
+  ],
+  lastTick: 6,
+};
 
 let harness: Harness;
 
@@ -34,6 +46,33 @@ before(() => {
 
 after(async () => {
   await harness.stop();
+});
+
+test('a trail recorded over the protocol verifies, command-carrying ticks included', async () => {
+  const recorded = await recordReplay(harness, PLAN);
+
+  const verified = await verify(recorded);
+
+  assert.deepEqual(
+    recorded.hashTrail.map((checkpoint) => checkpoint.tick),
+    [0, 1, 2, 3, 4, 5, 6],
+  );
+  assert.equal(verified['ok'], true);
+  assert.equal(verified['divergedAtTick'], null);
+  assert.equal(verified['finalHash'], recorded.finalHash);
+});
+
+test('a corrupted checkpoint on a command-carrying tick is still caught', async () => {
+  const recorded = await recordReplay(harness, PLAN);
+  const corrupted = recorded.hashTrail[2];
+  assert.ok(corrupted !== undefined);
+  assert.equal(corrupted.tick, PLAN.commands[1]?.tick);
+  corrupted.hash = '0000000000000000';
+
+  const verified = await verify(recorded);
+
+  assert.equal(verified['ok'], false);
+  assert.equal(verified['divergedAtTick'], corrupted.tick);
 });
 
 test('replay.verify reproduces the recorded fixture exactly', async () => {
@@ -79,5 +118,5 @@ test('replay.verify catches a command log that no longer reproduces the trail', 
   const verified = await verify(replay);
 
   assert.equal(verified['ok'], false);
-  assert.equal(verified['divergedAtTick'], 4);
+  assert.equal(verified['divergedAtTick'], 3);
 });

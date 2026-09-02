@@ -3,5 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["tests/**/*.ts", "tools/**/*.ts"]
+  "include": ["tests/**/*.ts", "tools/**/*.ts"],
+  "exclude": ["tests/gates/fixtures/**"]
 }

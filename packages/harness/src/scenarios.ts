@@ -4,9 +4,14 @@ import { RpcError } from './errors.ts';
 
 export const DEFAULT_SCENARIO = 'marker-field';
 
-const BUILDERS: Record<string, (seed: number) => Sim> = {
+const declaredBuilders: Record<string, (seed: number) => Sim> = {
   [DEFAULT_SCENARIO]: (seed) => Sim.create({ seed }),
 };
+
+const BUILDERS: Record<string, (seed: number) => Sim> = Object.assign(
+  Object.create(null),
+  declaredBuilders,
+);
 
 export function createScenarioSim(seed: number, scenario: string | undefined): Sim {
   const name = scenario ?? DEFAULT_SCENARIO;

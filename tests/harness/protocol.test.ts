@@ -195,6 +195,36 @@ test('malformed params fail with invalid-params rather than crashing', async () 
   assert.equal(reasonOf(badParams), 'invalid-params');
 });
 
+test('an inherited Object.prototype name fails as an unknown method rather than being called', async () => {
+  const constructorCall = await harness.call('constructor', {});
+  const toStringCall = await harness.call('toString', {});
+
+  assert.equal(reasonOf(constructorCall), 'method-unknown');
+  assert.equal(reasonOf(toStringCall), 'method-unknown');
+});
+
+test('an inherited Object.prototype scenario name fails as unknown and opens no session', async () => {
+  const constructorScenario = await harness.call('session.new', {
+    seed: SEED,
+    scenario: 'constructor',
+  });
+
+  assert.equal(reasonOf(constructorScenario), 'scenario-unknown');
+  assert.equal(constructorScenario.result, undefined);
+});
+
+test('an inherited Object.prototype pointer token fails as an unknown pointer member', async () => {
+  const session = await openSession();
+
+  const constructorPointer = await harness.call('state.get', { session, pointer: '/constructor' });
+  const toStringPointer = await harness.call('state.get', { session, pointer: '/toString' });
+  const protoPointer = await harness.call('state.get', { session, pointer: '/__proto__' });
+
+  assert.equal(reasonOf(constructorPointer), 'pointer-unknown');
+  assert.equal(reasonOf(toStringPointer), 'pointer-unknown');
+  assert.equal(reasonOf(protoPointer), 'pointer-unknown');
+});
+
 test('the server survives a malformed line and keeps serving the next request', async () => {
   const broken = await harness.sendLine('{ this is not json');
   assert.equal(reasonOf(broken), 'parse-error');
@@ -202,6 +232,91 @@ test('the server survives a malformed line and keeps serving the next request', 
 
   const notARequest = await harness.sendLine('{"id":1,"method":"sim.step"}');
   assert.equal(reasonOf(notARequest), 'invalid-request');
+
+  const session = await openSession();
+  const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));
+  assert.equal(stepped['tick'], 1);
+});
+
+test('an oversized tick count is refused and the harness keeps serving', async () => {
+  const session = await openSession();
+
+  const oversized = await harness.call('sim.step', { session, ticks: 9007199254740991 });
+  assert.equal(reasonOf(oversized), 'limit-exceeded');
+
+  const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));
+  assert.equal(stepped['tick'], 1);
+});
+
+test('a tick count at the step cap is accepted and one over it is refused', async () => {
+  const session = await openSession();
+
+  const atCap = resultOf(await harness.call('sim.step', { session, ticks: 100000 }));
+  assert.equal(atCap['tick'], 100000);
+  assert.equal((atCap['events'] as unknown[]).length, 100000);
+
+  const overCap = await harness.call('sim.step', { session, ticks: 100001 });
+  assert.equal(reasonOf(overCap), 'limit-exceeded');
+});
+
+test('an oversized run budget is refused and the harness keeps serving', async () => {
+  const session = await openSession();
+
+  const oversized = await harness.call('sim.runUntil', {
+    session,
+    pointer: '/tick',
+    equals: 900,
+    maxTicks: 9007199254740991,
+  });
+  assert.equal(reasonOf(oversized), 'limit-exceeded');
+
+  const ran = resultOf(
+    await harness.call('sim.runUntil', { session, pointer: '/tick', equals: 3, maxTicks: 10 }),
+  );
+  assert.equal(ran['matched'], true);
+  assert.equal(ran['ticksStepped'], 3);
+});
+
+test('a run budget at the run cap is accepted and one over it is refused', async () => {
+  const session = await openSession();
+
+  const atCap = resultOf(
+    await harness.call('sim.runUntil', {
+      session,
+      pointer: '/tick',
+      equals: 0,
+      maxTicks: 1000000,
+    }),
+  );
+  assert.equal(atCap['matched'], true);
+  assert.equal(atCap['ticksStepped'], 0);
+
+  const overCap = await harness.call('sim.runUntil', {
+    session,
+    pointer: '/tick',
+    equals: 0,
+    maxTicks: 1000001,
+  });
+  assert.equal(reasonOf(overCap), 'limit-exceeded');
+});
+
+test('an oversized replay tick is refused and the harness keeps serving', async () => {
+  const oversized = await harness.call('replay.verify', {
+    seed: SEED,
+    commands: [
+      { tick: 9007199254740991, command: { op: 'marker.place', id: 1, x: 1, y: 1 } },
+    ],
+    expectedHash: '0000000000000000',
+  });
+  assert.equal(reasonOf(oversized), 'limit-exceeded');
+
+  const oversizedCheckpoint = await harness.call('replay.verify', {
+    seed: SEED,
+    commands: [],
+    hashTrail: [{ tick: 1000001, hash: '0000000000000000' }],
+    expectedHash: '0000000000000000',
+  });
+  assert.equal(reasonOf(oversizedCheckpoint), 'limit-exceeded');
 
   const session = await openSession();
   const stepped = resultOf(await harness.call('sim.step', { session, ticks: 1 }));

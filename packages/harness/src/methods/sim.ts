@@ -1,12 +1,14 @@
 import type { Sim, SimEvent } from '@opp/sim';
 
 import { parseCommand } from '../commands.ts';
+import { RpcError } from '../errors.ts';
 import { deepEquals } from '../json.ts';
+import { MAX_EVENTS_PER_RESPONSE, MAX_TICKS_PER_RUN, MAX_TICKS_PER_STEP } from '../limits.ts';
 import type { MethodHandler } from '../method.ts';
 import {
+  boundedCount,
   paramsOf,
   requiredArray,
-  requiredCount,
   requiredMember,
   requiredString,
 } from '../params.ts';
@@ -31,7 +33,10 @@ export const simMethods: Record<string, MethodHandler> = {
   'sim.step': (params, registry) => {
     const fields = paramsOf(params);
     const session = sessionOf(registry, fields);
-    const events = session.sim.step(requiredCount(fields, 'ticks'));
+    const events = stepWithinEventBudget(
+      session.sim,
+      boundedCount(fields, 'ticks', MAX_TICKS_PER_STEP),
+    );
     return { events, ...statusOf(session) };
   },
 
@@ -42,11 +47,29 @@ export const simMethods: Record<string, MethodHandler> = {
       session.sim,
       requiredString(fields, 'pointer'),
       requiredMember(fields, 'equals'),
-      requiredCount(fields, 'maxTicks'),
+      boundedCount(fields, 'maxTicks', MAX_TICKS_PER_RUN),
     );
     return { ...outcome, ...statusOf(session) };
   },
 };
+
+function stepWithinEventBudget(sim: Sim, ticks: number): SimEvent[] {
+  const events: SimEvent[] = [];
+  for (let stepped = 0; stepped < ticks; stepped += 1) {
+    events.push(...sim.step(1));
+    refuseBeyondEventBudget(events);
+  }
+  return events;
+}
+
+function refuseBeyondEventBudget(events: SimEvent[]): void {
+  if (events.length > MAX_EVENTS_PER_RESPONSE) {
+    throw new RpcError(
+      'limit-exceeded',
+      `a request may emit at most ${MAX_EVENTS_PER_RESPONSE} events`,
+    );
+  }
+}
 
 function stepUntilPointerEquals(
   sim: Sim,
@@ -61,5 +84,6 @@ function stepUntilPointerEquals(
     }
     if (ticksStepped === maxTicks) return { matched: false, ticksStepped, events };
     events.push(...sim.step(1));
+    refuseBeyondEventBudget(events);
   }
 }

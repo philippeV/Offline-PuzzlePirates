@@ -36,14 +36,13 @@ export function verifyReplay(run: ReplayRun): ReplayVerification {
   const sim = Sim.create({ seed: run.seed });
   const recorded = new Map(run.hashTrail.map((checkpoint) => [checkpoint.tick, checkpoint.hash]));
   const lastTick = lastTickOf(run);
-  let divergedAtTick = divergenceAt(sim, recorded, null);
+  let divergedAtTick: number | null = null;
 
-  for (let tick = 0; tick < lastTick; tick += 1) {
+  for (let tick = 0; tick <= lastTick; tick += 1) {
     dispatchIssuedAt(sim, run.commands, tick);
-    sim.step(1);
     divergedAtTick = divergenceAt(sim, recorded, divergedAtTick);
+    if (tick < lastTick) sim.step(1);
   }
-  dispatchIssuedAt(sim, run.commands, lastTick);
 
   const finalHash = sim.hash();
   return {

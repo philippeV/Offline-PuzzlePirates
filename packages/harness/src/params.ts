@@ -33,9 +33,33 @@ export function requiredCount(fields: Record<string, unknown>, key: string): num
   return value;
 }
 
+export function boundedCount(
+  fields: Record<string, unknown>,
+  key: string,
+  limit: number,
+): number {
+  const value = requiredCount(fields, key);
+  if (value > limit) {
+    throw new RpcError('limit-exceeded', `params.${key} must not exceed ${limit}`);
+  }
+  return value;
+}
+
 export function requiredArray(fields: Record<string, unknown>, key: string): unknown[] {
   const value = requiredMember(fields, key);
   if (!Array.isArray(value)) throw new RpcError('invalid-params', `params.${key} must be an array`);
+  return value;
+}
+
+export function boundedArray(
+  fields: Record<string, unknown>,
+  key: string,
+  limit: number,
+): unknown[] {
+  const value = requiredArray(fields, key);
+  if (value.length > limit) {
+    throw new RpcError('limit-exceeded', `params.${key} must not exceed ${limit} entries`);
+  }
   return value;
 }
 
@@ -49,4 +73,12 @@ export function optionalCount(fields: Record<string, unknown>, key: string): num
 
 export function optionalArray(fields: Record<string, unknown>, key: string): unknown[] | undefined {
   return key in fields ? requiredArray(fields, key) : undefined;
+}
+
+export function optionalBoundedArray(
+  fields: Record<string, unknown>,
+  key: string,
+  limit: number,
+): unknown[] | undefined {
+  return key in fields ? boundedArray(fields, key, limit) : undefined;
 }

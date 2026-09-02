@@ -49,6 +49,6 @@ function elementAt(value: unknown[], token: string): unknown {
 }
 
 function memberOf(value: Record<string, unknown>, token: string): unknown {
-  if (!(token in value)) throw new RpcError('pointer-unknown', `no member "${token}"`);
+  if (!Object.hasOwn(value, token)) throw new RpcError('pointer-unknown', `no member "${token}"`);
   return value[token];
 }

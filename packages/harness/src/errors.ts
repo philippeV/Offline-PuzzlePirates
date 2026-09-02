@@ -7,7 +7,8 @@ export type RpcErrorReason =
   | 'session-unknown'
   | 'snapshot-unknown'
   | 'scenario-unknown'
-  | 'pointer-unknown';
+  | 'pointer-unknown'
+  | 'limit-exceeded';
 
 const CODES: Record<RpcErrorReason, number> = {
   'parse-error': -32700,
@@ -19,6 +20,7 @@ const CODES: Record<RpcErrorReason, number> = {
   'snapshot-unknown': -32002,
   'scenario-unknown': -32003,
   'pointer-unknown': -32004,
+  'limit-exceeded': -32005,
 };
 
 export interface RpcErrorBody {

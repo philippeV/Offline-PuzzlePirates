@@ -1,0 +1,5 @@
+export const MAX_TICKS_PER_STEP = 100000;
+export const MAX_TICKS_PER_RUN = 1000000;
+export const MAX_EVENTS_PER_RESPONSE = 100000;
+export const MAX_REPLAY_TICK = 1000000;
+export const MAX_REPLAY_ENTRIES = 100000;

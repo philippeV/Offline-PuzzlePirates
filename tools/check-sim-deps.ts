@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 
-const MANIFEST = 'packages/sim/package.json';
-const FORBIDDEN_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'] as const;
+const MANIFEST = process.argv[2] ?? 'packages/sim/package.json';
+const FORBIDDEN_FIELDS = [
+  'dependencies',
+  'devDependencies',
+  'peerDependencies',
+  'optionalDependencies',
+] as const;
 
 function violations(manifest: Record<string, unknown>): string[] {
   return FORBIDDEN_FIELDS.flatMap((field) => {

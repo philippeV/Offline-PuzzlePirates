@@ -117,23 +117,52 @@ compare `stateHash`. A restore returns the byte-identical state, so the hash mat
 ## Replays
 
 A replay is inputs, not states: a seed, a command log with the tick each command was issued at,
-and a hash trail. The recorded fixture lives at
-`packages/fixtures/replays/marker-drift.json`:
+and a hash trail. A checkpoint at tick `T` is the state at clock `T` **after** every command
+issued at `T`. The recorded fixture lives at `packages/fixtures/replays/marker-drift.json` and is
+reproduced here whole — the committed file is the same JSON with one field per line:
 
 ```json
 {
   "seed": 12648430,
   "scenario": "marker-field",
-  "commands": [{ "tick": 0, "command": { "op": "marker.place", "id": 1, "x": 4, "y": 9 } }],
-  "hashTrail": [{ "tick": 1, "hash": "cf51698cdc80fdda" }],
+  "commands": [
+    { "tick": 0, "command": { "op": "marker.place", "id": 1, "x": 4, "y": 9 } },
+    { "tick": 3, "command": { "op": "marker.move", "id": 1, "dx": 2, "dy": 0 } },
+    { "tick": 7, "command": { "op": "marker.move", "id": 1, "dx": -3, "dy": 1 } }
+  ],
+  "hashTrail": [
+    { "tick": 0, "hash": "a147801784293628" },
+    { "tick": 1, "hash": "cf51698cdc80fdda" },
+    { "tick": 2, "hash": "9400fa38b2dd2035" },
+    { "tick": 3, "hash": "2864b451dcca1802" },
+    { "tick": 4, "hash": "027122a3ce9b088e" },
+    { "tick": 5, "hash": "5f9b4c06037ce0f5" },
+    { "tick": 6, "hash": "34fb3c5b4703457a" },
+    { "tick": 7, "hash": "0dd99362255cf246" },
+    { "tick": 8, "hash": "63f537cbe7b3a358" },
+    { "tick": 9, "hash": "53faf936df1fbbdb" },
+    { "tick": 10, "hash": "de8d660029621392" },
+    { "tick": 11, "hash": "4be3fafae056d2fe" },
+    { "tick": 12, "hash": "bf6370fad4b0fb94" }
+  ],
   "finalHash": "bf6370fad4b0fb94"
 }
 ```
 
-**Record one** by driving the harness: `session.new`, then for each tick dispatch the commands
-issued at that tick and call `sim.step {ticks:1}`, appending `{tick, stateHash}` from every step
-response to the trail. The last `stateHash` is `finalHash`. That ordering — dispatch at tick `T`
-while the clock reads `T`, then step — is exactly what `replay.verify` reproduces.
+**Record one** by driving the harness. `session.new` returns the hash at tick 0. Then for each
+tick `T` from 0 to the last: if commands were issued at `T`, `sim.dispatch` them and take the
+`stateHash` from that response, otherwise keep the `stateHash` returned by the `sim.step` that
+arrived at `T`; append `{tick: T, hash}` to the trail; and `sim.step {ticks:1}` unless `T` is the
+last tick. `finalHash` is the last hash appended. Taking the hash after the tick's commands rather
+than before them is what makes the trail one `replay.verify` reproduces — the pre-dispatch state
+at a tick carrying a command is not something the protocol ever shows you.
+
+`tools/record-replay.ts` does exactly that over the protocol and rewrites a fixture's trail in
+place from its seed, scenario and commands:
+
+```
+node tools/record-replay.ts packages/fixtures/replays/marker-drift.json
+```
 
 **Verify one** by passing the fixture straight through (`expectedHash` is the fixture's
 `finalHash`; `hashTrail` is optional but without it you only learn *that* it diverged, not where):

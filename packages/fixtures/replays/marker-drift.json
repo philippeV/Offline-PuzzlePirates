@@ -32,6 +32,10 @@
   ],
   "hashTrail": [
     {
+      "tick": 0,
+      "hash": "a147801784293628"
+    },
+    {
       "tick": 1,
       "hash": "cf51698cdc80fdda"
     },
@@ -41,7 +45,7 @@
     },
     {
       "tick": 3,
-      "hash": "4b188ffdee0fe4dc"
+      "hash": "2864b451dcca1802"
     },
     {
       "tick": 4,
@@ -57,7 +61,7 @@
     },
     {
       "tick": 7,
-      "hash": "4988ffa46dce4088"
+      "hash": "0dd99362255cf246"
     },
     {
       "tick": 8,

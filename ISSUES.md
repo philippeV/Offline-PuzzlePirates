@@ -4,6 +4,42 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — rework of PR 1 (slice 1, cycle 1)
+
+Found while fixing the five blocking findings. None of these blocked the fix.
+
+### The limits of a lint rule
+
+- **No purity rule survives local aliasing.** `const M = Math; M.random()` passes
+  `no-restricted-properties`, and the same trick defeats every restricted global now that
+  `globalThis` itself is banned. ESLint reasons about spellings, not values, so this is not fixable
+  by adding more entries to the list — only a type-aware or dataflow rule would catch it, which is a
+  disproportionate amount of machinery for the risk. The determinism test in
+  `tests/sim/determinism.test.ts` is the real backstop: an aliased nondeterministic call makes the
+  same seed produce a different hash, and that test fails. Worth revisiting only if a real
+  nondeterminism bug ever gets through.
+
+### Bounds, at the edges
+
+- **A step that trips the event budget leaves the session partially advanced.** `stepWithinEventBudget`
+  (`packages/harness/src/methods/sim.ts`) mutates as it goes, so a request refused with
+  `limit-exceeded` has already moved the clock. The caller can read the true `tick` back and carry on,
+  but the failed call is not atomic. Inherent to enforcing the budget outside `Sim.step`, which
+  decision 15 chose deliberately to keep `packages/sim` pure. It starts to matter if an agent ever
+  relies on a failed request having changed nothing — snapshot and restore is the answer there.
+- **The event budget is unreachable through the protocol today.** One marker means events equal ticks,
+  so `MAX_TICKS_PER_STEP` always fires first and `MAX_EVENTS_PER_RESPONSE` cannot be tripped by any
+  request. The test pins the boundary at the accepting side rather than proving a rejection. Slice 2
+  multiplies markers and makes it reachable; the rejection path should get a real test then.
+
+### Layering
+
+- **`tools/record-replay.ts` imports `tests/harness/client.ts`**, so a tool depends on a test helper.
+  It was done so the committed fixture and the round-trip test are produced by the same code path,
+  which is the point of the acceptance criterion, and duplicating the recording loop to avoid it would
+  be worse. The clean fix is to move the ndjson client to a place both can import — a `packages/client`
+  or `tools/lib` — which is a slice 2 concern once more tooling needs it.
+
 ## 2026-09-02 — review of PR 1 (slice 1, simulation core and harness)
 
 Five blocking findings were returned to analysis. The rest are recorded here.

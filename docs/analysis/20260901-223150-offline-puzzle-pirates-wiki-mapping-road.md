@@ -473,3 +473,58 @@ already spawns the harness as a child process, so gate tests have a working subp
 follow. `balance.json` is still empty of real constants and stays that way.
 
 **One development task** is emitted: the five fixes on the existing branch, extending PR 1.
+
+### 2026-09-02 — development, slice 1 rework (cycle 1)
+
+All five blocking findings fixed on
+`agent/feature/20260902-000100-opp-slice-1-sim-core-and-agent-harness`, extending PR 1. `npm run check`
+passes: 37 tests before this cycle, 53 after. No dependencies were added.
+
+**What was built, against the design above:**
+
+- **Bounds.** `packages/harness/src/limits.ts` holds the five constants; `boundedCount`,
+  `boundedArray` and `optionalBoundedArray` in `params.ts` apply them before any work starts, and
+  `limit-exceeded` (-32005) joins the error codes. The event budget is enforced harness-side by
+  stepping in chunks, so `packages/sim` is untouched and still imports nothing. The original
+  reproduction is dead: `sim.step {ticks: 9007199254740991}` went from a fatal V8 out-of-memory at
+  exit 134 after about four minutes to an immediate `limit-exceeded` error, with the same process
+  answering the next request correctly.
+- **Own-property lookups.** Null-prototype tables for the method and scenario tables, `Object.hasOwn`
+  for the JSON Pointer member lookup. `constructor`, `toString` and `__proto__` now produce the
+  ordinary `method-unknown` / `scenario-unknown` / `pointer-unknown` errors.
+- **Gates.** The import boundary is now `tools/check-sim-imports.ts`, wired into `npm run check`;
+  `globalThis`, `crypto`, `setTimeout`, `setInterval` and `process` are banned inside
+  `packages/sim/src` and `Date.parse` joins the restricted properties; `check-sim-deps.ts` reads
+  `devDependencies` and takes its manifest path as an argument. Six negative tests in
+  `tests/gates/purity.test.ts` run each gate as a real subprocess against a violating fixture.
+  `eslint.config.js` exports `simPurityRules` and applies that same object to the fixtures, so the
+  tests exercise the shipped rules rather than a copy that can drift.
+- **Replay.** The verifier compares each checkpoint after that tick's commands and before the step,
+  which is the post-dispatch convention decision 18 chose. `tools/record-replay.ts` records over the
+  public protocol, the committed fixture was regenerated with it, and the round trip is now a test.
+- **The skill.** The replay section carries the real fixture whole and a recording procedure matching
+  the implemented convention; the documented example was executed and verifies.
+
+**Verified rather than asserted.** The last cycle's lesson was that a gate reported as working had
+only been probed by hand, so every claim here was checked by making it fail first. Each gate had its
+real violation introduced into `packages/sim/src` and reverted: notably, with a relative import into
+`packages/harness` present, `npm run lint` still exits 0 while the new import gate exits 1 — the exact
+hole the review found, now closed by the thing that closes it. The replay fix was checked the same
+way: a trail recorded through the protocol was rejected at tick 0 with a matching final hash before
+the change and accepted after, and reverting the verifier body makes all six replay tests fail rather
+than pass either way.
+
+| #  | Decision                                                             | Why                                                                                                          |
+| -- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 25 | The event budget covers `sim.runUntil`, not only `sim.step`          | `runUntil` accumulates events through the same loop; bounding only `step` is the gap decision 14 exists to close |
+| 26 | Null-prototype tables keep an intermediate typed local               | `Object.create(null)` is typed `any`, so assigning the literal directly would silently drop its type check       |
+
+**Deviation from the stage contract.** The stage skill creates `agent/feature/<task-id>` and opens a
+PR. Neither was done: the task, the analysis above and the branch policy all require this rework to
+extend PR 1 so the slice lands as one reviewed unit rather than as a broken commit plus a repair. No
+new branch, no new PR.
+
+**Carried forward.** Slices 2 to 5 remain in `dev/development/held/`. They return to
+`dev/development/inbox/` only once PR 1 has passed review and test and merged into `agent/develop` —
+the merge happens in the test stage, so the instruction travels with the review task and on into the
+test task.
