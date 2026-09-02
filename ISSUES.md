@@ -4,6 +4,69 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 4 (OPP-11)
+
+The world, the voyage and the port economy. What follows is what the work turned up that was not
+worth stopping for.
+
+### `session.load` opens a throwaway sim and overwrites it
+
+`SessionRegistry.open` can only build a session around a sim it creates itself from a seed and a
+scenario name, so `session.load` opens a default-scenario session at seed 0 and then assigns over
+`session.sim` with the loaded one. The throwaway sim is built and discarded on every load, and the
+field assignment reaches around the registry's own constructor. A `SessionRegistry.adopt(sim)` — with
+`open` refactored to delegate to it — removes both. It is invisible from the protocol and costs one
+wasted `Sim.create` per load, so it is tidiness rather than a defect. It starts to matter if opening a
+session ever acquires a cost or an invariant beyond building the sim.
+
+### `parseCommand` validates ship-class membership but not island, commodity or voyage type
+
+`parseShipClass` checks the value against the declared class ids and refuses `invalid-params`; the six
+world commands check only that the field is a string and let the simulation answer `unknown-island`,
+`unknown-commodity` or `unknown-voyage-type`. Both are defensible — the second is arguably better,
+since it keeps domain knowledge in the domain — but the protocol now answers the same kind of mistake
+in two different ways depending on which command you sent. Worth settling in one direction the next
+time either file is opened.
+
+### `Replay` still carries no schema version, and the schema moved again
+
+Recorded at slice 2's review: a replay recorded before a schema bump reports `divergedAtTick: 0`,
+which is indistinguishable from a real determinism bug, because `Replay` carries no schema version
+although `session.new` already returns one. Schema 5 has now reproduced exactly that, and the fixtures
+were re-recorded. The finding is unchanged and its cost is paid once per schema bump, in confusion
+rather than in wrong behaviour.
+
+### One `_sources` entry does not open with a provenance register
+
+`bilging.vegasMultiplier` reads "the low end of the published range at least 5, maybe 6-7", where every
+other entry opens `published`, `invented` or `scope decision`. A test asserting the bijection between
+tuning keys and `_sources` entries now exists and passes over all 62 keys; a test asserting the
+register could not be added without either rewriting that entry's provenance — which would be
+inventing history — or weakening the assertion to accept anything. Rewriting it is a one-line job for
+whoever knows what that number's provenance really is.
+
+### `SEA_BATTLE_SCENARIO` is not exported from the harness index
+
+`BILGE_SCENARIO` and `DEFAULT_SCENARIO` are, and `PILLAGE_LOOP_SCENARIO` now is; `SEA_BATTLE_SCENARIO`
+has to be imported from `scenarios.ts` directly, which `tests/harness/battle.test.ts` does. Pre-existing,
+noticed while adding the fourth scenario.
+
+### Charting to the island you are standing on is refused as `no-route`
+
+The league graph is fully connected, so `routeBetween` between two real islands is never empty; the
+only degenerate case reachable in practice is a destination equal to the origin, which yields a
+one-point, zero-leg route. That is refused as `no-route` so the dispatcher never stores a voyage with
+no legs. The reason names the wrong thing — the route exists and is trivial — but inventing a
+`already-at-that-island` reason for a case no scenario reaches would add a member decision 59 says to
+leave out.
+
+### The encounter roll fires on the destination league point too
+
+A voyage rolls for a brigand on every leg it reaches, including the last one, so it is possible to be
+intercepted on the doorstep of the island you were sailing to. Nothing in the wiki excludes it — a
+ship is at sea until it ports, and porting is a command — and excluding it would need a special case
+for the final leg. Recorded because it looks like an off-by-one until you know it is deliberate.
+
 ## 2026-09-02 — independent review of the slice 3 repair (PR 3, cycle 1)
 
 Four lenses over `d5d5c5e..3943f47`. **No blocking findings** — all three repairs do what decisions

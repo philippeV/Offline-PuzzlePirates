@@ -1629,3 +1629,65 @@ doors, so they are the ones worth a test first.
 fail, because `balance: null` makes `stepShips` return before touching a ship. It is a real test of
 "a migrated save loads, dispatches and steps without throwing" — which is worth having — but not of
 "a tick does not tear". The name should say the weaker thing.
+### 2026-09-02 — development, slice 4 (OPP-11)
+
+The MVP loop is closed. A pirate starts in port at Alkaid with a purse, buys cargo on the dock,
+charts a voyage across a league-point graph, meets brigands on the way, fights the slice 3 sea
+battle, takes booty, ports at the far island, divides the chest and sells the cargo — and the whole
+run saves and reloads to an identical state hash. `tests/world/pillage-loop.test.ts` drives exactly
+that sequence in one scripted scenario, which is this slice's `Done when`.
+
+**Built on an unmerged chain, as decision 11 anticipated.** `agent/develop` is still at slice 2
+(`eca8058`); PR 3 has passed its review but not its test stage. This branch is therefore cut from
+`agent/feature/…slice-3` at `6d491e9` and carries slices 1, 2 and 3 as well as its own work. **Slice
+2b is not in this history** — there are no critters, and no `atomically` wrapper on `sim.step` — so
+nothing here assumes either. The repo squash-merges, so once PR 3 lands this branch needs rebasing
+onto `agent/develop` before its own diff is readable.
+
+**Where the world lives.** `packages/sim/src/world/`, mirroring `puzzle/` and `battle/` for the
+reason decisions 37 and 47 give: a separate package cannot be purity-gated and import `@opp/sim` at
+the same time. The two gates covered the new subdirectory without modification, again.
+
+**The scale of the world is deliberately one archipelago.** Ursa: 7 islands on 36 hand-authored
+league points. Ursa was chosen over the other fourteen because its published spawn sets alone carry
+the whole ship-supply chain — sugar cane, wood and iron — so the market closes without importing a
+second archipelago's geography.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                | Rationale                                                                                                                                                                                                                                                    |
+| -- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 74 | The world's static tables live in code; only the pirate, the voyage and stock are state   | `SHIP_CLASSES` set the precedent. A map edit is then a code change that fails a golden loudly, the save stays small, and the hash does not carry 36 immutable points around                                                                                   |
+| 75 | One archipelago, Ursa, on a 6x6 offset grid of 36 points                                  | Decision 7 already settled that Emerald is hand-authored, not scraped. Ursa's spawn sets carry the sugar cane, wood and iron of the ship-supply chain, so one archipelago is a self-sufficient economy rather than a fragment of one                           |
+| 76 | The horizontal-league cost is a code constant, not a `balance.json` key                   | The wiki publishes it: a horizontal league takes 40% longer. Decision 44 already ruled that a sourced value in the tuning file blurs the line decision 6 exists to draw, so it sits with the graph it describes                                               |
+| 77 | Only colonized islands have a market                                                      | The wiki spawns raw commodities only at colonized islands, and an uncolonized one is a bare waypoint. It also makes `island-has-no-market` a reachable rejection instead of the unreachable `commodity-not-traded` it replaced, which decision 59 would forbid |
+| 78 | Prices are fixed at world creation from a spawn discount and a scarcity premium            | The wiki stores no global price — a snapshot is the min sell and max buy across an island's buildings, and there are no buildings until a later phase. One implicit dock per island reproduces the trade-run gradient with none of the shoppe machinery        |
+| 79 | Cargo lots are added alongside slice 3's `cargoUnits`, not in place of it                  | Decision 57 expected them to replace it, but `cargoUnits` is the denomination slice 3's booty overflow policy and its tests are written in. Re-denominating that path buys nothing this slice needs, so lots are additive and `freeHoldOf` counts both         |
+| 80 | Brigand cargo becomes a real commodity lot when the battle settles, not at capture         | Capture happens inside slice 3's `awardBooty`, which is denominated in kilogram-equivalents. Settling is the first moment the world owns the outcome, and it keeps the conversion out of the battle layer entirely                                             |
+| 81 | The encounter commissions its brigand with `booty.brigandCargoUnitsBase`                   | That key existed with a `_sources` entry and no code reading it — one of the five such gaps `ISSUES.md` records. Wiring the brigand's hold to it makes the entry true rather than adding a second key meaning the same thing                                   |
+| 82 | The NPC crew's shares leave the economy; only the cut and the player's share are kept      | With an all-NPC crew the wiki's share table collapses to a dial, as the map itself notes. Paying the crew's shares back into the ship would make `playerSharePerMille` meaningless, so they are a sink and the restocking cut is what returns to the hold      |
+| 83 | `stepWorld` settles only an encounter a voyage owns                                        | The first version cleared any concluded battle and struck off the brigand, which broke slice 3's test that reads the brigand's hold after a direct `battle.start`. A battle nobody sailed into is not the world's to tidy up                                  |
+| 84 | `session.load` refuses an unloadable save with `invalid-params`                            | No RPC method loaded a save, so `save, reload, identical hash` was undrivable over the protocol. The fault is entirely in the caller's parameter; the other reasons in `errors.ts` all name something the registry does not hold                               |
+| 85 | The `_sources` bijection is now a test                                                     | This slice added 15 tuning keys to a convention enforced by nothing but review attention. `ISSUES.md` had already observed that one test would catch the whole class, and it costs six lines                                                                  |
+
+**The world commands are atomic by construction, which the open `sim.dispatch` question makes worth
+saying.** `ISSUES.md` records that `sim.dispatch` atomicity is unowned since slice 2b did not take
+it, and that it starts to matter when a command that mutates before it can fail is added. Every
+world command validates fully before it writes, and the market's rejections are tested by snapshot
+to prove they mutate nothing — so this slice adds no instance of that class, but it does not close
+the question either.
+
+**What the balance change cost, and why that is the system working.** Adding the `world`, `market`
+and `division` blocks and bumping the schema to 5 invalidated every committed state hash, because
+decision 41 pins the tuning into hashed state on purpose. Nine fixture tests went red and were
+re-blessed as an intended behaviour change under `pp-golden-state`'s gate. A tenth red test was not
+a fixture at all but the real regression decision 83 records — which is the argument for running the
+whole suite rather than only the tests near the change.
+
+**Deferred, with the reason.** Charts as inventory items, chart decay and league-point memorization
+are phase 2 in the wiki map and the loop closes without them, so charting validates a route rather
+than a chart. Bid tickets, shoppes, labour, orders, rent and governance were out of scope by the
+task. Merchant brigands and greedies are phase 2. Restocking the magazine at a port is **not** done:
+`small-cannon-ball`, `swill` and `grog` are tradeable commodities, but buying them fills the hold
+rather than the ship's `cannonballs` and `rum` counters, so decision 63's placeholders still stand.
+That is the substance of the follow-up development task this slice emits.
