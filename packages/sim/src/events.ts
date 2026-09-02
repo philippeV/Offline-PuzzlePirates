@@ -25,12 +25,21 @@ export interface BilgeSwappedEvent {
   y: number;
 }
 
+export interface BilgePokedEvent {
+  type: 'bilge.poked';
+  tick: number;
+  x: number;
+  y: number;
+}
+
 export interface BilgeClearedEvent {
   type: 'bilge.cleared';
   tick: number;
   chain: number;
   cells: number[];
+  crabs: number[];
   points: number;
+  settleTicks: number;
 }
 
 export interface BilgeWaterLineMovedEvent {
@@ -157,6 +166,7 @@ export type BattleEvent =
 
 export type PuzzleEvent =
   | BilgeSwappedEvent
+  | BilgePokedEvent
   | BilgeClearedEvent
   | BilgeWaterLineMovedEvent
   | PuzzleScoredEvent
