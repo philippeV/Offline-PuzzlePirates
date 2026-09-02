@@ -1,4 +1,5 @@
 import { takeEntityId, type EntityId, type EntityIdCounter } from '../ids.ts';
+import type { CargoLot } from '../world/state.ts';
 import { shipClassOf, type ShipClassId } from './classes.ts';
 
 export type StationSlot =
@@ -37,8 +38,10 @@ export interface ShipState {
   rum: number;
   cannonballs: number;
   cargoUnits: number;
+  cargo: CargoLot[];
   poe: number;
   bootyCargoUnits: number;
+  bootyCargo: CargoLot[];
   bootyPoe: number;
   crewCount: number;
   playerStation: StationSlot | null;
@@ -72,8 +75,10 @@ export function createShip(counter: EntityIdCounter, options: ShipOptions): Ship
     rum: options.rum ?? 0,
     cannonballs: options.cannonballs ?? 0,
     cargoUnits: options.cargoUnits ?? 0,
+    cargo: [],
     poe: options.poe ?? 0,
     bootyCargoUnits: 0,
+    bootyCargo: [],
     bootyPoe: 0,
     crewCount: options.crewCount ?? shipClass.swabbieStaffing,
     playerStation: options.playerStation ?? null,

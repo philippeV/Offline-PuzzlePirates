@@ -1915,6 +1915,109 @@ worktree recipe that works is to copy the main checkout's `node_modules` **inclu
 omitting it costs a run on `tsc is not recognized` — then replace `node_modules/@opp` with three
 junctions pointing at that worktree's own `packages/`.
 
+### 2026-09-02 — development, slice 4 (OPP-11)
+
+The MVP loop is closed. A pirate starts in port at Alkaid with a purse, buys cargo on the dock,
+charts a voyage across a league-point graph, meets brigands on the way, fights the slice 3 sea
+battle, takes booty, ports at the far island, divides the chest and sells the cargo — and the whole
+run saves and reloads to an identical state hash. `tests/world/pillage-loop.test.ts` drives exactly
+that sequence in one scripted scenario, which is this slice's `Done when`.
+
+**Built on an unmerged chain, as decision 11 anticipated.** `agent/develop` is still at slice 2
+(`eca8058`); PR 3 has passed its review but not its test stage. This branch is therefore cut from
+`agent/feature/…slice-3` at `6d491e9` and carries slices 1, 2 and 3 as well as its own work. **Slice
+2b is not in this history** — there are no critters, and no `atomically` wrapper on `sim.step` — so
+nothing here assumes either. The repo squash-merges, so once PR 3 lands this branch needs rebasing
+onto `agent/develop` before its own diff is readable.
+
+**Where the world lives.** `packages/sim/src/world/`, mirroring `puzzle/` and `battle/` for the
+reason decisions 37 and 47 give: a separate package cannot be purity-gated and import `@opp/sim` at
+the same time. The two gates covered the new subdirectory without modification, again.
+
+**The scale of the world is deliberately one archipelago.** Ursa: 7 islands on 36 hand-authored
+league points. Ursa was chosen over the other fourteen because its published spawn sets alone carry
+the whole ship-supply chain — sugar cane, wood and iron — so the market closes without importing a
+second archipelago's geography.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                | Rationale                                                                                                                                                                                                                                                    |
+| -- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 74 | The world's static tables live in code; only the pirate, the voyage and stock are state   | `SHIP_CLASSES` set the precedent. A map edit is then a code change that fails a golden loudly, the save stays small, and the hash does not carry 36 immutable points around                                                                                   |
+| 75 | One archipelago, Ursa, on a 6x6 offset grid of 36 points                                  | Decision 7 already settled that Emerald is hand-authored, not scraped. Ursa's spawn sets carry the sugar cane, wood and iron of the ship-supply chain, so one archipelago is a self-sufficient economy rather than a fragment of one                           |
+| 76 | The horizontal-league cost is a code constant, not a `balance.json` key                   | The wiki publishes it: a horizontal league takes 40% longer. Decision 44 already ruled that a sourced value in the tuning file blurs the line decision 6 exists to draw, so it sits with the graph it describes                                               |
+| 77 | Only colonized islands have a market                                                      | The wiki spawns raw commodities only at colonized islands, and an uncolonized one is a bare waypoint. It also makes `island-has-no-market` a reachable rejection instead of the unreachable `commodity-not-traded` it replaced, which decision 59 would forbid |
+| 78 | Prices are fixed at world creation from a spawn discount and a scarcity premium            | The wiki stores no global price — a snapshot is the min sell and max buy across an island's buildings, and there are no buildings until a later phase. One implicit dock per island reproduces the trade-run gradient with none of the shoppe machinery        |
+| 79 | Cargo lots are added alongside slice 3's `cargoUnits`, not in place of it                  | Decision 57 expected them to replace it, but `cargoUnits` is the denomination slice 3's booty overflow policy and its tests are written in. Re-denominating that path buys nothing this slice needs, so lots are additive and `freeHoldOf` counts both         |
+| 80 | Brigand cargo becomes a real commodity lot when the battle settles, not at capture         | Capture happens inside slice 3's `awardBooty`, which is denominated in kilogram-equivalents. Settling is the first moment the world owns the outcome, and it keeps the conversion out of the battle layer entirely                                             |
+| 81 | The encounter commissions its brigand with `booty.brigandCargoUnitsBase`                   | That key existed with a `_sources` entry and no code reading it — one of the five such gaps `ISSUES.md` records. Wiring the brigand's hold to it makes the entry true rather than adding a second key meaning the same thing                                   |
+| 82 | The NPC crew's shares leave the economy; only the cut and the player's share are kept      | With an all-NPC crew the wiki's share table collapses to a dial, as the map itself notes. Paying the crew's shares back into the ship would make `playerSharePerMille` meaningless, so they are a sink and the restocking cut is what returns to the hold      |
+| 83 | `stepWorld` settles only an encounter a voyage owns                                        | The first version cleared any concluded battle and struck off the brigand, which broke slice 3's test that reads the brigand's hold after a direct `battle.start`. A battle nobody sailed into is not the world's to tidy up                                  |
+| 84 | `session.load` refuses an unloadable save with `invalid-params`                            | No RPC method loaded a save, so `save, reload, identical hash` was undrivable over the protocol. The fault is entirely in the caller's parameter; the other reasons in `errors.ts` all name something the registry does not hold                               |
+| 85 | The `_sources` bijection is now a test                                                     | This slice added 15 tuning keys to a convention enforced by nothing but review attention. `ISSUES.md` had already observed that one test would catch the whole class, and it costs six lines                                                                  |
+
+**The world commands are atomic by construction, which the open `sim.dispatch` question makes worth
+saying.** `ISSUES.md` records that `sim.dispatch` atomicity is unowned since slice 2b did not take
+it, and that it starts to matter when a command that mutates before it can fail is added. Every
+world command validates fully before it writes, and the market's rejections are tested by snapshot
+to prove they mutate nothing — so this slice adds no instance of that class, but it does not close
+the question either.
+
+**What the balance change cost, and why that is the system working.** Adding the `world`, `market`
+and `division` blocks and bumping the schema to 5 invalidated every committed state hash, because
+decision 41 pins the tuning into hashed state on purpose. Nine fixture tests went red and were
+re-blessed as an intended behaviour change under `pp-golden-state`'s gate. A tenth red test was not
+a fixture at all but the real regression decision 83 records — which is the argument for running the
+whole suite rather than only the tests near the change.
+
+**Deferred, with the reason.** Charts as inventory items, chart decay and league-point memorization
+are phase 2 in the wiki map and the loop closes without them, so charting validates a route rather
+than a chart. Bid tickets, shoppes, labour, orders, rent and governance were out of scope by the
+task. Merchant brigands and greedies are phase 2. Restocking the magazine at a port is **not** done:
+`small-cannon-ball`, `swill` and `grog` are tradeable commodities, but buying them fills the hold
+rather than the ship's `cannonballs` and `rum` counters, so decision 63's placeholders still stand.
+That is the substance of the follow-up development task this slice emits.
+### 2026-09-02 — development, slice 4 correction: the booty chest (OPP-11)
+
+Decision 80 was wrong in its destination, and the user caught it before the review did. Plunder was
+being materialised straight into the ship's **hold**, which erases the distinction the wiki draws
+between goods a pirate bought and goods a pirate took. The wiki is explicit: a win puts commodities
+and chests into the ship's **booty chest**, an officer may sell out of that chest before division,
+and "unsold goods go into the ship's hold on division". A hold full of plunder that was never
+divided is not a state the game can reach.
+
+The rule, stated the way the user stated it: **traded commodities go to the hold; commodities
+pillaged or foraged during a voyage go to the booty chest.**
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                             | Rationale                                                                                                                                                                                                                                        |
+| -- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 86 | A ship carries a `bootyCargo` chest distinct from its `cargo` hold                    | `bootyPoe` already stood beside `poe` for exactly this reason — coin taken is not coin owned until it is divided. Goods needed the same pair, and without it `booty.divide` had nothing to divide but coin                                        |
+| 87 | Plunder enters the chest; division is the only thing that moves it to the hold        | It makes division a real event rather than a coin transfer, and it is what makes "sell what you pillaged" require porting first — the loop the wiki describes. `market.sell` sells from the hold, so plunder is unsellable until it is divided     |
+| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both, which also makes division mass-neutral and removes any need for a capacity check when the chest empties   |
+| 89 | `booty.divide` is refused only when the chest holds neither coin nor goods            | The first guard tested `bootyPoe` alone, so a chest holding goods but no coin was undividable and its goods were stranded. A roll can pay no coin, so the case is reachable                                                                       |
+
+**Schema 5 was extended rather than bumped again.** It is unreleased — PR 5 is open and unmerged —
+so migration 4 now gives every ship a `bootyCargo` alongside its `cargo`. Bumping to 6 for a shape
+no committed save has ever carried would invent history.
+
+**No fixture moved.** No committed golden, scenario or replay carries a ship, so the added field
+changed no pinned hash. The three tests that asserted plunder landing in the hold were rewritten to
+assert the chest, and they were rewritten to assert the *new* rule rather than relaxed — each now
+also asserts the hold stays empty until division. `tests/world/division.test.ts` is new and covers
+the transfer, the shared mass budget, the unsellability of undivided plunder and the empty-chest
+refusal; the end-to-end loop test now pins that a won encounter's goods reach the hold only after
+`booty.divide`.
+
+**One duplication removed on the way.** `stowLot`, `releaseLot` and `massKgOf` existed twice, once
+in `market.ts` and once inside `encounter.ts`. They now live in `world/cargo.ts` with `transferLots`,
+which is what division uses.
+
+**Still deferred.** The wiki lets an officer sell pillaged goods directly out of the chest before
+division, with the proceeds going back into the chest. That is a second selling path and a second
+price surface, and the loop closes without it, so it is not built — `market.sell` sells from the
+hold only.
 
 ### 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
 
@@ -2001,3 +2104,149 @@ entry and without paying. With only 5 crabs in the sample this excludes nothing 
     PR 3 and for the same reason: squashing detaches the history that slices 4 and 5 are branched
     from and mints exactly the conflict resolved here. It remains raised for the human in
     `ISSUES.md` rather than settled quietly.
+
+### 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
+
+Four lenses ran concurrently against the branch head `7306a53`, each in its own worktree. The review
+approved: nothing met the blocking test, and the slice went forward to the test stage. Everything
+found is recorded in `ISSUES.md` under the same date. What follows is only what the review changed or
+revealed about the *design*, which is what the next agent needs.
+
+**Two recorded decisions are not implemented as written, and both should be read as open rather than
+settled.**
+
+Decision 83 states `stepWorld`'s rule as ownership — "a battle nobody sailed into is not the world's
+to tidy up". The code guards on `state.voyage === null`, which asks whether *a* voyage is running, not
+whether *this* voyage owns the battle; `settleEncounter` never reads `voyage.shipId`. A probe on the
+pillage-loop scenario at seed 2 — chart an `evade` voyage, which can never spawn an encounter, then
+hand-start a battle and disengage — has the world strike the brigand off a battle no voyage owned.
+Slice 3's regression test passes only because it never has a voyage running. The same seam lets
+`battle.disengage` followed by `voyage.port` orphan a concluded battle until the next voyage's first
+tick. **Decision 83 stands as the intended rule; the implementation is a weaker approximation of it
+and is queued for repair.**
+
+Decision 88 claims the shared mass budget "makes division mass-neutral and removes any need for a
+capacity check when the chest empties". It is not mass-neutral. Mass is floored per lot array, so
+merging the chest into the hold re-floors the combined sum and can gain a kilogram —
+`small-cannon-ball` at 7100 g is the only commodity that triggers it, and it is buyable and
+plunderable. **The conclusion drawn from decision 88 — that no capacity check is needed — does not
+follow from its premise, and a check is queued.** The rest of the decision holds: the budget genuinely
+is shared, and a full hold genuinely does refuse plunder.
+
+**The tuning is tighter than its provenance claims, and the encounter rate is the case that matters.**
+Six `_sources` entries describe outcomes the constants do not deliver, all siblings of the
+`tradeSpawnPenaltyPerMille` defect this slice already found and fixed. The consequential one is
+`world.encounterChancePerMille`: because a pillage always adds both the difficulty term and the 300
+pillage bonus, the base 250 is never the per-leg chance. The real range across the chart is 550 to
+1000 per mille, and the only six-leg route out of Alkaid yields **4.61 expected battles** against the
+entry's stated 1.5. The entry says "a voyage rather than a gauntlet"; the tuning delivers the
+gauntlet. This is a balance decision the roadmap will have to take deliberately once a renderer makes
+a pillage observable — recorded here so slice 5 does not inherit the number as though it were
+measured.
+
+**The verification machinery held, and was checked rather than trusted.** The five re-blessed fixtures
+were independently reproduced: a live state rolled back across exactly the slice-4 delta reproduces
+every committed old hash, and every checkpoint reproduces its new hash live. No tick count, marker
+position or meter value moved. The diverged replay twin still differs from its sibling in exactly the
+tick-5 checkpoint, with its `note` intact. The layering gates were proved to enforce over the new
+`world/` subdirectory by planting a violation in a nested directory and watching them exit 1 — they
+are depth-agnostic by construction, so the fact that they were not modified for `world/` is correct
+rather than an oversight. The `_sources` bijection test bites in both directions.
+
+**Determinism is sound, including the part that looked riskiest.** The two new streams are lazily
+created and therefore path-dependent, but fully determined by the same inputs, and `canonicalJson`
+sorts keys so insertion order never leaks into the hash. Save/load and snapshot/restore were cut at
+six points across four seeds, including cuts inside a running battle, and reproduced identically each
+time. No world code draws from a pre-existing stream.
+
+**The tests defend the arithmetic and not the protocol.** Thirty injected faults, full suite each:
+sixteen died, fourteen survived, and the survivors cluster entirely in the dispatcher. Five of eight
+new events are asserted nowhere, nine of eighteen new rejection reasons are never asserted by name,
+and the one test covering this slice's own headline correction — that plunder is unsellable until
+divided — never reaches `sellCommodity` at all, because its fixture has no market. The production
+code is correct in every case probed; it is the protection that is missing. **This is the pattern
+slice 5 must not copy:** new events and rejection reasons need a test that names them, not a test that
+asserts the status was one of two values.
+
+**A layering drift worth knowing about.** `battle/booty.ts` now imports `cargoLotsMassKgOf` from
+`world/cargo.ts`, so the battle layer depends on the world layer. Decision 80 meant to keep the
+world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
+the dependency runs opposite to the stated intent, and slice 5 should not deepen it.
+
+### 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
+
+Three threads drove real `pp-harness` processes over stdio against the merged branch `6808738`. The
+slice passed and was merged into `agent/develop`. Full findings are in `ISSUES.md` under the same
+date; what follows is what the test changed about the design record.
+
+**The merge with slice 2b was the first half of the work.** PR 4 landed while slice 4 was under
+review, colliding in six files. `balance.json` was merged programmatically rather than by hand — a
+union of both sides, checked to 71 constants against 71 `_sources` entries with the bijection intact,
+`bilging.maxStarLevel` the only key the two sides disagreed on and only develop having changed it.
+The three bilging fixtures were re-blessed from live runs and each proven by rolling back across
+exactly the slice-4 delta to reproduce develop's committed hash. `npm run check` is 412/412 exit 0
+from cold on the merged result, up from 383 by slice 2b's tests.
+
+**The `_sources` prose for the encounter rate is wrong, and now it is wrong with evidence.** 540 real
+voyages — six destinations, three voyage types, thirty seeds — put the six-leg Keris pillage at 4.50
+battles against the 4.61 the review predicted statically and the "about one and a half" the entry
+claims, and the eight-leg McGuffin's route at 6.50 against a predicted 6.60. Observed per-leg rates
+track `550 + difficulty/2`; every one of the 60 legs sailed at difficulty 875 or above carried a
+brigand, and the arrival leg at McGuffin's Isle is a certainty hit 30 times out of 30. **The tuning
+value is not being changed here** — this is recorded so the decision to keep or move it is taken
+deliberately, with the measurement in hand, rather than inherited from a sentence that does not
+describe the code.
+
+**Decision 86 is half-implemented, and it predates slice 4.** Its premise is that coin taken is not
+coin owned until it is divided. `awardBooty` splits the roll — half straight into `winner.poe`, half
+into `bootyPoe` — so `booty.divide` only ever divides half of what a pillage rolls. The line is from
+slice 3; slice 4 added `bootyCargo` beside it without revisiting the coin, which is how the goods half
+and the coin half came to follow different rules. **Goods obey decision 86 exactly; coin does not.**
+
+**Decision 89's justification is unreachable with the shipped tuning.** The guard was widened because
+"a roll can pay no coin"; with `booty` as shipped, `rollBooty` yields 600 to 1000 PoE and `awardBooty`
+always leaves at least 300 in the chest, so a goods-but-no-coin chest cannot occur. The guard is
+correct and harmless — only its reason is dead, and it will become reachable the moment the coin split
+above is revisited.
+
+**A loss is nearly free, but not free, and this corrects the review.** Over 55 isolated losses the
+complete set of fields that ever change is `shipCount`, `damageTakenSmallMicro` and
+`meleeDamageSmallMicro`. No coin, cargo, chest, crew or rum moves. But melee damage is monotone —
+only ever incremented, with no repair path anywhere in the codebase, where hull damage heals through
+carpentry — so the win rate decays inside a single voyage from 17.3% on the first battle to 0% by the
+third. The review's "evade buys nothing" was too strong: evade buys 57% of the voyage time and a ship
+whose boarding strength is not permanently spent. **Whether melee damage should be repairable is an
+open design question this slice surfaced rather than created.**
+
+**Determinism across a process boundary is proven, not assumed.** 55 cut points over six seeds, each
+with the writing process `SIGKILL`ed and a fresh one loading the save: load hash, final hash, final
+tick, RNG stream set, cursor values and tail command results matched on every one. Nineteen cuts
+landed inside a running battle, all mid-turn. Seven more were placed tick-by-tick around the exact
+moments slice 4's lazily-created streams come into existence, including two cuts one tick apart
+straddling the birth of `world.plunder` and `booty.poe`; both sides agreed on which streams existed.
+The pass was made meaningful by a negative control — perturbing an RNG cursor by 1 or deleting a
+stream entry diverges both hashes. One thing learned for future triage: **nudging a marker diverges
+the load hash but the final hash re-converges**, because marker drift clamps at the field edge and is
+an absorbing state. The marker domain is a weak canary over long runs; the RNG cursors are the strong
+one.
+
+**`session.load` arrived without `session.save`.** Decision 84 exists because "save, reload, identical
+hash" was undrivable over the protocol, and it is still only half closed: `session.save` answers
+`method-unknown`. A save is obtainable as `state.get {pointer:""}` through `JSON.stringify`, which
+round-trips byte-exactly, so nothing is blocked — but the decision's stated goal is not met by the
+method set as shipped.
+
+**One review finding was corrected by the merge itself.** The review measured, on the pre-merge
+branch, that a save with a bogus `voyage.route` advanced a tick and lost its events before throwing.
+Slice 2b's `atomically` wrapper around `stepWithinEventBudget` arrived with `agent/develop` and
+restores the session exactly; driven over the protocol, `/tick` and `/voyage` are both unchanged after
+the error. What survives is only that such saves are accepted at load time and surface as
+`internal-error` rather than `invalid-params`.
+
+**Both settlement-guard defects reproduce over the wire, and the second is the urgent one.** The
+review found them in-process; the test confirmed both over the protocol with matched controls. Defect
+1 — the world striking a brigand off a battle no voyage owned — needs a `battle.start` issued during a
+voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `battle.disengage`
+followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
+stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
+voyage's first tick. The queued repair task has been reordered to put defect 2 first.

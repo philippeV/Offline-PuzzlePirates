@@ -91,6 +91,24 @@ const BALANCE: Balance = {
     chartDropChancePerMille: 200,
     overflowPolicy: 'truncate',
   },
+  world: {
+    startingPoe: 2000,
+    encounterChancePerMille: 250,
+    encounterDifficultyWeightPerMille: 500,
+    pillageSpawnBonusPerMille: 300,
+    tradeSpawnPenaltyPerMille: 400,
+    brigandCrewCount: 5,
+  },
+  market: {
+    rawBasePricePoe: 12,
+    refinedBasePricePoe: 40,
+    spawnDiscountPerMille: 600,
+    scarcityPremiumPerMille: 1400,
+    spreadPerMille: 250,
+    startingStockUnits: 500,
+    maxStockUnits: 2000,
+  },
+  division: { crewCutPerMille: 250, playerSharePerMille: 400 },
 };
 
 const SLOOP_FULL_DAMAGE = 10000000;

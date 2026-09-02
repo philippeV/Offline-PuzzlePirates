@@ -4,6 +4,346 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
+
+Three threads drove real `pp-harness` processes over stdio. Nothing blocked: the MVP loop runs end to
+end over the wire, the booty chest rules hold, and determinism survives a process boundary at 55 cut
+points with a verified-sensitive negative control. `npm run check` is 412/412 exit 0 from cold on the
+merged result. What follows is what only a played session could produce.
+
+### The pillage is a gauntlet, and now there are numbers
+
+540 real voyages — six destinations × three voyage types × thirty seeds — confirm the review's static
+arithmetic by sailing it. The six-leg Keris route averages **4.50 battles** against the 4.61 the
+review predicted and the "about one and a half" its `_sources` claims; the eight-leg McGuffin's route
+averages **6.50** against a predicted 6.60. Observed per-leg rates track `550 + difficulty/2` across
+every band, and **every one of the 60 legs sailed at difficulty 875 or above carried a brigand** — the
+arrival leg at McGuffin's Isle is a mathematical certainty and was hit 30 times out of 30. The
+quietest of thirty Keris pillages still fought once.
+
+The contrast between voyage types is real and larger than the tuning prose suggests. Evade is
+absolute: 180 evade voyages, zero encounters, and because `encounterChanceOf` returns 0 before
+touching the RNG the `world.encounter` stream is never even created, so tick counts are identical
+across all thirty seeds. Trade is a quieter pillage rather than a different activity — 1.90 battles on
+the Keris route against 4.50 — but no trade voyage in 180 fought on every leg, where 30 of 180
+pillages did. The same route costs 26.7 minutes evading, 40.9 trading and 61.6 pillaging, because a
+battle freezes the voyage.
+
+Recorded as a balance note, not a defect. Nothing was retuned. The number may still be the one
+wanted; the sentence justifying it is not.
+
+### A pillage is a poor trade, and losing is nearly free but not quite
+
+Across 180 pillages the player took a mean of **71 PoE** into the booty chest, and **145 of 180 ended
+with an empty chest**. Sixty first encounters were isolated and diffed across the whole battle
+including settlement: over 55 losses the complete set of fields that ever change is `shipCount`,
+`damageTakenSmallMicro` and `meleeDamageSmallMicro`. No coin, cargo, chest, crew or rum ever moves on
+a loss, and the brigand is struck off identically on a win and a loss.
+
+One correction to the review, which recorded that a loss costs nothing and evade therefore buys
+nothing. A loss leaves **permanent melee damage**: `meleeDamageSmallMicro` is only ever incremented
+and nothing in the codebase decreases it, while hull damage does heal through carpentry. The win rate
+decays inside a single voyage — 17.3% on the first battle, 3.7% on the second, 0% by the third — so
+evade buys 57% of the voyage time back and a ship whose boarding strength is not permanently spent.
+What a loss still does not risk is coin, cargo or the voyage.
+
+(The player ship submits no `battle.plan` in this scenario, so those win rates are a passive pirate's.
+The encounter frequency, the tick costs and the loss-costs-nothing result come from `rollEncounter`
+and `settleEncounter` and are independent of combat skill.)
+
+### `session.save` does not exist over the protocol
+
+`packages/harness/src/methods/session.ts` exports `session.new` and `session.load` and nothing else;
+`session.save` answers `-32601 method-unknown`. Decision 84 exists because "save, reload, identical
+hash" was undrivable over the protocol, and it is still only half closed — an agent can load a save
+but cannot produce one under that name. `tests/harness/session-load.test.ts` does not notice because
+it builds a `Sim` in-process and calls `sim.save()`.
+
+Not blocking, because a byte-faithful save is obtainable anyway: `serialise()` is `canonicalJson`
+of the state, so `state.get {pointer:""}` put through `JSON.stringify` round-trips exactly, verified
+by re-dumping a loaded session with key order preserved. Both test threads used that route.
+`docs/wiki-map/06-stack-decision.md` also names `session.close` and a `session.load {path}` form,
+neither of which exists.
+
+### Half the plundered coin never reaches the booty chest
+
+`battle.ended` reported `bootyPoe: 770`, but the hull came out of the battle with `bootyPoe: 385`
+**and `poe: 385`**, before any porting or division. `awardBooty` in `packages/sim/src/battle/booty.ts`
+does `const shared = Math.floor(roll.poe / 2); winner.poe += shared; winner.bootyPoe += roll.poe -
+shared;`. Decision 86's premise is that coin taken is not coin owned until it is divided; half of it
+is owned immediately, so `booty.divide` only ever divides half of what a pillage rolls.
+
+**Not a slice-4 regression** — `git log -S` puts that line in `a305574`, slice 3. Slice 4 added
+`bootyCargo` beside it without revisiting the coin, which is how the two halves came to disagree.
+
+### Decision 89's justification is unreachable with the shipped tuning
+
+The `booty.divide` guard was widened to accept a chest holding goods but no coin, because "a roll can
+pay no coin". With `booty` as shipped — `brigandPoeBase` 800, `brigandPoePerMightMilli` 1000,
+`brigandPoeVariancePerMille` 250 — `rollBooty` yields 600 to 1000 PoE and `awardBooty` always leaves
+at least 300 in the chest, so that case cannot occur. Every won encounter observed produced `bootyPoe`
+between 302 and 843. The widened guard is correct and harmless; only its stated reason is dead.
+
+### The booty-chest mass gain recurs per division
+
+The review reported `booty.divide` gaining a kilogram once. Driven over the protocol it gains one
+**per division**: on seed 621 a first division took a 70 kg pair of lots to 71 and a second took 141
+to 142. Conditions stay narrow — `small-cannon-ball` in both hold and chest with each side's gram
+remainder at or above 500 — and no goods are created or destroyed, only the accounted mass. The
+sim's own capacity accounting was shown to move, not just the arithmetic: at 13429 kg of filler a
+`market.buy` of 1 unit is accepted before the division and refused `hold-full` after it, with nothing
+having entered or left the ship.
+
+### A zero-unit trade is accepted and emits an event
+
+`{"op":"market.buy","units":0}` returns accepted with a `market.traded` event carrying `units: 0`
+and `poe: 0`. The state hash does not move, so it mutates nothing. Cosmetic.
+
+### A slice-4 voyage cannot be driven in one protocol call
+
+A full pillage runs 50,000 to 400,000 ticks and the marker domain emits one `marker.drifted` per
+tick, so a whole voyage in a single `sim.runUntil` trips `MAX_EVENTS_PER_RESPONSE` (100,000) in
+`packages/harness/src/limits.ts`. That is the guard working, not a defect, but anyone scripting a
+voyage over the protocol has to chunk, and the `pp-sim-harness` skill does not say so next to its
+existing advice about stepping `bilge-session` in small spans.
+
+### `pp-sim-harness`'s documentation has drifted
+
+It states that `session.new` reports `schemaVersion` 4 — it reports 5. It says three scenarios exist;
+there are four, and `pillage-loop` is the missing one. Its method table has no `session.load`, and its
+transcripts still show hashes from schema 3 and 4.
+
+## 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
+
+A four-lens review of PR 5. Nothing blocked: `npm run check` is 383/383 from cold on two independent
+worktrees, both CI jobs are green, the re-blessed fixtures were independently reproduced and hide
+nothing, and the layering gates were proved to enforce over the new `world/` subdirectory. What
+follows is everything the four lenses substantiated and judged not worth stopping for. Two clusters —
+the settlement guard and the untested dispatcher seam — are queued as a follow-up development task
+rather than left here, because they are small and slice 5 will copy whatever it finds.
+
+### `stepWorld`'s guard asks whether a voyage is running, not whether it owns the battle
+
+`world/session.ts` guards on `state.voyage === null`; `settleEncounter` never reads `voyage.shipId`.
+Decision 83 states the rule as ownership — "a battle nobody sailed into is not the world's to tidy
+up" — and the code does not implement that. Demonstrated: on the pillage-loop scenario at seed 2,
+charting an `evade` voyage (which can never spawn an encounter, `encounterChanceOf` returns 0), then
+hand-starting a battle and disengaging, the world strikes the brigand off a battle no voyage owned.
+Slice 3's test passes only because it never has a voyage running. Bounded — it needs a `battle.start`
+issued mid-voyage, which no scenario drives — and closed by one predicate,
+`battle.ships.some((s) => s.shipId === voyage.shipId)`.
+
+### A concluded battle can be orphaned by `battle.disengage` followed by `voyage.port`
+
+Same seam. `port()` refuses only a *running* battle, and `stepWorld` returns early once
+`voyage === null`, so a battle that concluded by disengagement and was not settled in that tick
+survives the voyage that met it. While orphaned, `battle.start` is refused `battle-already-running`,
+`rollEncounter` returns nothing because `state.battle !== null`, and the brigand hull sits in
+`state.ships`. It self-heals on the first tick of the next voyage, at the cost of one tick of that
+voyage's `stepVoyage`. A second lens reached the same guard from the other side: deleting `port()`'s
+`battle-running` check passes the whole suite and strands the world permanently, because nothing
+asserts that reason.
+
+### `booty.divide` is not mass-neutral, so decision 88's reason for having no capacity check is wrong
+
+Mass is accounted as `floor(sum of grams / 1000)` per lot array, and `freeHoldOf` floors the hold and
+the chest separately. Merging the chest into the hold re-floors the combined sum, which can land 1 kg
+higher. `small-cannon-ball` at 7100 g is the only commodity whose mass is not a whole kilogram, and it
+is buyable and plunderable. Demonstrated: a sloop with 3 cannonballs and 13430 hemp in the hold and 7
+cannonballs in the chest divides to 13501 kg against a 13500 kg hold. One kilogram in 13500, and the
+soak invariant cannot see it because `freeHoldOf` clamps at zero — but decision 88 claims the shared
+budget "makes division mass-neutral and removes any need for a capacity check when the chest empties",
+and that justification does not hold.
+
+### The rule this slice was corrected to enforce is the one rule its tests do not check
+
+`tests/world/division.test.ts`'s "plunder cannot be sold before it is divided" asserts only that the
+result was `rejected`. The fixture sets `state.markets = []`, so `trade()` bails at
+`island-has-no-market` and never reaches `sellCommodity`: the test would pass if the hold/chest split
+did not exist. Confirmed by mutation — making `sellCommodity` fall back to `ship.bootyCargo`, which is
+precisely what decisions 86-89 forbid, passes all 383 tests. The production code is correct; the test
+protecting it is not. Assert the reason is `insufficient-cargo` and give the fixture a real market.
+
+### The dispatcher is untested as a dispatcher
+
+Thirty injected faults, full suite per fault: sixteen died, fourteen survived, and the survivors
+cluster in one place. Five of the eight new events appear in no test at all — `world.started`,
+`voyage.charted`, `voyage.ported`, `market.traded`, `booty.divided` — so the traded side can be
+inverted, the leg count zeroed, the ported island hard-coded, and `crewCutPoe` and `pirateSharePoe`
+swapped, all with a green suite. Nine of the eighteen new rejection reasons are never asserted by
+name. `tests/harness/world-commands.test.ts`'s six well-shaped cases assert only that the status is
+one of `accepted` or `rejected`, so mutating `applyWorldCommand` to refuse every world command
+unconditionally still passes it 17/17. The arithmetic is well defended; the protocol surface is not.
+
+### Rounding is exercised nowhere in the new money or mass arithmetic
+
+Four surviving mutants share one shape. The crew-cut test recomputes its expected value with
+production's own formula *and* picks numbers that divide exactly, so `floor` to `ceil` is invisible.
+`massKgOf` `floor` to `ceil` survives because `small-cannon-ball` — again, the only non-whole-kilogram
+commodity — is never bought or sold in any test. Dropping the floor on plundered units survives even
+though the truncation is genuinely reached (soak seed 95028 draws 5 cannonballs from a 40 kg chest),
+because the test asserts mass bounds and never asserts the unit count is an integer, so fractional
+cargo lots would flow into the hash unnoticed. Dropping the floor in `legTicksRequiredOf` survives
+only because the declared speeds are all round.
+
+### `orientationCostOf` decides 37% of real legs and no test measures it
+
+Decision 76's whole point is which of the two league costs a leg pays. The 40% ratio is tested only by
+handing the constant to `legTicksRequiredOf` directly; no test ever measures a voyage's duration.
+Making `orientationCostOf` always return the diagonal cost passes 383/383. It is not a dead path —
+across island pairs the routes use 52 horizontal legs against 88 diagonal ones, so a third of real
+legs would silently run 40% faster.
+
+### Six `_sources` entries promise an outcome the tuning does not deliver
+
+The same defect class as `tradeSpawnPenaltyPerMille`, which this slice already found and fixed. The
+bijection test is real — it derives both sides independently and bites in both directions — but it
+asserts existence, not accuracy.
+
+- `world.encounterChancePerMille` says a quarter of legs carrying a brigand "makes a six-leg pillage
+  average about one and a half battles, which is a voyage rather than a gauntlet". A pillage always
+  adds the difficulty term *and* the 300 pillage bonus, so 250 is never the per-leg chance: the
+  minimum anywhere on the chart is 550/1000 and the maximum 1000/1000. The only six-leg route out of
+  Alkaid carries 612, 675, 737, 800, 862, 925 — **4.61 expected battles**. The eight-leg route to
+  `mcguffins-isle` reaches 6.60 with the last leg a certainty. It is the gauntlet the entry denies.
+- `world.encounterDifficultyWeightPerMille` says "up to half of its base"; the term adds up to +500
+  against a base of 250, which is twice the base, not half.
+- `world.brigandCrewCount` says 5 sits "just below" the player's crew so an even fight tilts to the
+  player. A commissioned sloop defaults to `swabbieStaffing`, which is also 5.
+- `market.rawBasePricePoe` says a sloop's hold of raw goods is "the same order as a single brigand's
+  purse". The hold is 162,000 PoE; the purse is 800.
+- `market.startingStockUnits` says a dock opens with enough stock to fill a sloop's hold without
+  emptying the island. Buying every unit of every commodity at Alkaid yields 10,050 kg against a
+  13,500 kg hold.
+- `world.startingPoe` says 2000 covers a magazine and a little cargo. `small-cannon-ball` is refined
+  and spawns nowhere, so it prices at the scarcity premium of 56 PoE; the 40-shot magazine is 2240.
+
+### `session.load` casts rather than validates, so a save that parses is a save that loads
+
+`migrate()` ends in `return current as unknown as WorldState`. Anything past the `schemaVersion` gate
+becomes session state: `{"schemaVersion":5}` is accepted and answered with a hash, and the next
+`sim.step` dies `internal-error: Cannot read properties of undefined`. The existing test refuses `{}`
+only for want of a `schemaVersion`. Two related edges: malformed saves surface as `internal-error`
+(-32603) rather than `invalid-params`, because `statusOf()` hashes outside `loadSim`'s try/catch; and
+a save whose `voyage.route` names a league point that does not exist loads cleanly and then throws
+from `stepVoyage`. **Corrected by the physical test after the merge:** the review measured that
+second edge on the pre-merge branch and reported that the session advanced a tick and lost its
+events. It does not, on the merged tree. Slice 2b's `atomically` wrapper around
+`stepWithinEventBudget` arrived with `agent/develop` and restores the session exactly — driven over
+the protocol, `sim.step` answers `internal-error` and `/tick` and `/voyage` are both unchanged. The
+same holds for an unknown `shipClass` and for a bare `{"schemaVersion":5}`. What survives is only
+that these surface as `internal-error` rather than `invalid-params`, and that a structurally invalid
+save is accepted at load time at all. Local, single-player and self-inflicted, but the RPC contract
+says bad params yield
+`invalid-params` and this slice's own tests show that intent. The `schemaVersion` gate itself is
+sound: 999, 1e308, 0, -1, 4.5, absent, non-numeric and non-string were each refused cleanly, and no
+prototype-pollution path exists — every domain lookup table is deliberately null-prototype.
+
+### The sim's own command layer accepts negative quantities
+
+`buyCommodity` and `sellCommodity` never check that units are non-negative, and neither does
+`applyWorldCommand`. Every guard reads the wrong way round for a negative: the stock check, the purse
+check and the mass check all pass trivially. Called directly, `market.buy` of -1000 cannonballs is
+accepted, mints 56,000 PoE and writes a negative lot that makes `freeHoldOf` exceed capacity.
+Unreachable over the protocol — `parseCommand`'s `requiredCount` refuses it, and `replay.verify` goes
+through the same parser — which is why it is recorded rather than returned. It is worth noting because
+every other domain rule is enforced in the sim, and `Sim.dispatch`, `applyWorldCommand`,
+`buyCommodity` and `sellCommodity` are all public API of `@opp/sim`.
+
+### Migration 4 silently drops `balance` from a real v4 save
+
+The migration spreads the save and sets `balance: null`. A genuine v4 save keeps its ships and puzzle
+but comes back with no balance, and the migrated session then refuses `world.start` with
+`balance-missing`. This matches migrations 2 and 3 and is probably deliberate, since the `Balance`
+shape changed again this slice — but it is silent, and nothing tests it: `packages/fixtures/saves/`
+holds only v2 and v3 saves, and `tests/sim/migration.test.ts` fabricates its v4 by relabelling a v5
+state of a sim with no ships and no balance.
+
+### The battle layer now depends on the world layer
+
+`battle/booty.ts` imports `cargoLotsMassKgOf` from `../world/cargo.ts` so `freeHoldOf` can count lots.
+Decision 80 meant to keep the world's denomination out of the battle layer entirely; the mass
+accounting now flows the other way. Both gates accept it, so nothing is broken — recorded because the
+decision says otherwise.
+
+### Small duplications in `world/`
+
+`GRAMS_PER_KG` is declared in both `world/cargo.ts` and `world/encounter.ts`, and `encounter.ts`
+open-codes the inverse of `massKgOf` rather than sharing it. The island predicate exists twice, as
+`isIsland` in `voyage.ts` and `isIslandId` in `dispatch.ts`, and `charter()` calls one before
+`chartVoyage` re-checks with the other. In `tests/world/soak.test.ts`, `ladenKgOf` re-implements
+`freeHoldOf`'s arithmetic but omits the booty chest, and `breachesOf` scans the hold for negative lots
+but not the chest; no reachable miss was found across the 12 soak seeds, so it is latent rather than
+live.
+
+### A lost encounter costs the player nothing
+
+The brigand is deleted on a loss exactly as on a win, so a `pillage` voyage carries no downside beyond
+forgone booty and `evade` buys nothing. Unspecified in decisions 74-89 rather than contradicted by
+them, and a balance question rather than a defect.
+
+## 2026-09-02 — development of slice 4 (OPP-11)
+
+The world, the voyage and the port economy. What follows is what the work turned up that was not
+worth stopping for.
+
+### `session.load` opens a throwaway sim and overwrites it
+
+`SessionRegistry.open` can only build a session around a sim it creates itself from a seed and a
+scenario name, so `session.load` opens a default-scenario session at seed 0 and then assigns over
+`session.sim` with the loaded one. The throwaway sim is built and discarded on every load, and the
+field assignment reaches around the registry's own constructor. A `SessionRegistry.adopt(sim)` — with
+`open` refactored to delegate to it — removes both. It is invisible from the protocol and costs one
+wasted `Sim.create` per load, so it is tidiness rather than a defect. It starts to matter if opening a
+session ever acquires a cost or an invariant beyond building the sim.
+
+### `parseCommand` validates ship-class membership but not island, commodity or voyage type
+
+`parseShipClass` checks the value against the declared class ids and refuses `invalid-params`; the six
+world commands check only that the field is a string and let the simulation answer `unknown-island`,
+`unknown-commodity` or `unknown-voyage-type`. Both are defensible — the second is arguably better,
+since it keeps domain knowledge in the domain — but the protocol now answers the same kind of mistake
+in two different ways depending on which command you sent. Worth settling in one direction the next
+time either file is opened.
+
+### `Replay` still carries no schema version, and the schema moved again
+
+Recorded at slice 2's review: a replay recorded before a schema bump reports `divergedAtTick: 0`,
+which is indistinguishable from a real determinism bug, because `Replay` carries no schema version
+although `session.new` already returns one. Schema 5 has now reproduced exactly that, and the fixtures
+were re-recorded. The finding is unchanged and its cost is paid once per schema bump, in confusion
+rather than in wrong behaviour.
+
+### One `_sources` entry does not open with a provenance register
+
+`bilging.vegasMultiplier` reads "the low end of the published range at least 5, maybe 6-7", where every
+other entry opens `published`, `invented` or `scope decision`. A test asserting the bijection between
+tuning keys and `_sources` entries now exists and passes over all 62 keys; a test asserting the
+register could not be added without either rewriting that entry's provenance — which would be
+inventing history — or weakening the assertion to accept anything. Rewriting it is a one-line job for
+whoever knows what that number's provenance really is.
+
+### `SEA_BATTLE_SCENARIO` is not exported from the harness index
+
+`BILGE_SCENARIO` and `DEFAULT_SCENARIO` are, and `PILLAGE_LOOP_SCENARIO` now is; `SEA_BATTLE_SCENARIO`
+has to be imported from `scenarios.ts` directly, which `tests/harness/battle.test.ts` does. Pre-existing,
+noticed while adding the fourth scenario.
+
+### Charting to the island you are standing on is refused as `no-route`
+
+The league graph is fully connected, so `routeBetween` between two real islands is never empty; the
+only degenerate case reachable in practice is a destination equal to the origin, which yields a
+one-point, zero-leg route. That is refused as `no-route` so the dispatcher never stores a voyage with
+no legs. The reason names the wrong thing — the route exists and is trivial — but inventing a
+`already-at-that-island` reason for a case no scenario reaches would add a member decision 59 says to
+leave out.
+
+### The encounter roll fires on the destination league point too
+
+A voyage rolls for a brigand on every leg it reaches, including the last one, so it is possible to be
+intercepted on the doorstep of the island you were sailing to. Nothing in the wiki excludes it — a
+ship is at sea until it ports, and porting is a command — and excluding it would need a special case
+for the final leg. Recorded because it looks like an off-by-one until you know it is deliberate.
 ## 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
 
 The test stage drove the real harness over stdio and reproduced every behaviour the slice claims;

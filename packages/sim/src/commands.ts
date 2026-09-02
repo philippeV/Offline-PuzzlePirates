@@ -3,6 +3,9 @@ import type { SimEvent } from './events.ts';
 import type { EntityId } from './ids.ts';
 import type { ShipClassId } from './ship/classes.ts';
 import type { Allegiance, StationSlot } from './ship/state.ts';
+import type { CommodityId } from './world/commodities.ts';
+import type { IslandId } from './world/islands.ts';
+import type { VoyageType } from './world/state.ts';
 
 export interface MoveMarkerCommand {
   op: 'marker.move';
@@ -63,6 +66,41 @@ export interface DisengageCommand {
   shipId: EntityId;
 }
 
+export interface StartWorldCommand {
+  op: 'world.start';
+  islandId: IslandId;
+}
+
+export interface CharterVoyageCommand {
+  op: 'voyage.chart';
+  shipId: EntityId;
+  toIslandId: IslandId;
+  voyageType: VoyageType;
+}
+
+export interface PortVoyageCommand {
+  op: 'voyage.port';
+}
+
+export interface BuyCommodityCommand {
+  op: 'market.buy';
+  shipId: EntityId;
+  commodityId: CommodityId;
+  units: number;
+}
+
+export interface SellCommodityCommand {
+  op: 'market.sell';
+  shipId: EntityId;
+  commodityId: CommodityId;
+  units: number;
+}
+
+export interface DivideBootyCommand {
+  op: 'booty.divide';
+  shipId: EntityId;
+}
+
 export type MarkerCommand = MoveMarkerCommand | PlaceMarkerCommand;
 
 export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand | PokeBilgeCommand;
@@ -71,7 +109,15 @@ export type ShipCommand = CommissionShipCommand;
 
 export type BattleCommand = StartBattleCommand | PlanBattleTurnCommand | DisengageCommand;
 
-export type Command = MarkerCommand | PuzzleCommand | ShipCommand | BattleCommand;
+export type WorldCommand =
+  | StartWorldCommand
+  | CharterVoyageCommand
+  | PortVoyageCommand
+  | BuyCommodityCommand
+  | SellCommodityCommand
+  | DivideBootyCommand;
+
+export type Command = MarkerCommand | PuzzleCommand | ShipCommand | BattleCommand | WorldCommand;
 
 export type RejectionReason =
   | 'unknown-marker'
@@ -93,7 +139,25 @@ export type RejectionReason =
   | 'too-many-shots'
   | 'no-movement-token'
   | 'no-gun-token'
-  | 'disengage-not-ready';
+  | 'disengage-not-ready'
+  | 'world-already-started'
+  | 'world-not-started'
+  | 'unknown-island'
+  | 'unknown-commodity'
+  | 'not-in-port'
+  | 'voyage-already-running'
+  | 'no-voyage-running'
+  | 'not-at-island'
+  | 'no-route'
+  | 'unknown-voyage-type'
+  | 'battle-running'
+  | 'island-has-no-market'
+  | 'insufficient-poe'
+  | 'insufficient-stock'
+  | 'insufficient-cargo'
+  | 'market-stock-full'
+  | 'hold-full'
+  | 'no-booty';
 
 export interface AcceptedCommand {
   status: 'accepted';

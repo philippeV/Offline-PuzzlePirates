@@ -6,6 +6,9 @@ import { RpcError } from './errors.ts';
 export const DEFAULT_SCENARIO = 'marker-field';
 export const BILGE_SCENARIO = 'bilge-session';
 export const SEA_BATTLE_SCENARIO = 'sea-battle';
+export const PILLAGE_LOOP_SCENARIO = 'pillage-loop';
+
+export const HOME_ISLAND = 'alkaid';
 
 const BILGING_PUZZLE = 'bilging';
 
@@ -13,6 +16,7 @@ const declaredBuilders: Record<string, (seed: number) => Sim> = {
   [DEFAULT_SCENARIO]: (seed) => Sim.create({ seed }),
   [BILGE_SCENARIO]: (seed) => openBilgeSession(seed),
   [SEA_BATTLE_SCENARIO]: (seed) => openSeaBattle(seed),
+  [PILLAGE_LOOP_SCENARIO]: (seed) => openPillageLoop(seed),
 };
 
 const BUILDERS: Record<string, (seed: number) => Sim> = Object.assign(
@@ -55,6 +59,24 @@ function openSeaBattle(seed: number): Sim {
       cargoUnits: BALANCE.booty.brigandCargoUnitsBase,
     },
     { op: 'battle.start', sinkingContext: true },
+  ]);
+  return sim;
+}
+
+function openPillageLoop(seed: number): Sim {
+  const sim = Sim.create({ seed, balance: BALANCE });
+  const { startingCannonballs, startingRum } = BALANCE.battle;
+  drive(sim, PILLAGE_LOOP_SCENARIO, [
+    { op: 'puzzle.start', puzzle: BILGING_PUZZLE },
+    { op: 'world.start', islandId: HOME_ISLAND },
+    {
+      op: 'ship.commission',
+      shipClass: 'sloop',
+      allegiance: 'player',
+      playerStation: 'bilging',
+      cannonballs: startingCannonballs,
+      rum: startingRum,
+    },
   ]);
   return sim;
 }

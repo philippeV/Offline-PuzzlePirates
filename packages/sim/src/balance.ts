@@ -58,10 +58,37 @@ export interface BootyBalance {
   overflowPolicy: BootyOverflowPolicy;
 }
 
+export interface WorldBalance {
+  startingPoe: number;
+  encounterChancePerMille: number;
+  encounterDifficultyWeightPerMille: number;
+  pillageSpawnBonusPerMille: number;
+  tradeSpawnPenaltyPerMille: number;
+  brigandCrewCount: number;
+}
+
+export interface MarketBalance {
+  rawBasePricePoe: number;
+  refinedBasePricePoe: number;
+  spawnDiscountPerMille: number;
+  scarcityPremiumPerMille: number;
+  spreadPerMille: number;
+  startingStockUnits: number;
+  maxStockUnits: number;
+}
+
+export interface DivisionBalance {
+  crewCutPerMille: number;
+  playerSharePerMille: number;
+}
+
 export interface Balance extends PuzzleBalance {
   ship: ShipBalance;
   battle: BattleBalance;
   npc: NpcBalance;
   brigand: BrigandBalance;
   booty: BootyBalance;
+  world: WorldBalance;
+  market: MarketBalance;
+  division: DivisionBalance;
 }

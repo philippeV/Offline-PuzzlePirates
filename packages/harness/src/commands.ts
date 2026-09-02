@@ -12,6 +12,7 @@ import {
   optionalCount,
   optionalString,
   paramsOf,
+  requiredCount,
   requiredInteger,
   requiredString,
 } from './params.ts';
@@ -58,9 +59,34 @@ export function parseCommand(value: unknown): Command {
       return { op, shipId: requiredInteger(fields, 'shipId'), plan: parsePlan(fields) };
     case 'battle.disengage':
       return { op, shipId: requiredInteger(fields, 'shipId') };
+    case 'world.start':
+      return { op, islandId: domainId(fields, 'islandId') };
+    case 'voyage.chart':
+      return {
+        op,
+        shipId: requiredInteger(fields, 'shipId'),
+        toIslandId: domainId(fields, 'toIslandId'),
+        voyageType: domainId(fields, 'voyageType'),
+      };
+    case 'voyage.port':
+      return { op };
+    case 'market.buy':
+    case 'market.sell':
+      return {
+        op,
+        shipId: requiredInteger(fields, 'shipId'),
+        commodityId: domainId(fields, 'commodityId'),
+        units: requiredCount(fields, 'units'),
+      };
+    case 'booty.divide':
+      return { op, shipId: requiredInteger(fields, 'shipId') };
     default:
       throw new RpcError('invalid-params', `unknown command op "${op}"`);
   }
+}
+
+function domainId<Id extends string>(fields: Record<string, unknown>, key: string): Id {
+  return requiredString(fields, key) as Id;
 }
 
 function parseShipClass(shipClass: string): ShipClassId {

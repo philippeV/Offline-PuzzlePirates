@@ -3,6 +3,7 @@ import { PER_MILLE } from '../puzzle/scoring.ts';
 import type { RngStream } from '../rng.ts';
 import { shipClassOf } from '../ship/classes.ts';
 import type { ShipState } from '../ship/state.ts';
+import { cargoLotsMassKgOf } from '../world/cargo.ts';
 
 export const BOOTY_POE_STREAM = 'booty.poe';
 
@@ -45,7 +46,14 @@ export function holdCapacityOf(ship: ShipState): number {
 }
 
 export function freeHoldOf(ship: ShipState): number {
-  return Math.max(holdCapacityOf(ship) - ship.cargoUnits - ship.bootyCargoUnits, 0);
+  return Math.max(
+    holdCapacityOf(ship) -
+      ship.cargoUnits -
+      ship.bootyCargoUnits -
+      cargoLotsMassKgOf(ship.cargo) -
+      cargoLotsMassKgOf(ship.bootyCargo),
+    0,
+  );
 }
 
 function takenCargoOf(winner: ShipState, offered: number, balance: BootyBalance): number {
