@@ -1995,7 +1995,7 @@ pillaged or foraged during a voyage go to the booty chest.**
 | -- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 86 | A ship carries a `bootyCargo` chest distinct from its `cargo` hold                    | `bootyPoe` already stood beside `poe` for exactly this reason — coin taken is not coin owned until it is divided. Goods needed the same pair, and without it `booty.divide` had nothing to divide but coin                                        |
 | 87 | Plunder enters the chest; division is the only thing that moves it to the hold        | It makes division a real event rather than a coin transfer, and it is what makes "sell what you pillaged" require porting first — the loop the wiki describes. `market.sell` sells from the hold, so plunder is unsellable until it is divided     |
-| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both, which also makes division mass-neutral and removes any need for a capacity check when the chest empties   |
+| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both — in grams since decision 103, because flooring each array's kilograms apart made division gain a kilogram |
 | 89 | `booty.divide` is refused only when the chest holds neither coin nor goods            | The first guard tested `bootyPoe` alone, so a chest holding goods but no coin was undividable and its goods were stranded. A roll can pay no coin, so the case is reachable                                                                       |
 
 **Schema 5 was extended rather than bumped again.** It is unreleased — PR 5 is open and unmerged —
@@ -2250,3 +2250,63 @@ voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `b
 followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
 stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
 voyage's first tick. The queued repair task has been reordered to put defect 2 first.
+
+### 2026-09-02 — development, slice 4c: the settlement guard and the division budget (OPP-11)
+
+The review and the physical test of PR 5 queued three defects against slice 4's world, every one of
+them leaving something wrong in *hashed* state. All three are closed here. The dispatcher, rounding
+and orientation coverage the same review asked for is a separate piece of work on its own branch.
+
+**These decisions are numbered from 101.** The document's last recorded decision is 89, but slices 4b
+and 5 have each taken 90 to 100 on branches that are not merged yet, so continuing from 90 would mint
+three collisions. The numbers here start above everything any open branch has claimed.
+
+| #   | Decision                                                                               | Rationale                                                                                                                                                                                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 101 | `voyage.port` settles a concluded battle the voyage owns rather than refusing the port | Refusing would only send the pirate back to a tick they have to step anyway, and it leaves the same stale battle in hashed state until they do. Porting is the voyage's end, and the encounter it met ends with it; the settlement's events lead the `voyage.ported` event, and it runs after the last refusal so the command still writes nothing it might refuse |
+| 102 | A voyage owns a battle its own ship is standing in                                     | Decision 83's words are ownership, and a battle none of whose berths is the voyaging ship is one nobody sailed into. Provenance — marking the battle the encounter spawned — reads the words the same way, but it would strand a hand-started mid-voyage battle in hashed state for good, which is the defect decision 101 exists to close                         |
+| 103 | The chest and the hold share one budget counted in grams, floored once                 | A capacity check could only refuse the division, and a refused division strands the chest for good: goods leave it by no other door, and `market.sell` sells from the hold. Flooring the two arrays' grams together makes division mass-neutral in fact, which is what decision 88 asserted without it being so                                                    |
+
+**A concluded battle no longer outlives the voyage that met it.** `port()` refused only a *running*
+battle and `stepWorld` returned early once `voyage === null`, so `battle.disengage` followed by
+`voyage.port` — ordinary play, no hand-started battle needed — left `/battle` reading
+`{outcome: "disengaged"}` with `/voyage` null, `battle.start` refused `battle-already-running`, and no
+number of ticks in port clearing either. Porting now settles the battle on its way in, which also
+means a pillage won on the last leg pays its plunder into the chest at the dock instead of on the next
+voyage's first tick.
+
+**Decision 88's justification was wrong, and its text is corrected above rather than annotated.** The
+claim was that a shared budget makes division mass-neutral and so needs no capacity check. Mass was
+floored per lot array, so merging the chest into the hold re-floored the combined sum and could gain a
+kilogram — `small-cannon-ball` at 7100 g being the only commodity with a gram remainder to lose, and
+both buyable and plunderable. The premise survives and the conclusion does too, but only once the
+budget is counted the way decision 103 counts it.
+
+**The kilogram was never really invented at the division, and that is worth knowing before the market
+is touched.** With the budget in grams, the review's own reproduction — 3 cannon balls and 13429 kg of
+filler in the hold, 7 cannon balls in the chest — measures 13501 kg both before and after the
+division, in a 13500 kg hold. The state is over capacity when it arrives, because `buyCommodity`
+still measures a purchase with `massKgOf`, which floors that purchase's grams on its own: three cannon
+balls cost the hold 21 kg of budget against 21.3 kg of iron. `freeHoldOf` clamps at zero so nothing
+breaks, and the accounting no longer *moves* under the ship — a `market.buy` gets the same answer
+either side of a division, which is the property the physical test found broken. The remaining leak is
+the dock's, not the division's, and it is recorded in `ISSUES.md` rather than fixed under a task
+scoped to division.
+
+**The predicate the review offered does not close the probe the review reached it from.** The probe was
+the pillage-loop scenario: chart an `evade` voyage, hand-start a battle, disengage. Driven, that
+scenario carries exactly one player ship — the voyage's own — and `battle.start` picks the first player
+ship and the first brigand, so the battle's berths are the voyaging ship and the commissioned brigand
+and `battle.ships.some((s) => s.shipId === voyage.shipId)` is true. The world settles it under the new
+guard as it did under the old. What the guard now leaves alone is the case its words actually name: a
+concluded battle the voyaging ship is not standing in — a second player ship's fight, or slice 3's
+direct `battle.start` with no voyage at all. Decision 102 records why that is the right reading and not
+a weaker one.
+
+**The test that was supposed to defend the headline rule now reaches it.** `tests/world/division.test.ts`
+asserted only that selling undivided plunder was `rejected`, over a fixture with `state.markets = []`,
+so `trade()` bailed at `island-has-no-market` and `sellCommodity` was never called. The fixture has a
+real market now and the test names `insufficient-cargo`. Verified by mutation: making `sellCommodity`
+fall back to `ship.bootyCargo` — what decisions 86 to 89 forbid — used to pass the whole suite and now
+fails exactly that test and nothing else. The two settlement tests and the two mass tests were each
+proved against the code they replace in the same way.

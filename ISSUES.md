@@ -4,6 +4,38 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 4c (OPP-11), the settlement guard and the division budget
+
+The three world defects the review and the physical test of PR 5 queued are closed: porting settles a
+concluded battle the voyage owns, `stepWorld` settles only a battle the voyaging ship stands in, and
+the shared mass budget is counted in grams and floored once. `npm run check` is 417/417 exit 0 from
+cold. What follows is what closing them turned up.
+
+### The hold under-accounts a purchase, and that is where the kilogram is really invented
+
+`buyCommodity` measures a purchase with `massKgOf`, which floors that one purchase's grams on its own,
+so three `small-cannon-ball` cost the hold 21 kg of budget against 21.3 kg of iron. With the shared
+budget now counted in grams, the review's own reproduction — 3 cannon balls and 13429 kg of filler in
+the hold, 7 cannon balls in the chest — measures 13501 kg in a 13500 kg hold *before* it divides and
+13501 kg after. The division is mass-neutral now; the dock is what let the ship past its capacity.
+
+Not blocking: `freeHoldOf` clamps at zero, so an over-full ship refuses further cargo rather than
+misbehaving, and the accounting no longer moves under the ship — a `market.buy` of one unit gets the
+same answer either side of a division, which is the symptom the physical test measured. It starts to
+matter when a second non-whole-kilogram commodity exists, or when the hold's mass is displayed to a
+player who can add it up.
+
+### The review's settlement probe is not what the review's predicate closes
+
+The review demonstrated the ownership defect on the pillage-loop scenario — chart an `evade` voyage,
+hand-start a battle, disengage — and offered
+`battle.ships.some((s) => s.shipId === voyage.shipId)` as the one-predicate fix. Driven, that scenario
+carries a single player ship, and `battle.start` picks the first player ship and the first brigand, so
+the hand-started battle's berths are ships 2 and 3 while the voyage sails ship 2: the predicate is
+true and the world settles the battle exactly as before. The predicate is still the right rule — see
+decision 102 — but the case it closes is a concluded battle the voyaging ship is *not* standing in,
+not the one the review sailed.
+
 ## 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
 
 Three threads drove real `pp-harness` processes over stdio. Nothing blocked: the MVP loop runs end to
