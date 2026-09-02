@@ -1959,3 +1959,42 @@ asserts the status was one of two values.
 `world/cargo.ts`, so the battle layer depends on the world layer. Decision 80 meant to keep the
 world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
 the dependency runs opposite to the stated intent, and slice 5 should not deepen it.
+
+### 2026-09-02 — development, slice 4b (OPP, restocking the magazine)
+
+The one piece of the port slice 4 left undone: a dock sells `small-cannon-ball`, `swill` and `grog`,
+but buying them filled the hold with inert cargo rather than stocking the ship, so decision 63's two
+placeholders still described an intention. On
+`agent/feature/20260902-151500-opp-slice-4b-port-restocking-and-charts`, branched from the slice 4
+tip `566abd3` rather than from `agent/develop`, because PR 5 is still in the test stage — the task
+sanctions the unmerged base explicitly.
+
+**The representation, decided before the buy path was written**, because the task gated the slice on
+it. The question was whether the magazine's two integer counters become cargo lots or the lots
+become counters. Three facts decided it:
+
+- `ship.cannonballs` has exactly one write site in the repo — `stepCannonLoading` at
+  `ship/meters.ts:105`, which spends one ball per cannon loaded — and balls of a ship's size are
+  fungible, so a count is the whole truth about them. The wiki agrees: shot size is "a property of
+  the ship, not a choice".
+- `ship.rum` is read in exactly one place, `battle/session.ts:166`, as `ship.rum === 0`, and is
+  decremented nowhere. Decision 58 recorded that deliberately.
+- The published rum equivalence — fine rum 100 proof, grog 60, swill 40, so 15 swill = 10 grog =
+  6 fine rum — scales *consumption time*. Mass is 1 kg per unit for every rum.
+
+**Decisions taken on the task's behalf.**
+
+| #  | Decision                                                                                            | Rationale                                                                                                                                                                                                                                                    |
+| -- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90 | The magazine stays two integer counters on `ShipState`; buying a ship supply moves units into them rather than stowing a lot | Balls of the ship's size are fungible and rum has no per-unit identity that anything reads, so counters carry everything either one is asked. It also needs no schema bump, which matters while slice 2c's schema 4 and slice 3's schema 4 are still unreconciled |
+| 91 | `freeHoldOf` counts the magazine's mass                                                             | Moving balls out of `cargo` and into a counter would otherwise make them weightless, and the wiki is explicit that stores share the hold's mass limit. Without this the slice would *introduce* a mass leak where today a bought ball correctly costs hold space |
+| 92 | Cannon ball size is matched against the ship class's existing `cannonSize`, and a mismatch is a new `wrong-cannon-ball-size` rejection | `cannonSize` already exists per class and `ballWeightMicroOf` already keys damage off it; the only thing missing was a map from a size to the commodity that supplies it. The reason is reachable from a command, which is what decision 59 requires of a new one |
+| 93 | `medium-cannon-ball` and `large-cannon-ball` join the commodity table at their published masses      | 14.2 kg and 21.3 kg are published, so they are code and not tuning, per decisions 70 and 76. Without them the size rule could only ever refuse, and eleven of the fourteen ship classes could not be restocked at all                                          |
+| 94 | The rum proof equivalence is **not** implemented in this slice, and the reason is recorded rather than the constant | Proof scales consumption time, and nothing consumes rum — decision 58. A counter that stores units carries mass truthfully but cannot carry proof; one that stores proof carries endurance but loses the 1 kg per unit mass. Only per-type lots carry both, and that is a schema change worth making *with* a consumer, not before one. A follow-up task carries it |
+| 95 | `battle.startingCannonballs` and `startingRum` keep their values and get truthful `_sources` prose   | They are already only a commissioned ship's opening stock — the brigand's at `world/encounter.ts:52` and the scenario player's at `harness/scenarios.ts:42`. Nothing in the sim reads them as a port substitute any more, so the honest fix is the sentence, not the number. `_sources` is not loaded into `Balance`, so this moves no hash |
+| 96 | `buyCommodity` and `sellCommodity` refuse a negative unit count                                     | `ISSUES.md` already records that the sim's command layer accepts one and that `market.buy` of -1000 mints PoE. This slice makes a negative buy write a negative *magazine*, so leaving the hole open would widen a recorded defect rather than merely inherit it. Two lines, and the RPC path was already safe via `requiredCount` |
+
+**Deferred, with the reason.** The proof-denominated rum store, and with it rum consumption and the
+`ship.rumPerPiratePerThousandTicks` key that decision 58 left unread — see decision 94. Charts,
+chart decay and league-point memorization remain phase 2, untouched by this slice despite the task
+id: the task body scopes them out in its own second paragraph.
