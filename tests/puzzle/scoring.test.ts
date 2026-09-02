@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  PER_MILLE,
   comboMultiplierOf,
   comboScoreOf,
+  crabScoreOf,
   movesForEfficiencyMilli,
 } from '../../packages/sim/src/index.ts';
 import { BALANCE } from './fixtures.ts';
@@ -19,6 +21,11 @@ interface Efficiency {
   numerator: number;
   denominator: number;
 }
+
+const PUBLISHED_STAR_LEVEL = 7;
+const NOVICE_STAR_LEVEL = 0;
+const BINGO = [3, 3, 3];
+const SEA_DONKEY = [3, 3, 3, 3];
 
 const EFFICIENCIES: Efficiency[] = [
   { numerator: 1, denominator: 1 },
@@ -45,9 +52,27 @@ const PUBLISHED_TABLE: PublishedRow[] = [
   { clear: '3x5x5', lineLengths: [3, 5, 5], score: 51, movesMilli: [17000, 12750, 11333, 10200] },
 ];
 
-test('the scorer reproduces every row of the published bilging score table', () => {
+test('the scorer reproduces every row of the published bilging score table at seven stars', () => {
   for (const row of PUBLISHED_TABLE) {
-    assert.equal(comboScoreOf(row.lineLengths, BALANCE.bilging), row.score, row.clear);
+    const scored = comboScoreOf(row.lineLengths, BALANCE.bilging, PUBLISHED_STAR_LEVEL);
+    assert.equal(scored, row.score, row.clear);
+  }
+});
+
+test('the same geometry scores strictly lower at a low star level', () => {
+  for (const row of PUBLISHED_TABLE) {
+    const novice = comboScoreOf(row.lineLengths, BALANCE.bilging, NOVICE_STAR_LEVEL);
+    assert.ok(novice <= row.score, row.clear);
+  }
+
+  assert.equal(comboScoreOf([3, 3], BALANCE.bilging, NOVICE_STAR_LEVEL), 6);
+  assert.equal(comboScoreOf(BINGO, BALANCE.bilging, NOVICE_STAR_LEVEL), 9);
+  assert.ok(comboScoreOf(BINGO, BALANCE.bilging, NOVICE_STAR_LEVEL) < 27);
+});
+
+test('a single line keeps its published multiplier of one at every star level', () => {
+  for (let starLevel = 0; starLevel <= PUBLISHED_STAR_LEVEL; starLevel += 1) {
+    assert.equal(comboScoreOf([3], BALANCE.bilging, starLevel), 3, `star ${starLevel}`);
   }
 });
 
@@ -61,11 +86,29 @@ test('the published efficiency matrix follows moves for an efficiency of score o
 });
 
 test('four lines including a five scores the vegas multiplier', () => {
-  const seaDonkey = comboMultiplierOf([3, 3, 3, 4], BALANCE.bilging);
-  const vegas = comboMultiplierOf([3, 3, 3, 5], BALANCE.bilging);
+  const seaDonkey = comboMultiplierOf([3, 3, 3, 4], BALANCE.bilging, PUBLISHED_STAR_LEVEL);
+  const vegas = comboMultiplierOf([3, 3, 3, 5], BALANCE.bilging, PUBLISHED_STAR_LEVEL);
 
   assert.equal(seaDonkey, 4);
   assert.equal(vegas, BALANCE.bilging.vegasMultiplier);
-  assert.equal(comboScoreOf([3, 3, 3, 5], BALANCE.bilging), 16 * vegas);
-  assert.equal(comboMultiplierOf([3, 3, 3, 3, 3], BALANCE.bilging), 6);
+  assert.equal(comboScoreOf([3, 3, 3, 5], BALANCE.bilging, PUBLISHED_STAR_LEVEL), 16 * vegas);
+  assert.equal(comboMultiplierOf([3, 3, 3, 3, 3], BALANCE.bilging, PUBLISHED_STAR_LEVEL), 6);
+});
+
+test('two crabs freed at full water score between a bingo and a sea donkey', () => {
+  const twoCrabs = crabScoreOf(2, PER_MILLE, BALANCE.bilging);
+  const bingo = comboScoreOf(BINGO, BALANCE.bilging, PUBLISHED_STAR_LEVEL);
+  const seaDonkey = comboScoreOf(SEA_DONKEY, BALANCE.bilging, PUBLISHED_STAR_LEVEL);
+
+  assert.equal(bingo, 27);
+  assert.equal(seaDonkey, 48);
+  assert.equal(twoCrabs, 36);
+  assert.ok(twoCrabs > bingo && twoCrabs < seaDonkey);
+});
+
+test('the crab bonus scales with the water height and with crabs freed together', () => {
+  assert.equal(crabScoreOf(1, PER_MILLE, BALANCE.bilging), 9);
+  assert.equal(crabScoreOf(2, PER_MILLE / 2, BALANCE.bilging), 18);
+  assert.equal(crabScoreOf(2, 0, BALANCE.bilging), 0);
+  assert.equal(crabScoreOf(0, PER_MILLE, BALANCE.bilging), 0);
 });

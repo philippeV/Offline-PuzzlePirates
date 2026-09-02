@@ -132,30 +132,39 @@ every chain — and returns one `bilge.cleared` event per resolve step:
 
 ```
 -> {"jsonrpc":"2.0","id":1,"method":"session.new","params":{"seed":12648430,"scenario":"bilge-session"}}
-<- {"jsonrpc":"2.0","id":1,"result":{"session":"s0","schemaVersion":3,"tick":0,"stateHash":"881804a6650d82ca"}}
+<- {"jsonrpc":"2.0","id":1,"result":{"session":"s0","schemaVersion":3,"tick":0,"stateHash":"97e5f4b042049c0e"}}
 
 -> {"jsonrpc":"2.0","id":2,"method":"state.get","params":{"session":"s0","pointer":"/puzzle","depth":1}}
 <- {"jsonrpc":"2.0","id":2,"result":{"value":{"puzzle":"bilging","board":"{3 fields}","starLevel":0,"startedAtTick":0,"frame":"{1 fields}","intervalTick":0,"totalScore":0,"moves":0,"bilgePerMille":0,"bilgeAccumulator":0,"waterLineRow":9,"dutyOutputPerMille":0}}}
 
 -> {"jsonrpc":"2.0","id":3,"method":"sim.dispatch","params":{"session":"s0","commands":[{"op":"bilge.swap","x":0,"y":0}]}}
-<- {"jsonrpc":"2.0","id":3,"result":{"results":[{"status":"accepted","events":[{"type":"bilge.swapped","tick":0,"x":0,"y":0},{"type":"bilge.cleared","tick":0,"chain":0,"cells":[1,2,3],"points":3},{"type":"puzzle.scored","tick":0,"points":3,"totalScore":3,"moves":1}]}],"tick":0,"stateHash":"b0b281301cbf10cd"}}
+<- {"jsonrpc":"2.0","id":3,"result":{"results":[{"status":"accepted","events":[{"type":"bilge.swapped","tick":0,"x":0,"y":0},{"type":"bilge.cleared","tick":0,"chain":0,"cells":[1,2,3],"crabs":[],"points":3,"settleTicks":0},{"type":"puzzle.scored","tick":0,"points":3,"totalScore":3,"moves":1}]}],"tick":0,"stateHash":"fe8872d709a87778"}}
 
 -> {"jsonrpc":"2.0","id":4,"method":"rng.cursors","params":{"session":"s0"}}
-<- {"jsonrpc":"2.0","id":4,"result":{"cursors":{"bilge.fill":{"hi":4084333703,"lo":593105662,"draws":162},"bilge.refill":{"hi":3513919270,"lo":3998057049,"draws":3}}}}
+<- {"jsonrpc":"2.0","id":4,"result":{"cursors":{"bilge.fill":{"hi":4084333703,"lo":593105662,"draws":162},"bilge.refill":{"hi":3513919270,"lo":3998057049,"draws":3},"bilge.critters":{"hi":4165101672,"lo":2132924538,"draws":3}}}}
 ```
 
 `bilge.swap {x, y}` swaps `(x,y)` with `(x+1,y)`; the swap axis is horizontal, so `x` must be
-below `width - 1`. The marker domain still runs here and drifts every tick, so **a long `sim.step`
-or `sim.runUntil` in `bilge-session` returns one `marker.drifted` event per tick** — step in small
+below `width - 1`. `bilge.poke {x, y}` detonates the puffer fish standing at `(x,y)`, clearing the
+3x3 block around it so whatever falls in chains normally; the poked cell must hold a puffer, and
+puffers appear only from star level 3. `cells` on `bilge.cleared` lists the coloured cells the step
+cleared and `crabs` lists the crabs it freed, which are removed on their own rule rather than by
+matching and so are reported separately. `settleTicks` on `bilge.cleared` is how long that step's
+slowest fall would have taken — its distance times 3 ticks per cell above the water line and 6
+below — and is reported rather than waited out: the whole resolve still happens inside the
+dispatch. The marker domain still runs here and drifts every tick, so **a long `sim.step` or
+`sim.runUntil` in `bilge-session` returns one `marker.drifted` event per tick** — step in small
 spans and read `/puzzle` with `state.get` rather than mining a huge event list. Reaching
 `waterLineRow` 8 from a fresh board takes 1193 idle ticks — the figure this line carried before was
 stale from an earlier tuning, and the balance arithmetic contradicted it.
 
-Every rejection the puzzle can produce, `s0` two ticks on and `s1` a fresh `marker-field` session:
+Every rejection the puzzle can produce without a crab on the board — `crab-not-swappable` needs
+one, and crabs appear only from star level 5. `s0` is two ticks on, `s1` a fresh `marker-field`
+session:
 
 ```
--> {"jsonrpc":"2.0","id":6,"method":"sim.dispatch","params":{"session":"s0","commands":[{"op":"bilge.swap","x":11,"y":0},{"op":"puzzle.start","puzzle":"bilging"},{"op":"puzzle.start","puzzle":"sailing"}]}}
-<- {"jsonrpc":"2.0","id":6,"result":{"results":[{"status":"rejected","reason":"swap-outside-board"},{"status":"rejected","reason":"puzzle-already-running"},{"status":"rejected","reason":"unknown-puzzle"}],"tick":2,"stateHash":"5f96d42c3e359911"}}
+-> {"jsonrpc":"2.0","id":6,"method":"sim.dispatch","params":{"session":"s0","commands":[{"op":"bilge.swap","x":11,"y":0},{"op":"bilge.poke","x":0,"y":0},{"op":"bilge.poke","x":12,"y":0},{"op":"puzzle.start","puzzle":"bilging"},{"op":"puzzle.start","puzzle":"sailing"}]}}
+<- {"jsonrpc":"2.0","id":6,"result":{"results":[{"status":"rejected","reason":"swap-outside-board"},{"status":"rejected","reason":"not-a-puffer"},{"status":"rejected","reason":"poke-outside-board"},{"status":"rejected","reason":"puzzle-already-running"},{"status":"rejected","reason":"unknown-puzzle"}],"tick":2,"stateHash":"6df4248b526ea9e4"}}
 
 -> {"jsonrpc":"2.0","id":8,"method":"sim.dispatch","params":{"session":"s1","commands":[{"op":"puzzle.start","puzzle":"bilging"},{"op":"bilge.swap","x":0,"y":0}]}}
 <- {"jsonrpc":"2.0","id":8,"result":{"results":[{"status":"rejected","reason":"balance-missing"},{"status":"rejected","reason":"no-puzzle-running"}],"tick":0,"stateHash":"ff0771da2520290e"}}
@@ -263,11 +272,11 @@ same scenario table as `session.new`, and omitting the name silently falls back 
 Here is `packages/fixtures/replays/bilge-session.json` verified with its scenario and then without:
 
 ```
--> {"jsonrpc":"2.0","id":14,"method":"replay.verify","params":{"seed":20260902,"scenario":"bilge-session","commands":[...],"hashTrail":[...],"expectedHash":"f7ec793955e4d75f"}}
-<- {"jsonrpc":"2.0","id":14,"result":{"ok":true,"tick":14,"finalHash":"f7ec793955e4d75f","expectedHash":"f7ec793955e4d75f","divergedAtTick":null}}
+-> {"jsonrpc":"2.0","id":14,"method":"replay.verify","params":{"seed":20260902,"scenario":"bilge-session","commands":[...],"hashTrail":[...],"expectedHash":"fe9c6da3444e562d"}}
+<- {"jsonrpc":"2.0","id":14,"result":{"ok":true,"tick":14,"finalHash":"fe9c6da3444e562d","expectedHash":"fe9c6da3444e562d","divergedAtTick":null}}
 
--> {"jsonrpc":"2.0","id":15,"method":"replay.verify","params":{"seed":20260902,"commands":[...],"hashTrail":[...],"expectedHash":"f7ec793955e4d75f"}}
-<- {"jsonrpc":"2.0","id":15,"result":{"ok":false,"tick":14,"finalHash":"c9a8cf38f75ef112","expectedHash":"f7ec793955e4d75f","divergedAtTick":0}}
+-> {"jsonrpc":"2.0","id":15,"method":"replay.verify","params":{"seed":20260902,"commands":[...],"hashTrail":[...],"expectedHash":"fe9c6da3444e562d"}}
+<- {"jsonrpc":"2.0","id":15,"result":{"ok":false,"tick":14,"finalHash":"c9a8cf38f75ef112","expectedHash":"fe9c6da3444e562d","divergedAtTick":0}}
 ```
 
 ## Triaging a desync
@@ -338,8 +347,9 @@ A structurally invalid command (unknown `op`, missing `dx`) fails the whole `sim
 with `invalid-params`. A well-formed command the rules refuse comes back per-command as
 `{"status":"rejected","reason":...}` — the sim's reasons are `unknown-marker`,
 `non-integer-coordinate`, `destination-outside-field`, `balance-missing`, `unknown-puzzle`,
-`puzzle-already-running`, `no-puzzle-running` and `swap-outside-board`, plus the nine battle
-reasons listed under "A sea battle" above.
+`puzzle-already-running`, `no-puzzle-running`, `swap-outside-board`, `poke-outside-board`,
+`crab-not-swappable` and `not-a-puffer`, plus the nine battle reasons listed under "A sea battle"
+above.
 
 ## Where things are
 

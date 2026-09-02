@@ -59,12 +59,24 @@ export const simMethods: Record<string, MethodHandler> = {
 };
 
 function stepWithinEventBudget(sim: Sim, ticks: number): SimEvent[] {
-  const events: SimEvent[] = [];
-  for (let stepped = 0; stepped < ticks; stepped += 1) {
-    events.push(...sim.step(1));
-    refuseBeyondEventBudget(events);
+  return atomically(sim, () => {
+    const events: SimEvent[] = [];
+    for (let stepped = 0; stepped < ticks; stepped += 1) {
+      events.push(...sim.step(1));
+      refuseBeyondEventBudget(events);
+    }
+    return events;
+  });
+}
+
+function atomically<T>(sim: Sim, stepping: () => T): T {
+  const before = sim.snapshot();
+  try {
+    return stepping();
+  } catch (failure) {
+    sim.restore(before);
+    throw failure;
   }
-  return events;
 }
 
 function refuseBeyondEventBudget(events: SimEvent[]): void {
@@ -82,13 +94,15 @@ function stepUntilPointerEquals(
   expected: unknown,
   maxTicks: number,
 ): RunOutcome {
-  const events: SimEvent[] = [];
-  for (let ticksStepped = 0; ; ticksStepped += 1) {
-    if (deepEquals(readPointer(sim.state, pointer), expected)) {
-      return { matched: true, ticksStepped, events };
+  return atomically(sim, () => {
+    const events: SimEvent[] = [];
+    for (let ticksStepped = 0; ; ticksStepped += 1) {
+      if (deepEquals(readPointer(sim.state, pointer), expected)) {
+        return { matched: true, ticksStepped, events };
+      }
+      if (ticksStepped === maxTicks) return { matched: false, ticksStepped, events };
+      events.push(...sim.step(1));
+      refuseBeyondEventBudget(events);
     }
-    if (ticksStepped === maxTicks) return { matched: false, ticksStepped, events };
-    events.push(...sim.step(1));
-    refuseBeyondEventBudget(events);
-  }
+  });
 }

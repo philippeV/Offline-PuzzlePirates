@@ -46,7 +46,11 @@ export class Sim {
     if (command.op === 'marker.move' || command.op === 'marker.place') {
       return applyMarkerCommand(this.#state, command);
     }
-    if (command.op === 'puzzle.start' || command.op === 'bilge.swap') {
+    if (
+      command.op === 'puzzle.start' ||
+      command.op === 'bilge.swap' ||
+      command.op === 'bilge.poke'
+    ) {
       return applyPuzzleCommand(this.#state, command);
     }
     if (command.op === 'ship.commission') {

@@ -228,6 +228,199 @@ A voyage rolls for a brigand on every leg it reaches, including the last one, so
 intercepted on the doorstep of the island you were sailing to. Nothing in the wiki excludes it — a
 ship is at sea until it ports, and porting is a command — and excluding it would need a special case
 for the final leg. Recorded because it looks like an off-by-one until you know it is deliberate.
+## 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
+
+The test stage drove the real harness over stdio and reproduced every behaviour the slice claims;
+nothing blocked. Two entries below refine findings the review had already logged, with numbers that
+only a played session could produce, and one records a merge the stage had to make.
+
+### Crabs are reachable, but at about a fourteenth of `crabSpawnPerMille`
+The review measured 0 crabs in 5 seeds x 400 swaps and left open whether they are reachable at all.
+They are. Across 8 seeds x 400 moves at star 7 on a fully flooded board, **5 crabs spawned, climbed
+and cleared**, one paying a 13-point step, and every one behaved as decision 47 describes. The gap
+is now measured rather than inferred: `waterRowsOf` keeps three dry rows at any flood level, so
+`waterLineRow` bottoms out at 3, and `applyGravity` stacks a step's vacancies at the top of the
+column, so a refill lands at or below the water line only when one column loses 4 or more cells in a
+single settle step. Over 838 settle steps that put **229 of 4828 critter draws — 4.74 per cent —**
+below the water line, predicting 3.4 crabs against the 5 seen. The effective rate is about **1 per
+mille of refills against a stated 15**, where the nominal expectation over those draws was 72. It
+does not block: the crab works, it is merely far rarer than its constant says. It starts to matter
+when the crab bonus is meant to be a scoring lever a player can plan around, and the fix is a
+product choice between raising `crabSpawnPerMille`, letting a dry crab-band draw fall through to
+another critter, and spawning crabs by a rule other than the refill vacancy.
+
+### A crab is never visible between moves at the current tuning
+Because eligible vacancies sit on row 3 and `climbCrabs` runs before `crabsAboveWaterLine` inside
+the same settle step, a crab spawned at the water line is cleared on the next step of the same
+resolve. Across 2000 played moves the board carried a crab between moves **zero** times. The wiki's
+"immovable, denies its square until it climbs out" is therefore not observable today. Non-blocking
+for the same reason as the entry above, and the same decision fixes both.
+
+### The stale-`refilled` overwrite was not reproduced in play
+No crab vanished mid-water without a `crabs` entry and without paying a bonus. With 5 crabs in the
+whole sample this excludes nothing; `resolve.ts:61-67` is unchanged and the review's finding stands.
+
+### PR 4 was merged with a merge commit, not a squash — again
+Squashing PR 3 was already declined for this reason, and this is the recurrence it predicted: PR 4
+arrived `CONFLICTING` because slice 3's squash-minted SHAs left this branch's base behind, and
+slices 4 and 5 are branched from the same chain. The queue-test skill says `--squash`; this stage
+merged instead. **This is a pipeline policy the human owns**, and it is the second slice to deviate.
+
+### A clean auto-merge silently dropped `bilge.poke`
+Merging `agent/develop` in, git resolved `sim.ts` without conflict onto slice 3's explicit command
+routing, which lists `puzzle.start` and `bilge.swap` — slice 2b had reached `applyPuzzleCommand`
+through a fallthrough, so `bilge.poke` fell into `applyBattleCommand`. The typecheck caught it and
+`e40293d` routes it explicitly. Recorded because the class of bug is invisible to a conflict count:
+the merge reported eleven conflicts and this was in none of them.
+
+## 2026-09-02 — independent review of slice 2b (OPP-13), PR 4
+
+The 4-lens review of PR 4. Nothing here blocked the slice: `npm run check` is green at 130 tests, the
+containment suite is 6/6, the opening board is byte-identical to the pre-slice one, and the
+interpretive core of the slice — decision 47 and the 27 / 36 / 48 crab anchor — was re-derived from
+`docs/wiki-map/01-duty-puzzles.md` independently of this repo's constants and holds. The two items
+below are the ones worth taking first in the follow-up.
+
+### The crab is the weak spot, in two independent ways
+
+- **A climbing crab can be silently overwritten by a critter spawned in the same step.**
+  `packages/sim/src/puzzle/resolve.ts:61-67` captures `refilled` before `climbCrabs` runs, then hands
+  that stale index list to `spawnCritters`, which writes unconditionally. If a crab climbs into a
+  cell refilled this step and lands still at or below the water line, it is replaced by the spawned
+  critter: the crab is destroyed, pays no bonus, and never reaches the water line, contradicting
+  decision 47. Two lenses reproduced it independently on a 12x12 board with the column segment above
+  the crab cleared, water line row 3 and a puffer-band draw: `cells[36]` ends as `-3` with no crab
+  left and `crabCells` empty. Reachability is low — it needs the whole segment above the crab cleared
+  in one step plus a sub-50-per-mille draw on that exact index — which is why it is not blocking. The
+  fix is one line: recompute or filter `refilled` after `climbCrabs`, or spawn before the climb.
+
+- **`crabSpawnPerMille: 15` does not produce anything close to 15 per mille.** `critters.ts:41` gates
+  the crab band on `belowWaterLine`, but `applyGravity` puts every vacancy at the top of its column
+  segment, so refills land in the dry rows almost always. A crab-band draw over a dry cell yields no
+  critter at all rather than falling through, so the rate is silently lost. Measured twice: one lens
+  saw 1 crab in 3022 refill draws across 5 seeds; the review's own run saw **0 crabs across 5 seeds x
+  400 swaps at star level 7 with the board fully flooded** — the most favourable condition there is,
+  water line row 3 — while puffers and jellies spawned freely on every seed. The crab mechanic is
+  effectively absent from normal play at the shipped constants. This is precisely the property
+  decision 53 designed the band mapping to protect: "the file would no longer state the rates it
+  produces". The water-line gate reintroduces it for the crab alone. Not blocking because the code
+  does what the analysis document says and the crab rules are covered by unit tests, but this is the
+  single most important thing to settle in the follow-up — either draw crab spawns only among
+  below-water refills, or restate the rate as the conditional one it actually is.
+
+### Two mutants survived the suite
+
+Both were proved to be real behaviour changes, not equivalent mutants, by probing baseline against
+mutated code rather than by trusting that no test failed.
+
+- **Chain scoring is unpinned, so decision 59 is untested.** Collapsing `ResolveStep.kind` to always
+  `combo` (`packages/sim/src/puzzle/resolve.ts:51`) leaves 130/130 green while changing a 4-wide
+  cascade's chain step from 4 points to 5. The chain branch is reached and diverging cascades do
+  occur, but no test asserts a cascade's number: the suite's precise cascade assertions are all
+  single 3-runs, where the chain and combo scorers coincidentally agree. Wants one hand-derived test
+  in `move.test.ts` asserting a second `bilge.cleared` event's points on a cascade of a 4-run.
+  Related: renaming `chain` to `poke` is killed by exactly one test — the re-blessed replay fixture —
+  so chain-step scoring is the one behaviour in this slice guarded by change detection and nothing
+  hand-derived.
+
+- **The water-line boundary of the fall rate is untested.** Weakening `fallRateOf`'s
+  `row >= waterLineRow` to `>` (`packages/sim/src/puzzle/resolve.ts:78`) leaves 130/130 green while
+  changing `settleTicks` from 6 to 3 for a fall landing exactly on the water-line row — the one cell
+  the rule is about. `move.test.ts:146-150` samples four points, none of them the boundary. One line
+  using the existing helper closes it.
+
+### Smaller things
+
+- **`settleTicks` reports 0 for the largest clears.** `gravity.ts:37-42` records a fall only for a
+  surviving cell that moved, so pieces refilled from off-board are never counted. On a 12x12 board at
+  water line 6, a bottom-row 3-run reports 6 ticks while a **full 12-cell column clear reports 0** —
+  the metric inverts exactly where a renderer would most want it. Harmless today (it touches neither
+  score nor state and has no consumer), but wrong as a settle-time estimate before slice 5 leans on
+  it. Relatedly, `resolve.ts:64` clears freed crabs without a further `applyGravity`, so pieces above
+  a freed crab do not fall; the slot is refilled in place.
+- **The "a crab only spawns at or below the water line" rule has no row in the decision table.** It is
+  pinned by `critters.test.ts:190` and its consequence is described above, but the table that carries
+  the rationale for every other critter rule skips it. It is a consequence of decision 47 — a crab
+  spawning dry would clear instantly for a free bonus — so it wants one row.
+- **`tests/puzzle/scoring.test.ts:62` overstates itself and its loop is inert.** Named "scores
+  strictly lower at a low star level" but asserting `<=`, which it must, since
+  `MINIMUM_COMBO_MULTIPLIER` floors single lines at their published 3 / 5 / 7. Under a mutation that
+  removes star scaling entirely the loop still passes on all 15 rows; only the three literals below it
+  fail. Tighten to `<` for the multi-line rows, or drop the loop and keep the literals.
+- **`sim.dispatch` has no event budget and is not atomic across the command array.** Already recorded
+  by the development stage; the review confirms it is **pre-existing** — `methods/sim.ts:30-35` and
+  `limits.ts` are byte-identical in `agent/develop` — and bounded: 100000 accepted swaps in one
+  dispatch cost 2578 ms and a 23.8 MB response, with no hang and no crash. No input could be
+  constructed that makes it throw mid-array, so the partial-application escape stays theoretical.
+- **`balance.json` is type-validated but not range-validated.** `packages/harness/src/balance.ts:55-70`
+  checks `Number.isSafeInteger` with no bounds, and the nine new constants come through the same path.
+  A schema-valid file with `boardWidth` 100000 loads, then throws `RangeError` on `puzzle.start`.
+  Non-blocking: the file is repo-controlled, never request input, loaded at module import so it fails
+  closed at startup, and the throw is caught and returned as `internal-error`.
+- **Duplication worth one helper each.** `scoring.ts:63-67` and `bilging.ts:20-25` are the same
+  clamp-and-index idiom over two star-level tables; `critters.ts:61-68` and `critters.ts:80-86` are
+  both "scan every cell, collect matching indices". Neither is worth a refactor on its own.
+- **`gravity.ts:19-43` is the one genuinely hard-to-read spot in the diff.** `collapseColumn` loops to
+  `y <= board.height` and uses the out-of-range iteration as a sentinel to flush the last segment, and
+  `compactSegment` indexes `survivors[y - top - vacated]` with three interacting offsets and no named
+  intermediate. Behaviour is correct and the crab anchoring it implements is tested; under the
+  no-comments convention the fix is structural naming, not a comment.
+
+## 2026-09-02 — development of slice 2b (OPP-13), critters and star levels
+
+What slice 2b left behind. None of it stops the slice: the three critters behave as the wiki
+describes, the published crab anchor is reproduced, and `npm run check` is green at 130 tests.
+
+### Carried in from slice 2 and still open
+
+- **`stepPointsOf` still runs twice per resolve step** (`packages/sim/src/puzzle/move.ts`) — once in
+  the reduction that totals the move and once again when the step's event is built. Pure and cheap;
+  it survived the restructuring into `move.ts` unchanged, so it is now an oversight twice over.
+- **`resolveBoard` still stops silently at its 64-step cap.** Critters do not make a 64-step cascade
+  reachable on a 12x12 board, but a crab climbing one row per step means a long chain now moves the
+  board in a second way, so the cap guards slightly more than it did.
+- **A cursor is still registered by opening a stream, not by drawing from it.** `bilge.critters`
+  inherits this from `bilge.refill`: an accepted swap or poke that clears nothing opens both cursors,
+  draws from neither, and still changes the state hash. Deterministic and harmless, but there are now
+  two streams for which "the hash changed" does not imply "something was drawn".
+
+### Left by the atomicity fix
+
+- **`sim.dispatch` is not atomic across a command array.** `parseCommand` runs over the whole array
+  first, so a parse failure is safe, but if `sim.dispatch` itself throws on command N then commands
+  0 to N-1 have already been applied and the caller is told the call failed. This is the same defect
+  class as the `sim.step` escape that this slice fixed, in a method the review did not measure. It is
+  the obvious next one to close.
+- **Every `sim.step` and `sim.runUntil` now takes a snapshot, including the calls that succeed.** For
+  today's `WorldState` that is a negligible JSON round trip against the per-tick work, but it is a
+  new fixed cost on the hot path and it scales with the state, not with the number of ticks.
+- **The event-budget boundary is balance-dependent.** `tests/harness/containment.test.ts` pins it at
+  99987 / 99988, down from the 99992 / 99993 the slice 2 test stage measured, because
+  `maxStarLevel` 7 adds five more `puzzle.levelChanged` events to a long step. The constant is
+  correct today and will move again with any tuning that changes the per-tick event rate.
+- **`packages/harness/src/limits.ts` is still not exported from the harness index**, so tests
+  hardcode `100000` and friends as literals rather than importing the limit they mean.
+
+### Left by the critters
+
+- **Nothing consumes `settleTicks` yet.** It is a per-step maximum — the slowest single fall — which
+  is the right shape for "how long would this step have taken" and the wrong shape for animating each
+  piece individually. If slice 5 wants per-cell timing it will need the falls themselves, which
+  `applyGravity` already returns and `resolveBoard` currently discards.
+- **Critter density above the water line is lower than the raw rates suggest.** Each spawn band maps
+  to exactly one critter, so a draw in the crab band that lands in a dry cell yields no critter at
+  all rather than falling through to a puffer. That is deliberate — it keeps `balance.json` honest
+  about the rates it states — but it means the effective critter rate is not the sum of the three
+  keys everywhere on the board.
+- **The fixtures are still implementation-generated.** The scenario, the golden and the bilging
+  replay are all change detection rather than validation. What is new is that the behaviour they
+  cover is now also pinned by hand-derived assertions — the 16-point combo, the 36-point crab pair
+  and the three published interactions are all derived from the wiki rather than from a recorded
+  hash, so a wrong scorer no longer passes the suite. The fixtures themselves still would.
+- **`pp-sim-harness/SKILL.md` documents no `crab-not-swappable` transcript.** Reaching a crab needs
+  star level 5, roughly 18000 idle ticks plus a below-waterline spawn roll, which is not a transcript
+  that fits the document. The reason is listed and the intro no longer claims the list is exhaustive.
+  The document's "Reading state" pointer list also omits `/rngStreams/bilge.critters`.
 
 ## 2026-09-02 — physical test of the slice 3 repair (PR 3, cycle 1)
 

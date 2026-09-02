@@ -1,7 +1,7 @@
 import {
-  EMPTY_CELL,
   cellAt,
   flatIndexOf,
+  isColourCell,
   type Board,
   type BoardAxis,
   type BoardCell,
@@ -44,7 +44,7 @@ function runsAlong(board: Board, axis: BoardAxis, minimumRunLength: number): Run
       const cell = cellAlong(board, axis, line, start);
       let end = start + 1;
       while (end < lineLength && cellAlong(board, axis, line, end) === cell) end += 1;
-      if (cell !== undefined && cell !== EMPTY_CELL && end - start >= minimumRunLength) {
+      if (isColourCell(cell) && end - start >= minimumRunLength) {
         runs.push(runAt(axis, line, start, end - start, cell));
       }
       start = end;

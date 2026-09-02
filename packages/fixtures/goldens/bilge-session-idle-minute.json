@@ -2,7 +2,7 @@
   "scenario": "bilge-session",
   "seed": 12648430,
   "ticks": 3600,
-  "stateHash": "775d4a9016d0d509",
+  "stateHash": "34ce4718d58a966d",
   "state": {
     "schemaVersion": 5,
     "seed": 12648430,
@@ -43,7 +43,7 @@
           7,
           7
         ],
-        "maxStarLevel": 2,
+        "maxStarLevel": 7,
         "startingStarLevel": 0,
         "ticksPerStarStep": 3600,
         "comboMultiplierByLineCount": [
@@ -54,8 +54,26 @@
           4,
           6
         ],
+        "comboScalePerMilleByStarLevel": [
+          400,
+          400,
+          500,
+          600,
+          700,
+          800,
+          900,
+          1000
+        ],
         "vegasMultiplier": 5,
         "chainPointsPerCell": 1,
+        "pufferSpawnPerMille": 25,
+        "crabSpawnPerMille": 15,
+        "jellySpawnPerMille": 10,
+        "crabPointsAtFullWater": 9,
+        "pufferPointsPerCell": 0,
+        "jellyPointsPerCell": 1,
+        "aboveWaterFallTicksPerCell": 3,
+        "belowWaterFallTicksPerCell": 6,
         "inflowPerMillePerThousandTicks": 140,
         "pumpPerMillePerThousandTicks": 300,
         "ratingBandsPerMille": [
