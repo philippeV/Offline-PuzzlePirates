@@ -3,7 +3,12 @@ import { test } from 'node:test';
 
 import type { Balance } from '../../packages/sim/src/balance.ts';
 import type { SimEvent } from '../../packages/sim/src/events.ts';
-import { FIRST_ENTITY_ID } from '../../packages/sim/src/ids.ts';
+import { FIRST_ENTITY_ID, type EntityId } from '../../packages/sim/src/ids.ts';
+import { createBattleBoard, setTile } from '../../packages/sim/src/battle/board.ts';
+import {
+  resolveMovement,
+  type CollisionShip,
+} from '../../packages/sim/src/battle/collision.ts';
 import { TICKS_PER_TURN } from '../../packages/sim/src/battle/tokens.ts';
 import { PER_MILLE } from '../../packages/sim/src/puzzle/scoring.ts';
 import { startBilging } from '../../packages/sim/src/puzzle/session.ts';
@@ -82,6 +87,12 @@ const BALANCE: Balance = {
 const SLOOP_FULL_DAMAGE = 10000000;
 const SLOOP_MAX_SF_DAMAGE = 6000000;
 const SLOOP_SHOTS = 4;
+const SLOOP_ROCK = 500000;
+const SLOOP_RAM = 500000;
+const VICTIM = FIRST_ENTITY_ID;
+const MOVER = FIRST_ENTITY_ID + 1;
+const ROCK_X = 7;
+const COLLISION_Y = 5;
 const IDLE_FLOOD_TICKS = 40000;
 const HALF_PER_MILLE = PER_MILLE / 2;
 const FIRST_BAND_PER_MILLE = PER_MILLE / METER_BANDS;
@@ -105,6 +116,16 @@ function sloop(cannonballs = 0): ShipState {
     { nextEntityId: FIRST_ENTITY_ID },
     { shipClass: 'sloop', allegiance: 'player', cannonballs },
   );
+}
+
+function collidingSloop(shipId: EntityId, x: number): CollisionShip {
+  return {
+    shipId,
+    shipClass: 'sloop',
+    position: { x, y: COLLISION_Y },
+    facing: 'east',
+    intent: { kind: 'forward' },
+  };
 }
 
 function run(ship: ShipState, duty: DutyOutputs, ticks: number): SimEvent[] {
@@ -250,7 +271,7 @@ test('loading a cannon spends a cannonball, and loading stops at the class shot 
   assert.ok(scarce.cannonLoadAccumulator < ACCUMULATOR_PER_CANNON);
 });
 
-test('shot and ram damage raise the melee handicap where obstacle damage does not', () => {
+test('every damage source that reaches applyShipDamage raises the melee handicap', () => {
   const shot = sloop();
   applyShipDamage(0, shot, 'shot', 1000000);
   assert.equal(shot.damageTakenSmallMicro, 1000000);
@@ -263,7 +284,27 @@ test('shot and ram damage raise the melee handicap where obstacle damage does no
   const grounded = sloop();
   applyShipDamage(0, grounded, 'obstacle', 1000000);
   assert.equal(grounded.damageTakenSmallMicro, 1000000);
-  assert.equal(grounded.meleeDamageSmallMicro, 0);
+  assert.equal(grounded.meleeDamageSmallMicro, 1000000);
+});
+
+test('a grounded and rammed victim carries its whole fused damage into the melee handicap', () => {
+  const board = createBattleBoard();
+  setTile(board, ROCK_X, COLLISION_Y, { kind: 'rock-small' });
+  const outcomes = resolveMovement(board, [
+    collidingSloop(VICTIM, ROCK_X - 1),
+    collidingSloop(MOVER, ROCK_X - 2),
+  ]);
+
+  const melee = new Map<EntityId, number>();
+  for (const outcome of outcomes) {
+    const hull = sloop();
+    const source = outcome.struckObstacle ? 'obstacle' : 'ram';
+    applyShipDamage(0, hull, source, outcome.damageTakenSmallMicro);
+    melee.set(outcome.shipId, hull.meleeDamageSmallMicro);
+  }
+
+  assert.equal(melee.get(VICTIM), SLOOP_ROCK + SLOOP_RAM);
+  assert.equal(melee.get(MOVER), SLOOP_RAM);
 });
 
 test('the melee handicap and the boat damage each stop at their own ceiling', () => {

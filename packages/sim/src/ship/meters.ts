@@ -45,10 +45,8 @@ export function applyShipDamage(
   const before = bandOf(damagePerMilleOf(ship));
   const taken = ship.damageTakenSmallMicro + damageSmallMicro;
   ship.damageTakenSmallMicro = clampTo(taken, shipClass.fullDamageSmallMicro);
-  if (source === 'shot' || source === 'ram') {
-    const melee = ship.meleeDamageSmallMicro + damageSmallMicro;
-    ship.meleeDamageSmallMicro = clampTo(melee, shipClass.maxSfDamageSmallMicro);
-  }
+  const melee = ship.meleeDamageSmallMicro + damageSmallMicro;
+  ship.meleeDamageSmallMicro = clampTo(melee, shipClass.maxSfDamageSmallMicro);
   const damageTakenSmallMicro = ship.damageTakenSmallMicro;
   const id = ship.id;
   const damaged: SimEvent = {

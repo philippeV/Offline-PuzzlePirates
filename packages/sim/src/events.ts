@@ -56,7 +56,7 @@ export interface PuzzleLevelChangedEvent {
 
 export type ShipMeter = 'damage' | 'bilge' | 'speed';
 
-export type DamageSource = 'shot' | 'ram' | 'obstacle' | 'wear';
+export type DamageSource = 'shot' | 'ram' | 'obstacle';
 
 export interface ShipMeterBandedEvent {
   type: 'ship.meterBanded';
