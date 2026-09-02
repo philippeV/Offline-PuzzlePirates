@@ -4,6 +4,75 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 5 (OPP-12)
+
+The isometric renderer and the playable client. What follows is what the work turned up that was not
+worth stopping for.
+
+### The bilging palette is sized by hand and wraps by modulo
+
+`packages/view/src/scenes/puzzle.ts` carries sixteen fill-and-shape pairs and renders colour `n` as
+`CELL_COLOURS[n % CELL_COLOURS.length]`. The simulation's ceiling is `MAXIMUM_COLOUR_COUNT`, which is
+also sixteen, so today the two agree and no colour repeats. Nothing asserts that they agree. Raising
+the ceiling, or shipping a `colourCountByStarLevel` entry above sixteen, would silently render two
+different pieces identically — a puzzle that cannot be played correctly, with no test going red. It
+is not a defect now because the numbers match; it becomes one the moment either side moves. The fix
+is a test pinning the palette length against `MAXIMUM_COLOUR_COUNT`, which needs the palette exported
+from a module that does not import Pixi.
+
+### The canvas inset is a CSS variable shared across two packages
+
+`packages/view/src/panels/panels.css` declares `:root { --pp-panel-column: 308px }` and
+`packages/app/src/app.css` insets `#stage` by `var(--pp-panel-column, 0px)`. One definition, which is
+right, but the consumer lives in a different package and the fallback is silent: if the panel
+stylesheet ever stops loading, the canvas quietly grows under the panels again rather than failing.
+The same class of coupling already exists in the other direction — `panels.css` hard-codes
+`#panels > .pp-overlay` to beat the app shell's `#panels > *` specificity. Both start to matter if
+the app shell's host ids change, and neither is covered by a test.
+
+### The battle submit button sits under the chat overlay at 720px
+
+At 1280x720 the planner's `Set the turn` and `Break off` buttons are drawn at the bottom of the
+canvas HUD, and the translucent chat history overlaps their top few pixels. They are still readable
+and still clickable, and the overlay is translucent by design, but the collision is real and will get
+worse on a shorter window. The scene lays its HUD out from the canvas height with no knowledge of the
+chat's footprint. It starts to matter at window heights below about 640px, or if the chat gains the
+wiki's larger history modes.
+
+### The render smoke baselines are tied to one Chromium revision
+
+`tests/e2e/__screenshots__/*.png` were captured with the Chromium that Playwright 1.62.1 pins. A
+Playwright bump re-blesses all four, and a machine with a different revision fails on anti-aliasing
+rather than on anything real. This is inherent to screenshot comparison and the `pp-render-smoke`
+skill says so, but it means a dependency bump carries a re-bless the reviewer has to judge. The
+blank-canvas assertion in the same test is revision-independent and is the part that actually proves
+something was drawn.
+
+### Depth sorting is per layer, so a pirate never hides behind a prop
+
+The wiki's scene model has four layers and the implementation honours it: objects and dynamic
+entities are separate sorted containers. The consequence is that a walking pirate always draws in
+front of a prop, even one standing on a nearer tile. Merging the two into a single sorted list would
+fix the occlusion and break the layer model the wiki describes. Nobody will notice until a prop is
+tall enough and near enough for a pirate to walk behind it — the palms are the first candidate.
+
+### `open('duty')` is deliberately a no-op
+
+`PanelId` includes `'duty'` because the duty report is part of the wiki's core client surface, but
+nothing in the pillage loop needs it, so opening it does nothing at all. A silent no-op is worse than
+an absent option if anything ever wires a control to it; today nothing does. Either build the report
+or drop the id when the next slice touches the panel deck.
+
+### The Pixi scenes themselves are covered only by screenshots
+
+`tests/view/` covers every module that does not import Pixi — the projection, the grid, the
+pathfinder, the tick budget, the client. The scenes, the camera and the radial menu are covered only
+by four screenshot comparisons, which prove pixels changed and nothing about behaviour. The
+interaction defects this slice found — a prop that could not be clicked, a HUD drawn under the panels
+— were both found by hand, not by a test, and a regression in either would be caught the same way.
+Driving Pixi under a real browser in the test suite is the only fix, and that is exactly the slow,
+flaky surface `06-stack-decision.md` says to keep small.
+
 ## 2026-09-02 — development of slice 4 (OPP-11)
 
 The world, the voyage and the port economy. What follows is what the work turned up that was not

@@ -1891,3 +1891,68 @@ which is what division uses.
 division, with the proceeds going back into the chest. That is a second selling path and a second
 price surface, and the loop closes without it, so it is not built — `market.sell` sells from the
 hold only.
+
+### 2026-09-02 — development, slice 5: the isometric renderer and the playable client (OPP-12)
+
+The slice that turns a simulation into a game. Two new packages — `packages/view` (PixiJS v8) and
+`packages/app` (Vite) — and the first runtime dependencies the repo has ever carried. The whole
+slice is additive: not one line of `packages/sim/src` changed to make rendering possible, which is
+the property decision 1 was bought for.
+
+**The client facade is the whole design.** `packages/view/src/client/` owns the only `Sim` instance
+in the browser and re-exports every simulation symbol the view is allowed to see. Scenes and panels
+import from `../client/rules.ts`, never from `@opp/sim`. That is not a convention — it is the gate
+below, and it is what makes "the renderer holds no game logic" a thing a machine can check rather
+than a thing a reviewer has to believe.
+
+**Decisions taken on the goal's behalf.**
+
+| #   | Decision                                                                                      | Rationale                                                                                                                                                                                                                                            |
+| --- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90  | The layering gate slice 5 owes is `tools/check-view-boundary.ts`, wired as `npm run boundary`   | The three existing gates guard `packages/sim` only, and slice 3's review already noted nothing enforces the reverse. The gate fails on any view file outside `client/` naming `@opp/sim`, and on the sim or harness importing the view                 |
+| 91  | The gate ships with negative fixtures and a positive one, per decision 22's lesson              | `tests/gates/boundary.test.ts` asserts the leaking file is caught, the reversed import is caught, the facade itself is left alone, and the real tree passes. A gate verified only by its own green run stops guarding silently                         |
+| 92  | The balance parser moves into `packages/sim` as `balanceOf(file: unknown)`                      | The browser needs the same validation the harness has, and `loadBalance` was `readFileSync` welded to 180 lines of pure shaping. Splitting it gives both callers one implementation; the sim still cannot read a file, which is what decision 42 said  |
+| 93  | The client's opening is a command list, pinned byte-for-byte against the harness scenarios      | A view that builds its own opening drifts from the headless one. `tests/view/boot.test.ts` asserts `GameClient.create(...).save()` equals `createScenarioSim(seed, 'pillage-loop').save()`, and the same for `sea-battle`. Drift becomes a red test    |
+| 94  | The avatar's scene position is view-local and never reaches the simulation                      | The sim has no avatar and no scene. Reusing the marker placeholder would have put drift on the player. Walking is a client concern in the wiki too                                                                                                    |
+| 95  | Tile dimensions are 64x32 and the depth stride is 16                                            | The wiki map fixes neither; `06-stack-decision.md` leaves `tw`/`th` as variables. 2:1 is the conventional iso ratio, and a stride of 16 leaves room for the wiki's four layers within one tile's depth band                                            |
+| 96  | The tick budget is computed in integer tick-units, not milliseconds                             | `Math.floor(1000 / (1000 / 60))` is 59, not 60. The first frame test caught a tick lost per second; `budgetOf` now multiplies before it divides, and a thousand-frame test pins the drift at zero                                                     |
+| 97  | Panel refresh is announced on events, or every 30 ticks, not every frame                        | The panels rebuild DOM on notification. At 60 fps that is 60 rebuilds a second for a purse that changed twice. Meter bands already arrive as events; the heartbeat only covers continuous readouts like voyage progress                                |
+| 98  | `?scene=battle` opens the `sea-battle` opening rather than being refused                        | `canEnter('battle')` is false unless a battle runs, so the render smoke could not reach the battle grid at all. The client now takes an `opening`, and the two openings are exactly the harness's two scenarios                                        |
+| 99  | The canvas is inset by the panel column instead of drawing beneath it                           | The first smoke baselines showed the battle planner drawn under the chart and the Sunshine widget — half the phase rows and the submit button unreadable. `panels.css` publishes `--pp-panel-column` and the app shell insets `#stage` by it           |
+| 100 | The chat history overlays the scene translucently rather than reserving space                   | The wiki's default is a fade overlay, and reserving 150px of a 720px window for a log the player mostly ignores is worse. It is now 75% opaque, so the board reads through it                                                                         |
+
+**Dependencies added, and why.** `pixi.js@8.20.1` — the renderer decision 1 and the stack document
+both name, pinned to the exact version the stack document cites. `vite@8` — the app shell, dev
+server and bundler. `@playwright/test@1.62` — the render smoke only, and deliberately **not** part
+of `npm run check`, because CI provisions no browsers. `npx playwright install chromium` was run to
+produce the baselines; Playwright 1.62 pins a Chromium revision this machine did not already have.
+`packages/sim/package.json` still declares an empty `dependencies`, and `npm run deps` still proves
+it.
+
+**What the tests prove, and what they do not.** `tests/view/` covers what can be judged without a
+browser: the tick budget, the iso projection round trip, the four-directional viewport-clipped
+pathfinder including the hazard-adjacency rule and the portal warp, the two openings against the
+harness, and the whole pillage loop driven through `GameClient` — buy, chart, sail, a real brigand
+battle, port, divide, sell, with the purse larger at the end. The Playwright smoke asserts only that
+the four surfaces are *drawn*; it asserts no game rule, by design. Neither proves the game is
+**fun**, and neither replaces the physical test.
+
+**Verified by hand, in a browser, before the PR.** Walking, the radial menu, buying 40 sugar cane
+(purse 2000 to 1720, stock 500 to 460, logged in chat), charting a two-league pillage to Doyle, the
+deck scene with all seven stations read from `ShipClass` rather than hardcoded, taking the bilging
+station and swapping tiles. Two defects were found this way and fixed: clicking a prop's drawn body
+did nothing because only its ground tile was hit-tested, and the battle HUD was unreadable beneath
+the DOM panels.
+
+**Deviations from the stack document.** It names pnpm (the repo uses npm workspaces, per slice 1),
+`dependency-cruiser` (the repo uses scripts, per decision 20) and Q16.16 (floats are banned outright
+in the sim, and now live only in `packages/view`, which is where that document always said they
+belonged). It also suggests `packages/view/src/sprites/`; there is no art to hold, so the atlas
+draws its placeholders with `Graphics` and the directory is not created.
+
+**Not built, with the reason.** The wiki's full client surface is far larger than the loop: the Crew
+panel, the Ahoy! notification queue and the duty report are not built, because nothing in the pillage
+loop needs them — `open('duty')` is deliberately a no-op rather than a lie. Chat is a local log and
+an event feed, since decision 9 puts every multiplayer surface after the MVP. Sound, animation polish
+and art quality were out of scope by the task. `packages/view` has no owning skill beyond the render
+smoke; `pp-render-smoke` documents the smoke, not the view's architecture.
