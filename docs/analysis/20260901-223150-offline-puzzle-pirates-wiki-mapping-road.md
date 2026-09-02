@@ -528,3 +528,51 @@ new branch, no new PR.
 `dev/development/inbox/` only once PR 1 has passed review and test and merged into `agent/develop` —
 the merge happens in the test stage, so the instruction travels with the review task and on into the
 test task.
+
+### 2026-09-02 — independent review of the slice 1 rework (cycle 1)
+
+Four lenses against the two rework commits only. Findings 2, 4 and 5 are confirmed fixed and were
+attacked hard rather than read: the own-property fix rejects all ten `Object.prototype` names at every
+caller-keyed site, and the replay round trip was re-derived from scratch with an independent ndjson
+client across twelve trail shapes, reproducing the committed fixture byte-identically while still
+rejecting twenty of twenty-one corrupted trails at the correct tick. Two blocking findings go back.
+What follows is what the review revealed about the *design*, as opposed to the defects themselves.
+
+**A gate has two halves, and a negative test can exercise only one of them.** Decision 22 established
+that each gate needs a committed negative test, and the rework satisfied that by exporting
+`simPurityRules` and applying the same object to both `packages/sim/src` and the fixture directory.
+Sharing the object does prove the two blocks cannot drift apart in their *contents*. It proves nothing
+about *attachment* — whether the block that carries those rules still selects the simulation. Changing
+one token, `packages/sim/src/**/*.ts` to `.tsx`, detaches every purity rule from the sim; `Math.random()`
+then sits in sim source with the whole build green and all six negative tests passing. The general
+form: a gate is a rule plus a binding from that rule to the thing it guards, and a negative test that
+reaches the rule through a *different* path than production tests the rule while assuming the binding.
+The binding needs its own assertion — `eslint --print-config` against a real sim file is the cheap one,
+and it pins every rule at once rather than one fixture per rule, which also closes the seven of thirteen
+entries that have no fixture today.
+
+This is decision 22's own lesson turned one level outward. Cycle 0's finding was that a gate verified
+by hand stops working silently; cycle 1's is that a gate verified through a fixture can stop guarding
+its target just as silently.
+
+**A cap on a parameter bounds memory, not work.** Decisions 13 to 16 chose caps to close an unbounded
+allocation, and they do. But `replay.verify` is O(lastTick x commands) and those are two independently
+capped parameters, so the legal maximum product is 10^11 — a request inside every documented cap that
+occupies the single-threaded harness for a quarter of an hour. Capping each factor of a product is not
+capping the product. Where a method's cost is more than linear in its inputs, the budget belongs on the
+derived quantity, the way `MAX_EVENTS_PER_RESPONSE` already does for events rather than ticks. The
+principle behind decision 14 was right and was applied to only one of the two places that needed it.
+
+**The error boundary sits inside the wrong function.** `invoke` catches everything a handler throws and
+turns it into a JSON-RPC error, which is why the bounds work is invisible from outside. But
+`JSON.stringify` runs in `handleLine`, outside that try, and the readline `line` listener in `server.ts`
+has no containment at all — so any throw during serialisation is an uncaught exception that ends the
+process, and response size is caller-controlled through `sim.dispatch`, the one array the rework left on
+`requiredArray`. Capping that array closes the instance. Moving the serialisation inside the error
+boundary, or wrapping the line handler, closes the class, and the class is what cycle 0's finding 1 was
+actually about. Validating inputs is not the same as containing failures; the perimeter is the line
+handler, not the method handler.
+
+**On the cycle budget.** Both blocking findings are small, local repairs. Neither disturbs the design
+recorded above — the conventions, the limits table and the post-dispatch replay convention all stand,
+and the confirmed fixes for findings 2, 4 and 5 need no rework.
