@@ -1234,3 +1234,65 @@ again.
 
 **What is left for the follow-up.** The bonus-shape token layer, per decision 58. A development task
 is queued for it.
+
+### 2026-09-02 — independent review, slice 2b (OPP-13), PR 4
+
+A 4-lens review of PR 4. **Approved, no blocking findings**, and forwarded to the test stage. What
+follows is only what the review changed or added to the design record; the full non-blocking list is
+in `ISSUES.md` under the matching heading.
+
+**The interpretive core survived independent re-derivation.** Decision 47 and decision 48 were the
+load-bearing judgements of this slice, so the review re-derived them from
+`docs/wiki-map/01-duty-puzzles.md` without reference to this repo's constants. A minimum bingo is
+`3x3x3` = `(3+3+3) x 3` = 27 and a minimum sea donkey is `3x3x3x3` = `12 x 4` = 48, so the published
+interval is (27, 48) and the shipped 36 sits inside it. The minimum-instance reading is the only
+coherent one: the largest published bingo, `3x5x5` = 51, already exceeds 48, so any other reading
+makes the interval empty. Decision 47's climb model is a defensible reading of wiki:99 rather than a
+contradiction of it, because under a static crab a chain could not free crabs at all — which
+wiki:97 says it can — and a crab spawned in the bottom rows would anchor its column permanently. All
+15 published combo rows reproduce exactly at star 7, and the efficiency matrix with them.
+
+**Two design consequences the slice did not record.**
+
+- **The crab's spawn rate is conditional, and the condition almost never holds.** Decision 53 chose
+  one critter per band specifically so `balance.json` would state the rates it produces. The
+  water-line gate on the crab band defeats that for the crab alone: `applyGravity` puts every vacancy
+  at the top of its column segment, so refills land dry and a crab-band draw over a dry cell yields
+  nothing rather than falling through. Measured, the effect is not a small correction —
+  **0 crabs across 5 seeds x 400 swaps at star 7 with the board fully flooded**, against a stated 15
+  per mille, while puffers and jellies spawned freely. The crab mechanic is effectively absent from
+  normal play at the shipped constants. This is a balance consequence rather than a defect against
+  the written design, which is why it did not block, but it is the first thing the follow-up should
+  settle: either draw crab spawns only among below-water refills, or restate the rate as the
+  conditional one it is. The rule itself also wants a decision row of its own — it is a consequence
+  of decision 47, since a crab spawning dry would clear instantly for a free bonus.
+- **The climb and the spawn write to the same cells in one step.** `settleStep` captures `refilled`
+  before `climbCrabs` and then hands that stale list to `spawnCritters`, so a crab that climbs into a
+  refilled cell and stays at or below the water line is overwritten by the critter spawned there.
+  Rare, but it contradicts decision 47's "leaves the board only above the water line or in a blast".
+  The ordering inside `settleStep` is therefore load-bearing in a way the decision table does not
+  say, and the follow-up should either recompute `refilled` after the climb or spawn before it.
+
+**`settleTicks` is measured from survivors only.** Decision 57 gave it no consumer, so this cost
+nothing yet, but the number is derived from `CellFall`s and a fall is recorded only for a surviving
+cell that moved. A clear with nothing surviving above it therefore reports zero: a full 12-cell
+column clear reports 0 ticks while a bottom-row 3-run reports 6. Slice 5 should not consume it as a
+settle-time estimate in its present shape.
+
+**Test-strength evidence, for the record.** 25 mutations were applied across `scoring.ts`,
+`critters.ts`, `gravity.ts`, `move.ts` and `resolve.ts`: 19 killed, 1 proved an equivalent mutant,
+and 2 real survivors — chain-step scoring (decision 59 is untested; collapsing `ResolveStep.kind` to
+`combo` stays green while moving a cascade from 4 points to 5) and the water-line boundary of the
+fall rate. The scoring-wiring test the slice 2 review required is present, hand-derived and
+demonstrably fails when the wiring is cut. The re-blessed fixtures were confirmed not to be carrying
+the suite, with one exception worth knowing: chain-step scoring is guarded by the replay fixture and
+by nothing hand-derived.
+
+**Verified and correct, so that the test stage need not repeat it:** the opening board array is
+byte-identical to the pre-slice one and only its hash moved; `bilge.refill` ends at an identical
+cursor after 40 scripted clearing swaps, so the pinned draw order is untouched; `sim.step` opens no
+puzzle stream across 50000 idle ticks; the atomicity fix restores the entire canonical state, not
+merely tick and hash, verified on a dirty session at tick 30420 with all four cursors advanced; the
+segmented `applyGravity` is algebraically and empirically equivalent to the old loop on crab-free
+boards; the harness survives malformed, oversized and prototype-polluting input without dying; and
+`settleTicks` reaches neither state nor score.
