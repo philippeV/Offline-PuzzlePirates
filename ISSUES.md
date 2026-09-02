@@ -73,6 +73,67 @@ The slice 2 review named two follow-ups: the non-atomic `sim.step` that commits 
 geometry to the score table. Both belong to the queued slice 2b task and neither was touched here.
 Nothing in this slice makes either worse — the battle's own events are bounded at a handful per
 phase.
+## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2
+
+The test stage stood the branch up in its own worktree and drove the harness over the real protocol.
+No number here rests on re-running the suite. Nothing blocked: the published score table was
+re-derived from real board geometry rather than from a formula, the flood model's untested half
+behaves, and the ordinary path saves, reloads and replays identically. What follows is what the run
+measured and deliberately left alone.
+
+### The non-atomic step, bounded exactly
+
+Refines the review entry below. The defect is unchanged and is still the follow-up slice's first
+item.
+
+- **The boundary is 99992.** A `sim.step` of 99992 ticks on a fresh `bilge-session` succeeds with
+  exactly 100000 events; 99993 is the first count that fails, and it commits all 99993 ticks. The
+  eight non-marker events are the six `bilge.waterLineMoved` and two `puzzle.levelChanged` the review
+  named.
+- **A retry double-advances, measured.** After the failed `sim.step {ticks:100000}` leaves the clock
+  at 99993, the identical retry succeeds and lands it at **199993** — 200000 ticks of sim time for
+  two requests the caller believes bought 100000.
+- **Nothing else commits behind an error.** `sim.runUntil` shares the defect, and nothing else does:
+  a `sim.dispatch` whose second command is structurally invalid fails the whole call with the state
+  hash unchanged, a `ticks` over `MAX_TICKS_PER_STEP` refuses before stepping, and `pointer-unknown`,
+  `snapshot-unknown` and an ordinary rejected swap all leave the hash where it was. The escape is the
+  event budget and only the event budget.
+
+### Tuning prose that overstates its own model
+
+- **`_sources.bilging.pumpPerMillePerThousandTicks` says the board drains "at any efficiency above
+  467 per mille". It drains at 470.** `floor(300 * d / 1000)` yields exactly 140 — the inflow — at
+  467, 468 and 469, so the net rate at those three values is zero and the water holds rather than
+  falls. The sibling claims in the same entry are exact: empty to full ignored is 7143 ticks
+  (119.05 s), and full to empty at 100 per cent efficiency is 6250 ticks (104.2 s).
+- **`dutyOutputPerMille` has no ceiling.** Ordinary combo play measured 1782 per mille, which drives
+  the pump to 534 per mille per thousand ticks against a nominal 300. Nothing overflows and every
+  invariant held at that rate, but the constant's "at 100 per cent efficiency" framing describes a
+  drain rate a real session beats by 1.8x.
+- **`comboMultiplierByLineCount[5]` is unreachable.** A census of every legal swap on 1200 opening
+  boards found sixteen distinct clear shapes topping out at four lines, so the invented five-line
+  multiplier of 6 — which would also outrank the Vegas multiplier of 5 — has never been applied by
+  any board this engine can generate.
+
+### Two traps for whoever blesses the next fixture
+
+- **`snapshot.restore` re-orders the keys `state.get` reports.** After a restore the root comes back
+  alphabetically (`balance, markers, nextEntityId, ...`) and the board as `cells, height, width`,
+  rather than in declaration order. The state is `deepStrictEqual` either way and `stateHash` is
+  unchanged because hashing is canonical, so no gate notices — but a fixture blessed after a restore
+  is byte-different from the same fixture blessed cold.
+- **Windows line endings defeat the skills' checksum-before-and-after proof.** With
+  `core.autocrlf=true` the fixtures are CRLF in the working tree while both recipes write LF, so a
+  raw byte comparison of a regenerated fixture always differs — by exactly the line count, 5236
+  against 4927 bytes for the golden. Normalise CRLF to LF before comparing, or read a false
+  re-bless.
+
+### The water line is only ever exercised idle
+
+Five moves per 1200 ticks holds `dutyOutputPerMille` between 1222 and 2322, far above break-even, so
+`bilgePerMille` sits pinned at 0 for a whole played session and the water line never moves. Both
+directions were driven deliberately for this test and both work; the point is that no *played* path
+reaches them, so the idle golden remains the only committed coverage of the field.
 
 ## 2026-09-02 — independent review of slice 2 (OPP-9), PR 2
 
