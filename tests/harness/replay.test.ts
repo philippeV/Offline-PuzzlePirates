@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url';
 import type { Replay } from '../../packages/harness/src/index.ts';
 import { recordReplay, type ReplayPlan } from '../../tools/record-replay.ts';
 
-import { resultOf, startHarness, type Harness } from './client.ts';
+import { reasonOf, resultOf, startHarness, type Harness } from './client.ts';
 
 const FIXTURE = fileURLToPath(
   new URL('../../packages/fixtures/replays/marker-drift.json', import.meta.url),
+);
+const BILGE_FIXTURE = fileURLToPath(
+  new URL('../../packages/fixtures/replays/bilge-session.json', import.meta.url),
 );
 
 const PLAN: ReplayPlan = {
@@ -23,16 +26,25 @@ const PLAN: ReplayPlan = {
   lastTick: 6,
 };
 
+interface ReplayFixture extends Replay {
+  scenario: string;
+}
+
 let harness: Harness;
 
 function loadReplay(): Replay {
   return JSON.parse(readFileSync(FIXTURE, 'utf8')) as Replay;
 }
 
-async function verify(replay: Replay): Promise<Record<string, unknown>> {
+function loadBilgeReplay(): ReplayFixture {
+  return JSON.parse(readFileSync(BILGE_FIXTURE, 'utf8')) as ReplayFixture;
+}
+
+async function verify(replay: Replay, scenario?: string): Promise<Record<string, unknown>> {
   return resultOf(
     await harness.call('replay.verify', {
       seed: replay.seed,
+      scenario,
       commands: replay.commands,
       hashTrail: replay.hashTrail,
       expectedHash: replay.finalHash,
@@ -119,4 +131,38 @@ test('replay.verify catches a command log that no longer reproduces the trail', 
 
   assert.equal(verified['ok'], false);
   assert.equal(verified['divergedAtTick'], 3);
+});
+
+test('the committed bilging replay verifies bit-identically under its own scenario', async () => {
+  const replay = loadBilgeReplay();
+
+  const verified = await verify(replay, replay.scenario);
+
+  assert.equal(replay.scenario, 'bilge-session');
+  assert.equal(verified['ok'], true);
+  assert.equal(verified['divergedAtTick'], null);
+  assert.equal(verified['finalHash'], replay.finalHash);
+  assert.equal(verified['tick'], replay.hashTrail.at(-1)?.tick);
+});
+
+test('the bilging replay diverges at once when the recorded scenario is dropped', async () => {
+  const replay = loadBilgeReplay();
+
+  const verified = await verify(replay);
+
+  assert.equal(verified['ok'], false);
+  assert.equal(verified['divergedAtTick'], 0);
+});
+
+test('replay.verify refuses a scenario it does not know', async () => {
+  const replay = loadBilgeReplay();
+
+  const refused = await harness.call('replay.verify', {
+    seed: replay.seed,
+    scenario: 'no-such-scenario',
+    commands: [],
+    expectedHash: replay.finalHash,
+  });
+
+  assert.equal(reasonOf(refused), 'scenario-unknown');
 });

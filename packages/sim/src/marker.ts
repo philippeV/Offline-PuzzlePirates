@@ -1,5 +1,5 @@
-import type { Command, CommandResult } from './commands.ts';
-import type { SimEvent } from './events.ts';
+import type { CommandResult, MarkerCommand } from './commands.ts';
+import type { MarkerEvent, SimEvent } from './events.ts';
 import { takeEntityId, type EntityId } from './ids.ts';
 import { rngStream, type RngStream } from './rng.ts';
 import type { Marker, WorldState } from './state.ts';
@@ -27,7 +27,7 @@ export function findMarker(state: WorldState, id: EntityId): Marker | undefined 
   return state.markers.find((marker) => marker.id === id);
 }
 
-export function applyCommand(state: WorldState, command: Command): CommandResult {
+export function applyMarkerCommand(state: WorldState, command: MarkerCommand): CommandResult {
   const marker = findMarker(state, command.id);
   if (marker === undefined) return { status: 'rejected', reason: 'unknown-marker' };
 
@@ -55,7 +55,7 @@ function driftMarker(tick: number, marker: Marker, stream: RngStream): SimEvent 
   return markerEvent('marker.drifted', tick, marker);
 }
 
-function destinationOf(marker: Marker, command: Command): FieldPosition {
+function destinationOf(marker: Marker, command: MarkerCommand): FieldPosition {
   switch (command.op) {
     case 'marker.move':
       return { x: marker.x + command.dx, y: marker.y + command.dy };
@@ -78,6 +78,6 @@ function clamp(value: number, minInclusive: number, maxInclusive: number): numbe
   return Math.min(Math.max(value, minInclusive), maxInclusive);
 }
 
-function markerEvent(type: SimEvent['type'], tick: number, marker: Marker): SimEvent {
+function markerEvent(type: MarkerEvent['type'], tick: number, marker: Marker): MarkerEvent {
   return { type, tick, id: marker.id, x: marker.x, y: marker.y };
 }

@@ -15,12 +15,32 @@ export interface PlaceMarkerCommand {
   y: number;
 }
 
-export type Command = MoveMarkerCommand | PlaceMarkerCommand;
+export interface StartPuzzleCommand {
+  op: 'puzzle.start';
+  puzzle: string;
+}
+
+export interface SwapBilgeCommand {
+  op: 'bilge.swap';
+  x: number;
+  y: number;
+}
+
+export type MarkerCommand = MoveMarkerCommand | PlaceMarkerCommand;
+
+export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand;
+
+export type Command = MarkerCommand | PuzzleCommand;
 
 export type RejectionReason =
   | 'unknown-marker'
   | 'non-integer-coordinate'
-  | 'destination-outside-field';
+  | 'destination-outside-field'
+  | 'balance-missing'
+  | 'unknown-puzzle'
+  | 'puzzle-already-running'
+  | 'no-puzzle-running'
+  | 'swap-outside-board';
 
 export interface AcceptedCommand {
   status: 'accepted';

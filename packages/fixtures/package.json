@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./replays/*": "./replays/*"
+    "./goldens/*": "./goldens/*",
+    "./replays/*": "./replays/*",
+    "./saves/*": "./saves/*",
+    "./scenarios/*": "./scenarios/*"
   },
   "dependencies": {}
 }

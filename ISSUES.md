@@ -4,6 +4,59 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 2 (OPP-9), puzzle framework and Bilging
+
+What slice 2 chose not to build, and what it left behind. None of it stops the slice: a bilging
+session is playable end to end through the harness and the published score table is reproduced
+exactly.
+
+### Bilging is implemented for star levels 0 to 2 only
+
+- **The three critters and the bonus-token layer are not built.** The wiki gates the puffer fish at
+  3 stars, the crab at 5 and the jellyfish at 6, and none of the three has a published score — the
+  crab's is confirmed only to scale with water height, the puffer's is qualitative, the jellyfish's
+  is absent entirely. `maxStarLevel` is 2 in `balance.json`, so by the published rules no critter
+  exists in the band that is implemented.
+
+  **Not blocking.** The slice's acceptance criterion is the published score table, which covers
+  lines and combos and no critter. What it costs later: the star ramp cannot express difficulty
+  above 2, so the sea battle in slice 3 will read a duty output from an easier puzzle than a real
+  pirate would play. A follow-up development task is queued.
+
+- **The below-waterline fall slowdown is not modelled.** The wiki states that pieces moving below
+  the water line move more slowly and that this is a real timing effect, but publishes no ratio.
+  Resolution is instant inside the swap, matching the repo's dispatch-applies-immediately rule.
+
+  **Not blocking.** It changes no score and no state, only feel, and feel has no renderer to be felt
+  through yet. It starts to matter in slice 5, when a human first watches the board resolve.
+
+### Left in the engine
+
+- **`pointsOfStep` runs twice per resolve step** (`packages/sim/src/puzzle/dispatch.ts`) — once in
+  the reduction that totals the swap and once again when the step's event is built. Pure, cheap and
+  correct; it reads as an oversight rather than a choice.
+- **An accepted `bilge.swap` that clears nothing still opens the `bilge.refill` cursor.**
+  `rngStream` registers a cursor on the handle, not on the first draw, so a swap into empty air adds
+  `{hi, lo, draws: 0}` to `rngStreams` and changes the state hash. Deterministic and harmless, but
+  it means "the hash changed" no longer implies "something was drawn".
+- **`resolveBoard` stops silently at its 64-step cap.** A cascade that long is not reachable on a
+  12x12 board with three or more colours, but if it ever were, the board would be left holding
+  matches with nothing said about it.
+
+### Named for slice 2 by slice 1, and still open
+
+Slice 2's task did not ask for these, and none of them blocked it. They are listed again so the
+deferral stays visible rather than quietly becoming permanent.
+
+- `tests/harness/client.ts` still correlates responses by arrival order rather than by id, and still
+  has no timeout.
+- `SessionRegistry` still evicts nothing, and `server.ts` still has no maximum input line length, so
+  a newline-less flood still grows the heap until the process dies.
+- `lastTickOf` is still duplicated between `packages/harness/src/replay.ts` and
+  `tools/record-replay.ts`.
+- `replay.verify` is still O(lastTick x commands); the bilging fixture is 15 ticks, so nothing in
+  this slice made it worse.
+
 ## 2026-09-02 — physical test of the slice 1 rework (cycle 2), PR 1
 
 The real binary driven over stdin and stdout: the dispatch cap at both sides of its boundary,

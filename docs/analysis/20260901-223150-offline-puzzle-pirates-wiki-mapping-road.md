@@ -903,3 +903,73 @@ command rejected before reading the source. The behaviour is right; the name is 
 **No deviation this time.** This entry is committed to the feature branch as the last commit of PR
 1, and reaches `agent/develop` with the merge that immediately follows it — which is the moment
 decision 23 was waiting for.
+
+### 2026-09-02 — development, slice 2 (OPP-9)
+
+The generic tile-grid puzzle framework and Bilging on top of it, built on `agent/develop` at
+`8781b2a` — slice 1 had merged, so this branched from the integration branch rather than from
+slice 1's feature branch as the task's fallback allowed.
+
+**What is here.** `packages/sim/src/puzzle/` holds nine modules: the generic board (`board.ts`,
+`runs.ts`, `resolve.ts`), the scoring model shared by every future duty puzzle (`scoring.ts`,
+`frame.ts`), the Bilging specifics (`bilging.ts`), and the session, its per-tick step and its
+reducer (`session.ts`, `dispatch.ts`). `WorldState` gains `balance` and `puzzle`, the schema moves
+to 3 with a real migration, `Sim.dispatch` became a top-level route, and `Sim.step` runs markers
+then the puzzle. The harness gains a `balance.json` loader, a `bilge-session` scenario, the two new
+command arms, and the scenario threading that `replay.verify` was missing.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                | Rationale                                                                                                                                     |
+| -- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 37 | The puzzle lives in `packages/sim/src/puzzle/`, not a `packages/puzzle`  | A separate package cannot be purity-gated and import `@opp/sim` at once: the dependency gate forbids the dependency, the import gate the specifier |
+| 38 | The marker placeholder domain stays                                     | Deleting it is not in this task, and slice 1's marker tests are the regression coverage for machinery slice 2 now leans on                        |
+| 39 | Critters and token pieces are deferred; `maxStarLevel` is 2             | The wiki gates puffer at 3 stars, crab at 5, jelly at 6, and none has a published score. Stars 0-2 are complete by the published rules            |
+| 40 | Resolution is instant, inside the swap                                  | Matches the repo's "dispatch applies immediately" rule. The below-waterline fall slowdown has no published ratio and changes no score            |
+| 41 | `balance.json` is loaded by the harness and pinned into hashed state    | The sim cannot read a file. In state, the tuning a replay was recorded under is part of its hash, so a balance edit that changes play fails loudly |
+| 42 | `balance` is optional on `SimOptions`, and `puzzle.start` rejects without it | Keeps every existing marker-only call site working unchanged instead of rippling a required option through slice 1's tests                    |
+| 43 | The stall rule charges exactly one move per expired empty interval      | The cross-cutting frame documents this for Sailing; the Bilging page says only "a penalty equivalent to one click". Same rule, one implementation |
+| 44 | The published score table lives in `scoring.ts`, not `balance.json`     | `balance.json` is for invented numbers. A sourced table in a tuning file would blur exactly the line decision 6 exists to draw                    |
+| 45 | `verifyReplay` routes through `createScenarioSim`                       | It ignored the recorded scenario, harmless with one scenario and silently wrong with two. The bilging fixture would have verified a marker board  |
+
+**The published table is reproduced exactly.** All fifteen rows of the worked score table in
+`01-duty-puzzles.md` come out of `comboScoreOf`, and all sixty cells of its efficiency matrix out of
+`movesForEfficiencyMilli`. The matrix needed efficiency expressed as an exact fraction rather than a
+per-mille scalar: at 166 % a per-mille 1333 puts the `4` row at 0.999 instead of the published 1.
+Base points are implemented as `2 * length - 3`, which is not a wiki formula but reproduces all
+three published rows and extrapolates to the longer runs a 12-wide board allows.
+
+**Invented constants.** Twelve, all in `balance.json`, each with an entry in a `_sources` map saying
+where it came from — `invented`, `published`, or `scope decision`. A key with no entry is a bug. The
+board is 12x12, the coupling rates flood an ignored board in about two minutes and drain a
+well-played one, and the rating bands honour the only two published anchors: Fine at roughly 100 %
+efficiency, sparkly at four points per move. No invented number lives anywhere else in the tree.
+
+**No floats reach state.** Every rate is per-mille integer arithmetic with a bounded accumulator, so
+`canonicalJson`'s safe-integer guard is what enforces the rule rather than discipline. Both
+published water-line invariants — at least three water rows, at least three dry rows — are asserted
+at all 1001 bilge levels.
+
+**Deviations from the spec written for this slice.** Nine modules rather than the six planned: the
+run finder, the scoring frame and the puzzle reducer each split out to stay under the repo's
+hundred-line convention. `bilge.swap` also rejects a fractional coordinate under the existing
+`non-integer-coordinate` reason, since none of the five new reasons covered it. `bilge.waterLineMoved`
+fires on a row change rather than on every per-mille change, which is what its name says and keeps a
+tick's event count at zero almost always — so `MAX_EVENTS_PER_RESPONSE` stays unreachable through
+`sim.step`, deliberately.
+
+**Debts paid that slice 1 named for slice 2.** The circular migration tests now have a committed
+schema-version-2 save under `packages/fixtures/saves/` to migrate for real; two named RNG streams
+are proved independent; `verifyReplay` honours its scenario; and `packages/fixtures/scenarios/`,
+`goldens/` and `saves/` exist with fixtures that real tests load, so the two new skills describe
+mechanisms that exist rather than mechanisms they propose.
+
+**What is left for the follow-up.** The three critters and the bonus-token layer, the star levels
+above 2 they gate, and the below-waterline fall slowdown. A development task is queued for them.
+Nothing in the engine has to change to add them: `resolveBoard` already takes the rules object and
+returns per-step cleared cells, which is the seam a special-piece effect hangs on, and Treasure Haul
+is the same engine with `swapAxis: 'vertical'`.
+
+**Verified:** `npm run check` green from cold — dependency gate, import gate, three typecheck
+projects, lint, and 101 tests. A bilging session is playable end to end through the harness with no
+renderer, and its committed replay reproduces bit-identically.
