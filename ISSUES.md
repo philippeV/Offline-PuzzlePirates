@@ -66,6 +66,37 @@ and bumped by a mover in the same pass therefore reports its ram damage as obsta
 difference is visible only in the melee handicap, which obstacle damage does not raise and ram damage
 does, and the case needs a mover to bump a ship that is simultaneously stopped by a rock.
 
+### Four sharp edges around replays, found while writing `pp-replay-triage`
+
+Writing the triage skill meant driving every replay path deliberately wrong, which surfaced these.
+None blocks: each is a gap in the tooling around determinism rather than a defect in determinism
+itself, and the skill documents its way around all four.
+
+- **A replay fixture records no schema version.** `Replay` carries `seed`, `scenario`, `lastTick`,
+  `commands`, `hashTrail` and `finalHash`, and nothing that says which schema it was recorded
+  under, although `session.new` already returns one. So a trail made stale by a schema bump cannot
+  be told from a corrupted one by reading the file — you have to go to `git log` on `state.ts`.
+  Goldens pin the version; replays do not. The slice 2 review named this from the other direction,
+  as `divergedAtTick: 0` being indistinguishable from a real determinism bug. It is one field.
+
+- **`tools/record-replay.ts` heals silently.** Run against a deliberately corrupted fixture it
+  replaces the bad hash with the true one and drops any extra field, printing only its usual
+  success line — verified on a scratch copy of the committed diverged fixture, which lost both its
+  `deadbeefdeadbeef` checkpoint and its `note`. There is no `--check` mode that verifies and fails
+  instead of writing. This is the sharpest edge in the area, because re-recording a trail you have
+  not explained is exactly how a real determinism bug gets committed, and the tool makes that the
+  path of least resistance. The skill's re-recording section is built around the gap.
+
+- **`replay.verify` names only the first bad checkpoint.** Nothing in the protocol says whether the
+  divergence persisted afterwards, which is the difference between a bad recording and a real
+  desync. Returning a count, or the last diverging tick alongside the first, would make the skill's
+  whole trail-walking step unnecessary.
+
+- **Nothing pins the final checkpoint of a replay.** The committed diverged fixture corrupts a
+  middle checkpoint — tick 5 of 12 — because that is the better specimen to teach against, so the
+  `tick <= lastTick` boundary of the trail remains unexercised. One assertion against a fixture
+  whose last checkpoint is corrupted would close it.
+
 ### Carried forward from slice 2, untouched
 
 The slice 2 review named two follow-ups: the non-atomic `sim.step` that commits a mutation behind a
