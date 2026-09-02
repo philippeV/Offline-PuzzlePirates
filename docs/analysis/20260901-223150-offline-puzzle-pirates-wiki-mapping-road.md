@@ -973,3 +973,89 @@ is the same engine with `swapAxis: 'vertical'`.
 **Verified:** `npm run check` green from cold — dependency gate, import gate, three typecheck
 projects, lint, and 101 tests. A bilging session is playable end to end through the harness with no
 renderer, and its committed replay reproduces bit-identically.
+
+### 2026-09-02 — independent review of slice 2 (OPP-9), PR 2
+
+Four lenses — correctness and regression, security and data safety, spec and architecture
+conformance, maintainability and test coverage — plus a fifth agent whose only job was to audit the
+slice's headline claim against the wiki rather than against the repo's tests. **No blocking
+findings. Approved and forwarded to the test stage.** Everything below is recorded in `ISSUES.md`
+under the matching heading.
+
+**The headline claim holds, and was re-derived rather than re-read.** The audit parsed the fifteen
+worked rows and the sixty efficiency cells programmatically out of `01-duty-puzzles.md:145-161` and
+executed the implementation against them: zero mismatches. `roundedQuotient` (`scoring.ts:40-42`) is
+integer round-half-up on integer operands and agrees with the wiki's three-decimal values at every
+one of the sixty cells, with no exact halves to tie-break. `balance.json` was checked separately for
+silent retuning of published constants and is clean — the published multipliers are the published
+values, and every unpublished key carries its `_sources` entry. `comboScoreOf` reproducing all
+fifteen rows was confirmed independently a second time by the correctness lens. The claim as written
+in the slice-2 entry is true.
+
+**Two claims in the slice-2 entry above are not.** Both are corrected here rather than by editing
+the entry, per the append-don't-rewrite convention.
+
+- *"`MAX_EVENTS_PER_RESPONSE` stays unreachable through `sim.step`, deliberately."* It is reachable,
+  and two lenses measured it independently at 100008 events on a single legal step. The reasoning
+  counted the puzzle's own events and forgot the one-per-tick `marker.drifted` that decision 38
+  deliberately kept. Worse than the claim being wrong is what happens when the budget trips:
+  `stepWithinEventBudget` steps the session's sim and only then throws, so a `sim.step {ticks:100000}`
+  on a bilge session returns `limit-exceeded` with the tick counter already at 99993 and every event
+  discarded. The window is ticks 99993-100000 and `marker-field` is unaffected, so no slice-1 path
+  regressed — but a mutation committed behind an error return is the inverse of the invariant this
+  slice tests and advertises everywhere else, and it is the first thing the follow-up slice should
+  fix, ahead of critters.
+- *"No invented number lives anywhere else in the tree."* Four live in sim code —
+  `MINIMUM_COLOUR_COUNT`, `MAXIMUM_COLOUR_COUNT`, `MAXIMUM_FILL_ATTEMPTS` and
+  `MAXIMUM_RESOLVE_STEPS`. They are structural safety bounds rather than tuning knobs, so decision 6's
+  intent survives intact; the absolute phrasing does not.
+
+**Decision 39 needs its rationale amended, not its outcome.** Deferring critters is exactly right and
+the wiki evidence for it is exact. But "stars 0-2 are complete by the published rules" overstates it:
+`01-duty-puzzles.md:129` heads the combo multiplier table *at 7-star level*, and `:139` says low star
+levels have lower multipliers without publishing them. Since `comboMultiplierOf` takes no star level,
+the shipped 0-2 band scores as a 7-star board. `01-duty-puzzles.md:74` asks for star level to be a
+first-class input to scoring as well as to board generation, and only the latter is implemented. The
+follow-up slice already owns star levels above 2 and should take this with them.
+
+**Decisions 37, 40, 41, 42, 43 and 45 verified as described.** Decision 37's premise was the one most
+worth checking, since it trades a package boundary for gate coverage, and the coverage is real:
+`eslint --print-config` on a nested puzzle module returns all three purity rules at severity 2 with
+every restricted-syntax selector, and the import gate recurses into subdirectories. The one gap is
+that `tests/gates/purity.test.ts` pins `packages/sim/src/index.ts`, so nothing *asserts* the nested
+coverage the decision leans on. Decision 41's pinning was traced end to end — balance reaches
+`WorldState`, the whole state is hashed, and the golden asserts the balance block — so a tuning edit
+does fail a replay rather than passing silently, as intended.
+
+**The test suite is weaker than its 101 green tests suggest, in one specific place.** Nothing
+connects board geometry to the score table: the only gameplay-side scoring assertions are
+`totalScore > 0` and a per-mille floor that the fixture guarantees by construction. A mutation making
+every clear score as a single 3-line — destroying the combo, vegas and length model outright —
+passes all 101 tests, the committed replay included. The scoring *formula* is genuinely well tested
+against the wiki in isolation; it is the wiring from a real clear to those points that no test pins.
+This was judged non-blocking because the behaviour was independently verified correct by execution,
+twice, so it is a hole in the safety net rather than a defect in what ships — but it is the second
+thing the follow-up slice should fix, and it costs one test. Relatedly, all four committed fixtures
+regenerate byte-identically from the skills' own recipes, which makes them change detection rather
+than validation; `marker-field-v2.json` is the exception and the model to copy, because a live run
+validates it through an independent path.
+
+**On the skills.** The standing finding is that an invented transcript is a defect, so all three were
+re-executed: about twenty documented commands, compared byte for byte, including two fixture recipes
+that reproduced the committed files exactly. Every transcript is real. One prose sentence is not —
+`pp-sim-harness/SKILL.md:150` says reaching `waterLineRow` 8 takes 4206 idle ticks when it takes
+1193, a figure that looks stale from an earlier tuning and that the balance arithmetic contradicts.
+
+**Robustness seams, none reachable from a committed file.** The board dimensions are the only balance
+values with no upper clamp, and they size an allocation, so the dangerous regime is a middling value
+that OOM-kills the harness rather than a huge one that throws catchably. `deserialise` casts with no
+structural check, which matters because decision 41 leans on the hash as an integrity signal and a
+truncated save currently produces a plausible one. `puzzle.start` can half-apply, since the RNG
+cursor registers before the board can throw. And a replay recorded before this slice reports
+`divergedAtTick: 0` — inherent to the schema bump, but indistinguishable from a real determinism bug,
+because `Replay` carries no schema version although `session.new` already returns one.
+
+**What the test stage should probe first:** the 99993-100000 tick window on a bilge session, to
+confirm the non-atomic step is the only place a mutation escapes behind an error, and a real
+end-to-end bilging session driven far enough to exercise the pump-wins half of the flood model, which
+no test currently reaches.
