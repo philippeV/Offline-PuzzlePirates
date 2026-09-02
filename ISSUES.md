@@ -4,6 +4,113 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — independent review of slice 2c (OPP-14), PR 6
+
+The 4-lens review of PR 6. **One finding blocks and is not here** — the v3 to v4 migration never
+adds `bilging.tokenSpawnPerMille` to the persisted balance, so the spawn gate compares against
+`undefined` and every refilled colour cell takes a shape. It went back to analysis. Everything below
+is non-blocking. The slice is otherwise strong: the new tests are real behaviour tests rather than
+blessed snapshots, the committed v3 save is a genuine base-code artifact, and both verification
+claims in the development entry reproduce exactly.
+
+### The mutation suite found seven survivors, and the three most interesting are the slice's own new rules
+39 semantic mutants were run against a clean export of the branch; 32 were caught. The survivors, in
+descending order of how much they change the game:
+
+- **The adjacency rule accepts diagonals with the suite green.** Adding a diagonal partner check to
+  `partnerOf` (`tokens.ts:63-73`) passes 149/149 while moving the pair yield up 29 per cent over
+  5 seeds x 300 clearing swaps. Decision 67 says *orthogonally* adjacent; `tokens.test.ts:111-125`
+  tests wrong-symbol and wrong-half but never wrong-geometry. One test placing two halves diagonally
+  and asserting no pair closes it.
+- **Pairing before spawning survives** (`resolve.ts:72-73`), and costs 27 per cent of the yield: a
+  pair spawned in a settle would wait for the next move. Decision 67's "resolved once per settle" is
+  a real ordering constraint that nothing pins.
+- **The published gold cap of 6 is asserted nowhere.** `MANEUVER_BAR_GOLD` 6 to 7 survives, because
+  `tokens.test.ts:180,188` uses the constant on both sides of the assertion. Decisions 69 and 70
+  deliberately keep 6 out of `balance.json` as a published value, so the golden's balance pin does
+  not cover it either. A literal `assert.equal(MANEUVER_BAR_GOLD, 6)` restores the pin.
+- The row-wrap guard on horizontal pairing (`tokens.ts:68`) can be deleted and the last column
+  starts pairing with the next row's first, suite green.
+- The spawn comparison `>=` to `>` survives, spawning at 121 per mille instead of 120.
+- The ascending sort in `clearShapePairs` (`tokens.ts:51`) can be dropped, suite green, though the
+  sort is live rather than dead.
+- The migrated shape array's length can be hardcoded to 144, because the only v3 fixture is 12x12.
+
+### Three decisions are pinned only by a fixture this slice re-blessed
+`SYMBOL_COUNT` 4 to 5 (decision 62's eight-shape alphabet), the draw-to-shape mapping
+(`shapeDrawnFrom`, which `tokens.test.ts:147` cannot catch because it draws 0, where both mappings
+agree), and spawning on every colour cell rather than only refilled ones (decision 65) are each
+caught by `tests/harness/replay.test.ts:136` and by nothing else. Change-detection fixtures are
+legitimate, but a future re-bless erases all three defences silently.
+
+### The `_sources` yield for `tokenSpawnPerMille` does not reproduce, and errs generous
+`balance.json` states about 72 tokens and 2.9 completed pairs per 100 clearing swaps, filling a
+sloop's 3-pair bar in about 100 swaps. Two independent re-measurements at HEAD disagree: 4.5 pairs
+per 100 over the development entry's own trajectory, and 5.3 per 100 on a different set of seeds,
+with the 3-pair bar filling at a mean of 57 to 71 swaps rather than 100. The recorded figure is also
+inconsistent with this slice's own other measurement — gold at 66 to 166 swaps implies far more than
+2.9 pairs per 100, and both re-measurements land where the gold figure predicts. **The constant is
+honest**: the spawn itself measures 122 per mille against a stated 120, so this is not a repeat of
+`crabSpawnPerMille`. Only the prose describing the yield is wrong. It matters because that number is
+the argument for choosing 120 over 60 or 180.
+
+### The performance gate is open on at least 91 per cent of moves under every play style, not just good play
+The development entry records 1991 of 2000 and attributes the nine closures to the opening swaps of
+a session, which reads as though optimal play is the reason. Re-measured under degraded play, 5
+seeds x 400 moves: taking a clearing swap every third move leaves it open on 1910 of 2000, every
+tenth move 1891, and purely random legal swaps 1821 — random flailing still reaches `incredible` on
+710 of 2000 moves. The cause is not in the token layer: `frame.ts:53` measures efficiency against
+`POINTS_PER_MOVE_AT_FULL_EFFICIENCY` of 3, one bare 3-run per move, while real 7-star play with
+cascades sits at 2148 to 2428 per mille and the `good` band starts at 1100. The gate asks for 110
+per cent efficiency on a scale where random play scores 130 to 160 per cent. This sharpens the entry
+already here rather than replacing it; the follow-up should implement the wiki's second clause — a
+rate graded by rating — rather than raise the threshold, since re-anchoring the slice-2 constant has
+consumers far beyond this layer.
+
+### A deliberately completed pair is not collected on the move that completes it
+`clearShapePairs` runs only inside `settleStep` (`resolve.ts:73`), and `resolveBoard` returns early
+when nothing cleared, so a swap that forms a pair without clearing a run resolves nothing. The pair
+is not lost — the next settle anywhere on the board scans every cell and takes it — but the feedback
+is deferred and invisible, and pairs are in practice incidental rather than played for. This matches
+decision 67 as worded, which is why it does not block; what no decision records is that the wiki's
+"when the halves are adjacent, both shapes are removed" describes a board state, not the aftermath
+of an unrelated clear.
+
+### Two rules invented in code rather than recorded
+The choice among the eight halves is uniform (`tokens.ts:59-61`), which the wiki does not publish
+and no decision or `_sources` entry states; and when a half has both a rightward and a downward
+partner, rightward silently wins (`tokens.ts:63-72`) — decision 67 fixes the scan order but not the
+tiebreak, and the two choices produce different boards.
+
+### Smaller things
+- `shapedPuzzleOf` (`save.ts:42-50`) casts `puzzle.board` and `board.cells` without guarding, so a
+  malformed v3 save throws a raw `TypeError` rather than the controlled `Error` the neighbouring
+  `schemaVersionOf` throws. Its name also understates it — it injects `maneuverBar` too.
+- `spawnTokens` and `spawnCritters` are the same traversal written twice — identical signature,
+  identical `for (const index of refilled)` loop, differing only in the guard and the destination
+  array. The recurring duplication pattern earlier reviews flagged, with a fresh instance.
+- `draw` names two different things three lines apart in `spawnTokens`, and is called twice in one
+  loop body with unrelated meanings, the second call conditional — which is exactly why stream
+  consumption is outcome-dependent. Naming the samples fixes it without a comment.
+- `pairsOf` (`move.ts:52`) recovers a pair count by dividing a cell count; `clearShapePairs` already
+  knows the number. `pairedCells` is only ever consumed as a length.
+- `tests/sim/migration.test.ts:120-128` re-introduces `SCHEMA_VERSION - 1` inside a test named "a
+  schema version three save", in the same commit that moved the v2 test off that idiom to a literal
+  for exactly this reason; at the next bump it silently becomes a v4 test under a v3 name.
+- `board.test.ts:31` adds a `bareBoard` helper and the five new shape tests hand-write board literals
+  instead of using it; `tokens.test.ts:115-118` uses `?? 0` index fallbacks that would silently write
+  to cell 0 if the arithmetic were wrong.
+- The golden re-bless is classified by count ("4 ops on the golden") where the `pp-golden-state`
+  skill asks for a cause per path. The four ops are individually obvious and rule 3 is satisfied by
+  the committed v3 save, but the `/balance` op is precisely the one the golden exists to make loud.
+
+### Decision numbers now collide across concurrent slices
+Slice 3 recorded decisions 60 to 69 on `agent/develop` while slice 2c independently recorded 61 to
+70 on this branch, and the slice 2b test entry added its own 61 and 62. The numbering is per-branch
+in a repo where branches run concurrently, so the merged document will carry three different
+decision 61s. Nothing is wrong inside any single entry; the human should decide whether numbers are
+renumbered on merge or scoped per slice.
+
 ## 2026-09-02 — development of slice 2c (OPP-14), the token layer
 
 What the three units of slice 2c left behind. None of it stops the slice: `npm run check` is green

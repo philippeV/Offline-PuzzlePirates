@@ -1391,3 +1391,91 @@ boundary is unmoved at 99987 accepted / 99988 refused, re-measured rather than a
 still opens no puzzle stream, `bilge.tokens` included. Token draws do not shift the pinned
 `bilge.refill` order, asserted now by a test that runs the same seed and swap with the gate shut and
 open and compares the refill cursors.
+
+### 2026-09-02 — independent review of slice 2c (OPP-14), PR 6
+
+Four lenses over `af6d428..a97600f`, each an independent agent: correctness and regression, security
+and data safety, spec and architecture conformance, and maintainability and test coverage. The suite
+is green at 149 from cold in the main checkout, and the branch's true diff against `agent/develop` is
+these four commits only, because PR 4 merged with a merge commit rather than a squash and
+`agent/develop` therefore already contains `af6d428`.
+
+**One finding blocks.** The v3 to v4 migration adds `board.shapes` and `maneuverBar` to the puzzle
+and stops there, but this slice also added a field to the **persisted balance** —
+`bilging.tokenSpawnPerMille` — and `Sim.load` takes the save's own balance as authoritative. After
+migrating the branch's own committed `bilge-session-v3.json`, `balance.bilging.tokenSpawnPerMille`
+is `undefined`, and the gate at `tokens.ts:37` reads
+`if (draw() >= rules.balance.tokenSpawnPerMille) continue`. Because `n >= undefined` is `false` the
+`continue` is dead, and the density throttle inverts from 120 per mille of refilled colour cells to
+all of them: a migrated save reaches gold in about 15 moves against the entry's measured 66 to 166,
+carrying 25 to 28 simultaneous shapes on a 144-cell board. Re-saving then launders the defect
+forward — the file is stamped schema 4 with the field still missing. Two lenses found it
+independently and the test stage's own re-run reproduced it; the answer already exists three lines
+above in the same file, where migration 2 rewrites `balance` to `null` and fails closed at
+`puzzle.start` with `balance-missing`, and slice 3 answered the identical situation the same way on
+`agent/develop`. It is routed back to analysis rather than fixed here.
+
+Its reachability is worth stating honestly, because it decides nothing but explains why the suite is
+green: `deserialise` and `Sim.load` are exported from `@opp/sim` but reached from no RPC method and
+no CLI, so only the tests call them, and no test plays a migrated save. It is judged blocking anyway
+— it is silent world corruption produced by the exact commit whose purpose is the migration, and the
+committed v3 fixture exists precisely so that saves get loaded.
+
+**What the review could not break, which is the more useful half.** The lockstep between `cells` and
+`shapes` — named in the task as the whole risk of the design — holds. Every write to either array
+across `packages/sim` was enumerated: construction, swap, clear, refill, critter spawn, crab climb,
+gravity's `compactSegment`, and the two token passes. The one unpaired write to `cells` is
+`spawnCritters`, and it is provably safe because it only ever writes over indices in `refilled`,
+which both `refillBoard` calls have already set to `NO_SHAPE`. Three independent empirical sweeps
+agree: 400 randomised boards with every colour piece carrying a unique opaque tag through the full
+settle pipeline, 300 randomised `resolveBoard` runs at star 7, and 2100 full-sim moves including 221
+pokes, 82 jelly swaps and 150 planted crabs — no shape ever rode a non-colour cell, none was
+duplicated or stranded, and no adjacent opposed pair was ever left standing after a settle. The
+`climbCrabs` fix is real rather than claimed: reconstructing the pre-fix body strands a shape on the
+crab's old square. There is no sixth path.
+
+Both verification claims in the development entry reproduce, and one is stronger than stated. The
+opening board's `cells` are byte-identical to `af6d428` — checked by running the base engine
+extracted with `git archive` side by side on five seeds, not by comparing fixtures — and
+`bilge.refill` ends at exactly `{hi 1590756343, lo 3448896022, draws 12}` on both engines, with
+`bilge.fill` and `bilge.critters` also identical, and with agreement on every cell, event and score
+over 3 seeds by 400 scripted swaps. The committed v3 save is genuinely a pre-slice artifact: loaded
+and re-saved by the **base** code it round-trips byte-identically. Nothing hostile survived the data
+lens either — no prototype pollution through `__proto__` or `constructor` at any nesting, no path for
+`NaN` or `Infinity` into the hash, `shapes.length === cells.length` and `maneuverBar` in 0 to 6 across
+18000 fuzzed commands, and not one of 12929 rejections moved the state hash.
+
+**Two things the review measured differently from the development entry**, both recorded in
+`ISSUES.md` rather than treated as defects. The `_sources` yield for `tokenSpawnPerMille` does not
+reproduce: 4.5 and 5.3 completed pairs per 100 clearing swaps on two independent measurements
+against a stated 2.9, with the 3-pair bar filling in 57 to 71 swaps rather than about 100. The
+recorded figure is also internally inconsistent with this slice's own gold measurement of 66 to 166
+swaps, which implies the higher rate; the re-measurements land where the gold figure predicts. The
+constant itself is honest at 122 per mille measured against 120 stated, so this is a wrong number in
+a provenance note and not a second `crabSpawnPerMille`. And the performance gate is looser than
+recorded: under degraded play it is open on 1910, 1891 and 1821 of 2000 moves for one-clearing-swap-
+in-three, one-in-ten and purely random play, so the 1991 of 2000 in the entry is not a consequence of
+good play but of a scale where `POINTS_PER_MOVE_AT_FULL_EFFICIENCY` is 3 while real 7-star play sits
+at 2148 to 2428 per mille against a `good` band starting at 1100. The recommendation is to implement
+the wiki's second clause with a rate graded by rating rather than to raise the threshold, because
+re-anchoring that slice-2 constant reaches far beyond this layer.
+
+**Coverage.** 39 semantic mutants against a clean export: 32 caught, 7 survived, and 3 more caught
+only by the replay fixture this slice re-blessed. The survivors that matter are the slice's own new
+rules — the adjacency rule accepts diagonals with the suite green and 29 per cent more pairs, pairing
+before spawning survives at 27 per cent fewer pairs, and the published gold cap of 6 is asserted
+nowhere because the one test that looks like it does uses the constant on both sides. The new tests
+are otherwise real behaviour tests derived from the decisions rather than blessed snapshots, which is
+the distinction earlier reviews in this document drew.
+
+**One thing the next stage must not discover the hard way.** Slice 2c and slice 3 both define
+`SCHEMA_VERSION = 4` with different `3` to `4` migrations — this slice's adds the shape layer,
+slice 3's adds `ships`, `battle` and a null balance — and both commit a `bilge-session-v3.json`, so
+git reports an add/add conflict on the fixture and a content conflict on `save.ts` and
+`tests/sim/migration.test.ts`. That is a real collision of meaning, not a textual one: whoever
+integrates has to decide which slice keeps 4, sequence the two migrations, and re-bless. It is
+recorded here so the decision is made deliberately rather than inside a conflict resolution.
+
+**Environment.** A worktree abandoned by a dead session held this branch in a conflicted mid-merge
+state and had to be removed before the branch could be checked out. It carried no commit that was
+not already on origin, so nothing was lost.
