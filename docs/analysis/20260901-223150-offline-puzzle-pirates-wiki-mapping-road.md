@@ -1914,3 +1914,90 @@ blob is LF at 1561 and `git status` stays clean. Do not read this as a clobbered
 worktree recipe that works is to copy the main checkout's `node_modules` **including `.bin`** —
 omitting it costs a run on `tsc is not recognized` — then replace `node_modules/@opp` with three
 junctions pointing at that worktree's own `packages/`.
+
+
+### 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
+
+The test stage drove the real `pp-harness.ts` over stdio from the main checkout on the feature
+branch, never a worktree, so the `node_modules/@opp/*` trap the task warned about could not fire.
+The cold baseline reproduced: `npm run check` green at **130 tests** before the integration merge
+below, **286** after it.
+
+**Every behaviour the slice claims was reproduced through the protocol.**
+
+The star ramp is exact. A `bilge-session` sits at star 0 and steps one level per 3600 ticks to a
+hard cap: star 3 arrives at tick 10800 and not at 10799, star 7 at 25200, and tick 28800 is still
+star 7. The colour count follows it — 200 swaps at each of stars 0, 2, 4, 6 and 7 left a board whose
+highest colour index was 3, 4, 5, 6 and 6 against a `colourCountByStarLevel` of 4, 5, 6, 7 and 7.
+An idle board floods to `waterLineRow` 3 and `bilgePerMille` 1000 by tick 7200 and stays there.
+
+`bilge.poke` behaves as decisions 49 and 60 describe. A puffer at (10,1) cleared exactly
+`[9,10,11,21,22,23,33,34,35]` — the clipped 3x3 — for **0 points**, took the move counter from 20 to
+21, advanced no tick, and the chain it opened scored normally at 3 cells for 3 points, carrying
+`totalScore` from 34 to 37. Poking a colour gives `not-a-puffer`; poking (12,0), (0,12) and (-1,0)
+gives `poke-outside-board`; all four leave the state hash untouched.
+
+The jelly does both published things. Swapped onto colour 0 with 32 of that colour on the board, the
+opening step cleared **33** cells — the colour plus the jelly itself, decision 50 — for 33 points at
+one per cell, and left no jelly. Swapped onto a puffer it detonates the puffer **first**: the
+opening clear is the 3x3 centred on the puffer's own square, which contains the jelly, for 0 points,
+and both critters are gone.
+
+Star level scales scoring and never penalises it. Restoring one snapshot per swap, every scoring
+swap on 15 boards was played once at star 0 and once at star 7 with the board byte-identical:
+**527 clears of identical geometry, 69 scored strictly higher at star 7, 458 scored the same, and
+none scored lower.** The equal ones are single lines, whose multiplier is floored at 1 — decision
+56 holding exactly. A three-line clear went 9 to 27, a 3-and-4 line clear 8 to 16.
+
+`settleTicks` is reported and inert. It was present on all 112 `bilge.cleared` events measured,
+every value a multiple of 3, and the flooded board's histogram sits where the water rate puts it
+(18 dominant, three cells at 6 ticks) against the dry board's (9 dominant, three cells at 3).
+`totalScore` equalled the sum of step points exactly on both. The string `settleTicks` does not
+occur anywhere in the canonical state, and two identical runs at star 3 end on the same hash.
+
+Save, load and replay round-trip with critters on the board. A `snapshot.restore` on a session
+carrying a jelly returned the same hash and a byte-identical board after 25 divergent moves; the
+only difference on read-back is key **order**, which `state.get` reports as stored and the canonical
+hash does not see. A 120-command log replayed through `replay.verify` under its own scenario to
+`ok: true` at the recorded hash, and to `ok: false` without the scenario, as the skill warns. At the
+sim level — there is no save/load RPC — a session saved at star 6 with two puffers on the board
+reloaded to the same hash and stayed identical through 40 further moves and 120 ticks.
+
+**The two review findings, observed as gameplay.**
+
+*Crabs are reachable, but at about a fourteenth of their stated rate.* The review measured 0 crabs
+in 5 seeds x 400 swaps and asked whether they are unreachable at all. They are not: across
+**8 seeds x 400 moves at star 7 on a fully flooded board, 5 crabs spawned, climbed and cleared**,
+one paying a 13-point step. The mechanism is now measured rather than inferred. `waterRowsOf` keeps
+three dry rows at every flood level, so `waterLineRow` bottoms out at **3**, and `applyGravity`
+stacks a step's vacancies at the top of the column; a refill can therefore only land at or below the
+water line when a single column loses **4 or more** cells in one settle step. Over 838 settle steps
+that happened often enough to put **229 of 4828 critter draws — 4.74 per cent** below the water
+line. At `crabSpawnPerMille` 15 that predicts 3.4 crabs; 5 were seen. The effective crab rate in
+play is therefore about **1 per mille of refills against a stated 15**, and the nominal expectation
+over the same draws would have been 72. This is a tuning-and-mechanism question, not a broken
+feature: every crab that did spawn behaved exactly as decision 47 and the wiki describe.
+
+*A player almost never sees a crab between moves.* Because eligible vacancies sit at row 3 and
+`climbCrabs` runs before `crabsAboveWaterLine` inside the same settle step, a crab spawned at the
+water line is cleared on the next step of the **same** resolve. Across 2000 moves the board carried
+a crab between moves **zero** times. The wiki's "denies its square until it climbs out" is not
+observable at the current tuning.
+
+*The stale-`refilled` overwrite was not observed.* No crab vanished mid-water without a `crabs`
+entry and without paying. With only 5 crabs in the sample this excludes nothing — the code path at
+`resolve.ts:61-67` is unchanged and the finding stands as reviewed.
+
+**Nothing blocking was found, so PR 4 was merged. Two decisions were taken to get there.**
+
+61. *The integration merge is the test stage's to make.* PR 4 was `CONFLICTING` because slice 3
+    landed on `agent/develop` after this branch left it. `agent/develop` was merged into the branch
+    at `e40293d`; the resolutions are in that commit message. One of them matters beyond the merge:
+    git auto-merged `sim.ts` cleanly to slice 3's explicit command routing, which **silently dropped
+    `bilge.poke`**, because slice 2b had reached `applyPuzzleCommand` through a fallthrough. A clean
+    auto-merge was wrong, the typecheck caught it, and `bilge.poke` is routed explicitly now. Every
+    probe above was re-run on the merged tree and reproduced byte for byte apart from the state hash.
+62. *PR 4 is merged with a merge commit, not a squash.* This repeats the deviation recorded for
+    PR 3 and for the same reason: squashing detaches the history that slices 4 and 5 are branched
+    from and mints exactly the conflict resolved here. It remains raised for the human in
+    `ISSUES.md` rather than settled quietly.

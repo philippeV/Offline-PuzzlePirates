@@ -4,6 +4,51 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
+
+The test stage drove the real harness over stdio and reproduced every behaviour the slice claims;
+nothing blocked. Two entries below refine findings the review had already logged, with numbers that
+only a played session could produce, and one records a merge the stage had to make.
+
+### Crabs are reachable, but at about a fourteenth of `crabSpawnPerMille`
+The review measured 0 crabs in 5 seeds x 400 swaps and left open whether they are reachable at all.
+They are. Across 8 seeds x 400 moves at star 7 on a fully flooded board, **5 crabs spawned, climbed
+and cleared**, one paying a 13-point step, and every one behaved as decision 47 describes. The gap
+is now measured rather than inferred: `waterRowsOf` keeps three dry rows at any flood level, so
+`waterLineRow` bottoms out at 3, and `applyGravity` stacks a step's vacancies at the top of the
+column, so a refill lands at or below the water line only when one column loses 4 or more cells in a
+single settle step. Over 838 settle steps that put **229 of 4828 critter draws — 4.74 per cent —**
+below the water line, predicting 3.4 crabs against the 5 seen. The effective rate is about **1 per
+mille of refills against a stated 15**, where the nominal expectation over those draws was 72. It
+does not block: the crab works, it is merely far rarer than its constant says. It starts to matter
+when the crab bonus is meant to be a scoring lever a player can plan around, and the fix is a
+product choice between raising `crabSpawnPerMille`, letting a dry crab-band draw fall through to
+another critter, and spawning crabs by a rule other than the refill vacancy.
+
+### A crab is never visible between moves at the current tuning
+Because eligible vacancies sit on row 3 and `climbCrabs` runs before `crabsAboveWaterLine` inside
+the same settle step, a crab spawned at the water line is cleared on the next step of the same
+resolve. Across 2000 played moves the board carried a crab between moves **zero** times. The wiki's
+"immovable, denies its square until it climbs out" is therefore not observable today. Non-blocking
+for the same reason as the entry above, and the same decision fixes both.
+
+### The stale-`refilled` overwrite was not reproduced in play
+No crab vanished mid-water without a `crabs` entry and without paying a bonus. With 5 crabs in the
+whole sample this excludes nothing; `resolve.ts:61-67` is unchanged and the review's finding stands.
+
+### PR 4 was merged with a merge commit, not a squash — again
+Squashing PR 3 was already declined for this reason, and this is the recurrence it predicted: PR 4
+arrived `CONFLICTING` because slice 3's squash-minted SHAs left this branch's base behind, and
+slices 4 and 5 are branched from the same chain. The queue-test skill says `--squash`; this stage
+merged instead. **This is a pipeline policy the human owns**, and it is the second slice to deviate.
+
+### A clean auto-merge silently dropped `bilge.poke`
+Merging `agent/develop` in, git resolved `sim.ts` without conflict onto slice 3's explicit command
+routing, which lists `puzzle.start` and `bilge.swap` — slice 2b had reached `applyPuzzleCommand`
+through a fallthrough, so `bilge.poke` fell into `applyBattleCommand`. The typecheck caught it and
+`e40293d` routes it explicitly. Recorded because the class of bug is invisible to a conflict count:
+the merge reported eleven conflicts and this was in none of them.
+
 ## 2026-09-02 — independent review of slice 2b (OPP-13), PR 4
 
 The 4-lens review of PR 4. Nothing here blocked the slice: `npm run check` is green at 130 tests, the
