@@ -9,6 +9,7 @@ import { freeHoldOf } from '../../packages/sim/src/battle/booty.ts';
 import { cargoLotsMassKgOf } from '../../packages/sim/src/world/cargo.ts';
 import { divideBooty } from '../../packages/sim/src/world/division.ts';
 import { applyWorldCommand } from '../../packages/sim/src/world/dispatch.ts';
+import { createMarkets } from '../../packages/sim/src/world/market.ts';
 import type { PirateState } from '../../packages/sim/src/world/state.ts';
 
 const SEED = 20260902;
@@ -20,7 +21,7 @@ function chestedShipOf(): [WorldState, ShipState, PirateState] {
   state.ships.push(ship);
   const pirate: PirateState = { poe: 0, atIslandId: 'alkaid' };
   state.pirate = pirate;
-  state.markets = [];
+  state.markets = createMarkets(BALANCE.market);
   return [state, ship, pirate];
 }
 
@@ -82,6 +83,7 @@ test('plunder cannot be sold before it is divided, because it is not in the hold
   });
 
   assert.equal(refused.status, 'rejected');
+  assert.equal(refused.status === 'rejected' ? refused.reason : '', 'insufficient-cargo');
 });
 
 test('a chest holding only goods still divides, and only a wholly empty chest is refused', () => {
