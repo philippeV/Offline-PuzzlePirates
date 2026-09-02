@@ -67,6 +67,101 @@ intercepted on the doorstep of the island you were sailing to. Nothing in the wi
 ship is at sea until it ports, and porting is a command — and excluding it would need a special case
 for the final leg. Recorded because it looks like an off-by-one until you know it is deliberate.
 
+## 2026-09-02 — physical test of the slice 3 repair (PR 3, cycle 1)
+
+The test stage drove a live harness in an isolated worktree across four parallel threads: the
+ship-class guard, the v3 migration, full sea battles, and determinism. Nothing in the three repairs
+blocked. The one thing that did block — an unmergeable PR — was resolved in the stage and is the
+first entry below, because its cause is a pipeline policy rather than a defect in this slice.
+
+### Squash-merging a slice detaches its history and breaks every slice branched from it
+
+This is the finding with the longest reach, and it needs a human decision.
+
+PR 2 was squash-merged into `agent/develop` as `eca8058`. Slice 3 branched from slice 2's feature
+branch and carries its original commits through the merge at `5575426`. Because the squash minted new
+SHAs, git saw slice 2's entire change set arriving independently on both sides and reported PR 3 as
+`CONFLICTING` across twenty-one files, six of them in `packages/sim/src`. None of it was real:
+`agent/develop`'s tree is identical to slice 2's feature tip, and resolving every conflict in favour
+of the feature branch reproduces `6d491e9`'s tree byte for byte.
+
+The queue-test skill instructs `gh pr merge --squash`. Following it here would have detached slice 3's
+history the same way, and **slices 4 and 5 are branched from slice 3** — they would inherit a strictly
+larger version of this conflict. Slice 2b, branched from slice 2, will hit it independently. This
+stage therefore merged PR 3 with a merge commit instead, which costs nothing and stops the
+recurrence, and is recorded in the analysis document as a deliberate deviation.
+
+What needs deciding: whether the queue-test skill should stop saying `--squash`. Changing a skill is
+the human's call, not an agent's, so it is raised here rather than edited. It starts to matter the
+moment the next slice reaches this stage, which is now.
+
+### The sim-side ship-class guard is unreachable over the protocol
+
+The repair added two guards. `parseShipClass` in `packages/harness/src/commands.ts` throws first, so
+every poisoned commission arriving over JSON-RPC comes back as `-32602` / `invalid-params` and the
+sim-side guard at `packages/sim/src/battle/dispatch.ts:23` never returns its
+`{"status":"rejected","reason":"unknown-ship"}`. This confirms from the outside what the review
+established by reverting edits in isolation: the two guards pin each other's disjunction, not either
+half. It is defence in depth on purpose and the `RangeError` throws still cover the `deserialise` and
+`Sim.restore` doors, so nothing is wrong — but no test distinguishes the halves, and a tidying pass
+would meet no resistance.
+
+### The eight prototype member names are twelve
+
+Every record of this repair — the analysis, the review, the task files — says "the eight
+`Object.prototype` member names". `Object.getOwnPropertyNames(Object.prototype)` returns twelve on
+node 24.18.0; the four missed are `__defineGetter__`, `__defineSetter__`, `__lookupGetter__` and
+`__lookupSetter__`. The guard refuses all twelve, so the code is fine and only the description was
+narrow. It matters if anyone ever writes a test from the prose rather than from the prototype.
+
+### `bilge.swap` on a migrated save hides two other rejection reasons
+
+`swapBilge` in `packages/sim/src/puzzle/dispatch.ts` folds two conditions into one reason:
+`puzzle === null || state.balance === null` both return `no-puzzle-running`. On a migrated v3 save the
+puzzle *is* present and the balance is not, so the message is misleading — the review already noted
+that. Driving it found the larger half: because that check runs first, `swap-outside-board` and
+`non-integer-coordinate` become **unreachable** on such a save. `{"x":99,"y":99}` and `{"x":11,"y":0}`
+both report `no-puzzle-running`. Diagnostic quality only; no state is at risk. It starts to matter
+when a client uses the reason to decide whether the input or the session was wrong.
+
+### `MAXIMUM_TURNS = 120` is confirmed unsafe, at one seed in six hundred
+
+Re-measured independently with the cap lifted to 400. The committed 24 seeds all resolve, longest 51
+turns on seed 21 — 69 turns of headroom. Over seeds 1 to 600 exactly one battle exceeds the cap:
+**168 turns at seed 466, root seed 3690254**, next longest 96. So the "168 turns" figure in the record
+is verbatim correct and the committed window dodges it comfortably. Nothing was re-seeded and the cap
+was not touched, per the guardrail. It starts to matter the first time anyone widens the seed set.
+
+### `/battle` is not cleared when a battle ends
+
+After `battle.ended`, `battle.plan` and `battle.disengage` report `no-battle-running` while
+`battle.start` reports `battle-already-running` — the two cannot both be true of the same state. The
+outcome is readable at `/battle/outcome`, which is what a caller should use, so nothing is broken. It
+starts to matter when a session is meant to fight a second battle.
+
+### `meleeDamageSmallMicro` is part of `stateHash`
+
+The melee handicap lives in `WorldState` and therefore in the hash. No committed fixture moved,
+because `packages/fixtures/replays/` holds only `marker-drift*` and `bilge-session` and nothing there
+takes obstacle damage. The first sea-battle replay or golden that anyone records will encode the
+post-change value, and re-deriving it later will require this entry to explain why.
+
+### `pp-sim-harness/SKILL.md` transcripts are stale
+
+The skill still shows `schemaVersion` 3 and gives `marker-drift.json` a tick-0 hash of
+`5a24289acd81a333` ending at `c05ce3b72f5e5b9f`. The live harness reports `schemaVersion` 4 and that
+replay's real trail runs `165150e7121323fa` to `0df21f56de40342e`. The committed fixture and the
+running sim agree with each other; only the copied transcript is out of date. It costs an agent a
+false lead the first time it asserts on a documented hash.
+
+### A fresh worktree checks the v3 fixture out at 1562 bytes, not 1561
+
+`core.autocrlf` is `true` globally, so the single trailing newline is stored as `\n` and checked out
+as `\r\n`. The blob is `e923b3c37240e04b157bd81295f37ef252e4f4d0` at 1561 bytes and `git status`
+stays clean. Two separate task files now instruct the next run to verify "1561 bytes", which on a
+fresh worktree will look like a clobbered fixture and is not. Verify from the blob, not the working
+file.
+
 ## 2026-09-02 — independent review of the slice 3 repair (PR 3, cycle 1)
 
 Four lenses over `d5d5c5e..3943f47`. **No blocking findings** — all three repairs do what decisions
@@ -529,6 +624,21 @@ The slice 2 review named two follow-ups: the non-atomic `sim.step` that commits 
 geometry to the score table. Both belong to the queued slice 2b task and neither was touched here.
 Nothing in this slice makes either worse — the battle's own events are bounded at a handful per
 phase.
+## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2, re-verified
+
+The run that wrote the entry below died before merging and was reaped; the re-run reproduced every
+measurement in it and found nothing new that blocks. Two additions only.
+
+- **`limit-exceeded` is missing from the harness error table.** `pp-sim-harness/SKILL.md` documents
+  -32700 through -32004 and stops, so the one code a driver is most likely to hit while stepping —
+  `-32005` / `limit-exceeded`, the non-atomic one — is the code the skill never names. It matters the
+  first time an agent writes a retry against that table.
+- **`marker-field` survives a 100000-tick step by coincidence.** It emits exactly one event per tick,
+  so it lands on the budget rather than over it. Any second event-emitting system in that scenario,
+  or a startup event, tips it into the same silent commit-then-fail. Also, every request above the
+  boundary commits exactly 99993 ticks, not the number asked for — the loop aborts the moment the
+  budget breaks — so the damage is constant rather than proportional.
+
 ## 2026-09-02 — physical test of slice 2 (OPP-9), PR 2
 
 The test stage stood the branch up in its own worktree and drove the harness over the real protocol.
