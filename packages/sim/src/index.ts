@@ -64,6 +64,7 @@ export type {
   WorldBalance,
 } from './balance.ts';
 export { BOOTY_OVERFLOW_POLICIES } from './balance.ts';
+export { balanceOf } from './balanceParse.ts';
 export {
   BATTLE_BOARD_HEIGHT,
   BATTLE_BOARD_WIDTH,
