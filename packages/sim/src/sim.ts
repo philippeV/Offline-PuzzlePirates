@@ -9,6 +9,8 @@ import { applyMarkerCommand, driftMarkers, spawnMarker } from './marker.ts';
 import { applyPuzzleCommand } from './puzzle/dispatch.ts';
 import { stepPuzzle } from './puzzle/session.ts';
 import { stepShips } from './ship/session.ts';
+import { applyWorldCommand } from './world/dispatch.ts';
+import { stepWorld } from './world/session.ts';
 import { deserialise, serialise } from './save.ts';
 import { cloneWorldState, createWorldState, type WorldState } from './state.ts';
 
@@ -50,7 +52,14 @@ export class Sim {
     if (command.op === 'ship.commission') {
       return applyCommissionCommand(this.#state, command);
     }
-    return applyBattleCommand(this.#state, command);
+    if (
+      command.op === 'battle.start' ||
+      command.op === 'battle.plan' ||
+      command.op === 'battle.disengage'
+    ) {
+      return applyBattleCommand(this.#state, command);
+    }
+    return applyWorldCommand(this.#state, command);
   }
 
   step(ticks: number): SimEvent[] {
@@ -61,6 +70,7 @@ export class Sim {
       events.push(...stepPuzzle(this.#state));
       events.push(...stepShips(this.#state));
       events.push(...stepBattle(this.#state));
+      events.push(...stepWorld(this.#state));
     }
     return events;
   }

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { BALANCE, loadBalance } from '../../packages/harness/src/index.ts';
 import { canonicalJson } from '../../packages/sim/src/index.ts';
@@ -65,7 +65,29 @@ const BLOCK_KEYS: Record<string, string[]> = {
     'chartDropChancePerMille',
     'overflowPolicy',
   ],
+  world: [
+    'startingPoe',
+    'encounterChancePerMille',
+    'encounterDifficultyWeightPerMille',
+    'pillageSpawnBonusPerMille',
+    'tradeSpawnPenaltyPerMille',
+    'brigandCrewCount',
+  ],
+  market: [
+    'rawBasePricePoe',
+    'refinedBasePricePoe',
+    'spawnDiscountPerMille',
+    'scarcityPremiumPerMille',
+    'spreadPerMille',
+    'startingStockUnits',
+    'maxStockUnits',
+  ],
+  division: ['crewCutPerMille', 'playerSharePerMille'],
 };
+
+const FILE = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../balance.json', import.meta.url)), 'utf8'),
+) as Record<string, Record<string, unknown>>;
 
 const BLOCKS = JSON.parse(canonicalJson(BALANCE)) as Record<string, Record<string, unknown>>;
 
@@ -115,6 +137,24 @@ test('every tuning value outside the declared text keys is a safe integer', () =
       }
     }
   }
+});
+
+test('every tuning constant has a provenance entry and every entry names a constant', () => {
+  const sources = Object.keys(FILE['_sources'] ?? {});
+  const constants = Object.entries(FILE)
+    .filter(([name]) => !name.startsWith('_'))
+    .flatMap(([name, block]) => Object.keys(block).map((key) => `${name}.${key}`));
+
+  assert.deepEqual(
+    constants.filter((key) => !sources.includes(key)),
+    [],
+    'constants with no _sources entry',
+  );
+  assert.deepEqual(
+    sources.filter((key) => !constants.includes(key)),
+    [],
+    '_sources entries naming no constant',
+  );
 });
 
 test('a balance file missing a required field is refused by the name of that field', () => {

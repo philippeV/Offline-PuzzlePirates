@@ -13,10 +13,17 @@ export type {
   PuzzleCommand,
   RejectedCommand,
   RejectionReason,
+  BuyCommodityCommand,
+  CharterVoyageCommand,
+  DivideBootyCommand,
+  PortVoyageCommand,
+  SellCommodityCommand,
   ShipCommand,
   StartBattleCommand,
   StartPuzzleCommand,
+  StartWorldCommand,
   SwapBilgeCommand,
+  WorldCommand,
 } from './commands.ts';
 export type {
   BattleCollidedEvent,
@@ -50,8 +57,11 @@ export type {
   BootyBalance,
   BootyOverflowPolicy,
   BrigandBalance,
+  DivisionBalance,
+  MarketBalance,
   NpcBalance,
   ShipBalance,
+  WorldBalance,
 } from './balance.ts';
 export { BOOTY_OVERFLOW_POLICIES } from './balance.ts';
 export {
@@ -203,3 +213,54 @@ export {
 export { deserialise, serialise } from './save.ts';
 export { SCHEMA_VERSION, type Marker, type WorldState } from './state.ts';
 export { Sim, type SimOptions, type Snapshot } from './sim.ts';
+export {
+  COMMODITIES,
+  COMMODITY_IDS,
+  commodityOf,
+  type Commodity,
+  type CommodityClass,
+  type CommodityId,
+} from './world/commodities.ts';
+export { cargoLotsMassKgOf, lotOf } from './world/cargo.ts';
+export { divideBooty, type Division } from './world/division.ts';
+export { applyWorldCommand } from './world/dispatch.ts';
+export {
+  ISLANDS,
+  ISLAND_IDS,
+  islandOf,
+  type Island,
+  type IslandId,
+  type IslandSize,
+} from './world/islands.ts';
+export {
+  DIAGONAL_LEAGUE_COST_PER_MILLE,
+  HORIZONTAL_LEAGUE_COST_PER_MILLE,
+  LEAGUE_POINTS,
+  LEAGUE_POINT_IDS,
+  islandPointOf,
+  leaguePointOf,
+  neighboursOf,
+  routeBetween,
+  type League,
+  type LeagueOrientation,
+  type LeaguePoint,
+  type LeaguePointId,
+} from './world/leaguePoints.ts';
+export {
+  buyCommodity,
+  createMarkets,
+  marketOf,
+  sellCommodity,
+  stockOf,
+  type TradeOutcome,
+} from './world/market.ts';
+export {
+  VOYAGE_TYPES,
+  isVoyageType,
+  type CargoLot,
+  type IslandMarket,
+  type MarketStock,
+  type PirateState,
+  type VoyageState,
+  type VoyageType,
+} from './world/state.ts';

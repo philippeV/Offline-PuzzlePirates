@@ -8,7 +8,22 @@ const migrations: Record<number, Migration> = {
   1: (save) => save,
   2: (save) => ({ ...save, balance: null, puzzle: null }),
   3: (save) => ({ ...save, balance: null, ships: [], battle: null }),
+  4: (save) => ({
+    ...save,
+    balance: null,
+    pirate: null,
+    voyage: null,
+    markets: [],
+    ships: shipsWithCargo(save['ships']),
+  }),
 };
+
+function shipsWithCargo(ships: unknown): unknown[] {
+  if (!Array.isArray(ships)) return [];
+  return ships.map((ship: unknown) =>
+    typeof ship === 'object' && ship !== null ? { ...(ship as RawSave), cargo: [] } : ship,
+  );
+}
 
 export function serialise(state: WorldState): string {
   return canonicalJson(state);

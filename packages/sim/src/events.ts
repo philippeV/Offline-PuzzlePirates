@@ -1,6 +1,9 @@
 import type { BattleOutcome } from './battle/state.ts';
 import type { BeamSide, Facing } from './battle/geometry.ts';
 import type { EntityId } from './ids.ts';
+import type { CommodityId } from './world/commodities.ts';
+import type { IslandId } from './world/islands.ts';
+import type { LeaguePointId } from './world/leaguePoints.ts';
 
 export interface MarkerMovedEvent {
   type: 'marker.moved';
@@ -141,6 +144,71 @@ export interface BattleEndedEvent {
   chartDropped: boolean;
 }
 
+export type TradeSide = 'buy' | 'sell';
+
+export interface WorldStartedEvent {
+  type: 'world.started';
+  tick: number;
+  islandId: IslandId;
+}
+
+export interface VoyageChartedEvent {
+  type: 'voyage.charted';
+  tick: number;
+  shipId: EntityId;
+  toIslandId: IslandId;
+  legs: number;
+}
+
+export interface VoyageLegReachedEvent {
+  type: 'voyage.legReached';
+  tick: number;
+  pointId: LeaguePointId;
+  legIndex: number;
+  difficultyPerMille: number;
+}
+
+export interface VoyagePortedEvent {
+  type: 'voyage.ported';
+  tick: number;
+  islandId: IslandId;
+}
+
+export interface EncounterSpawnedEvent {
+  type: 'encounter.spawned';
+  tick: number;
+  shipId: EntityId;
+  pointId: LeaguePointId;
+  difficultyPerMille: number;
+}
+
+export interface CargoPlunderedEvent {
+  type: 'cargo.plundered';
+  tick: number;
+  shipId: EntityId;
+  commodityId: CommodityId;
+  units: number;
+}
+
+export interface MarketTradedEvent {
+  type: 'market.traded';
+  tick: number;
+  islandId: IslandId;
+  commodityId: CommodityId;
+  side: TradeSide;
+  units: number;
+  poe: number;
+}
+
+export interface BootyDividedEvent {
+  type: 'booty.divided';
+  tick: number;
+  shipId: EntityId;
+  poe: number;
+  crewCutPoe: number;
+  pirateSharePoe: number;
+}
+
 export type MarkerEvent = MarkerMovedEvent | MarkerDriftedEvent;
 
 export type ShipEvent = ShipMeterBandedEvent | ShipDamagedEvent;
@@ -162,4 +230,14 @@ export type PuzzleEvent =
   | PuzzleScoredEvent
   | PuzzleLevelChangedEvent;
 
-export type SimEvent = MarkerEvent | PuzzleEvent | ShipEvent | BattleEvent;
+export type WorldEvent =
+  | WorldStartedEvent
+  | VoyageChartedEvent
+  | VoyageLegReachedEvent
+  | VoyagePortedEvent
+  | EncounterSpawnedEvent
+  | CargoPlunderedEvent
+  | MarketTradedEvent
+  | BootyDividedEvent;
+
+export type SimEvent = MarkerEvent | PuzzleEvent | ShipEvent | BattleEvent | WorldEvent;
