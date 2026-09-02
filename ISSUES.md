@@ -4,7 +4,114 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
-## 2026-09-02 — repair of the slice 3 review findings (cycle 2)
+## 2026-09-02 — independent review of the slice 3 repair (PR 3, cycle 1)
+
+Four lenses over `d5d5c5e..3943f47`. **No blocking findings** — all three repairs do what decisions
+64 to 73 say, every red-before claim reproduced, and the trajectory-invariance claim was confirmed
+independently over 600 seeds. What follows is what the review found that is not worth stopping for.
+
+### `sim.dispatch` atomicity was deferred to a destination that does not exist
+
+Decision 67 left `sim.dispatch` non-atomic on the grounds that "slice 2b is introducing exactly this
+wrapper in `46d90b3`". It is not. That commit is titled "make `sim.step` and `sim.runUntil` atomic"
+and its `atomically<T>` helper wraps `stepWithinEventBudget` and `stepUntilPointerEquals` only; at
+slice 2b's tip `af6d428` the `sim.dispatch` handler still has no wrapper. The collision the decision
+feared could not have happened either — the repair touches no file under
+`packages/harness/src/methods/`. The code is right and the reasoning behind it is not, so the
+original finding's remainder is now unowned. Practical impact today is nil: `parseCommand` maps the
+whole batch before any dispatch, decisions 64 and 66 reject a bad commission before it mutates
+anything, and a rejected commission was measured to leave the state hash unmoved. It starts to
+matter when a command that mutates before it can fail is added.
+
+### The torn-tick test does not detect a torn tick
+
+`tests/sim/migration.test.ts:127` is red before the fix only because `step(1)` throws — neither of
+its assertions runs in the red case. In the green case they cannot fail: `migrations[3]` sets
+`balance: null`, so `stepShips` returns at its guard before touching a ship, and the commissioned
+hull is inert after 1, 10, 1,000 or 40,000 ticks. The test genuinely pins that a migrated save is
+loadable, dispatchable and steppable without throwing, which is worth having. Its name promises
+something stronger than it delivers.
+
+### Repair 1's two guards each make the other untestable
+
+Reverting `commands.ts` alone leaves the prototype-key test green, because the null-prototype
+`SHIP_CLASSES` makes the *old* guard work. Reverting `classes.ts` alone leaves the whole suite green,
+because `SHIP_CLASS_IDS.find` covers it. The suite goes red only when both are reverted, so it pins
+the disjunction rather than either half, and anyone deleting one half gets a green suite. Both were
+kept deliberately as defence in depth, so this is the cost of that choice rather than a mistake.
+
+### Four of repair 1's five production edits have no coverage
+
+Verified by reverting each in isolation against the full suite, which stayed green at 257 every
+time: the sim-side guard at `battle/dispatch.ts:23` (unreachable from tests, because `parseShipClass`
+rejects first at the RPC boundary), the three `RangeError` throws in `ship/classes.ts`, and the
+null-prototyping of `RAM_SIZE_RANKS`, `BALL_WEIGHTS_MICRO` and `ramDamageOverridesOf`. The
+user-visible vulnerability is proven; the hardening behind it is not. The `RangeError`s are exactly
+the defence for the `deserialise` and `restore` doors below, so they are the ones worth a test first.
+
+### `shipClassOf`'s guard is dead code by its own declared type
+
+`SHIP_CLASSES` is annotated `Record<ShipClassId, ShipClass>`, so TypeScript believes the lookup at
+`ship/classes.ts:103` can never be `undefined`. The guard survives only because the annotation is
+narrower than reality — the table is reachable with keys outside `ShipClassId`. A tidying pass that
+trusts the type would delete the check and silently reopen the finding this slice just closed.
+
+### `Sim.restore` is a second unvalidated door, not just `deserialise`
+
+The entry below names `deserialise` as the only way an invalid `shipClass` reaches the new
+`RangeError`. `Sim.restore` is a second: `cloneWorldState` is a `JSON.parse(canonicalJson(...))` with
+no validation, so a snapshot whose `shipClass` was mutated to `toString` restores and then throws
+mid-tick with the tick already advanced. Same reachability class as `deserialise` — a library caller
+fabricating state; the harness only ever stores sim-produced snapshots — so the conclusion is
+unchanged, but the claim of a single door is not accurate.
+
+### A migrated v3 save keeps a permanently inert puzzle
+
+`migrations[2]` nulls `balance` and `puzzle` together; `migrations[3]` nulls `balance` alone, leaving
+a structurally valid puzzle that `stepPuzzle` always skips. Nothing crashes and nothing is lost, and
+this follows the decided trade-off. The state is legible only by accident, though: `puzzle.start`
+honestly reports `balance-missing`, but `bilge.swap` reports `no-puzzle-running` even though
+`state.puzzle` is not null, because `puzzle/dispatch.ts:36` conflates the two. A distinct
+`balance-missing` reason there would make the terminal state say what it is.
+
+### The melee entry lost the counterfactual that sized the tie-break
+
+The rewrite above supplied the post-fix measurement this register asked for, but it dropped the
+sharpest number the old entry carried: re-scoring 900 battles with ties going to the attacker moved
+the player's win rate from 51.0% to 33.7% under mirror play and from 43.0% to 10.0% under a
+heuristic. That measured the tie-break's *stake*; what replaced it measures the *repair's* effect, a
+six-point swing, which is a much smaller number sitting in the same place. The entry exists to hold
+that counterfactual until someone decides the tie-break, so it should be re-run and restored.
+
+### Smaller things
+
+- **The fused rock-and-ram outcome is pinned nowhere.** `tests/ship/meters.test.ts:290` drives
+  `resolveMovement` but never `turn.ts`, re-implementing its `struckObstacle ? 'obstacle' : 'ram'`
+  label rule instead, and `collision.test.ts` covers rock alone and ram alone but never both on one
+  ship. Post-fix the duplication is harmless — `source` no longer affects the melee number — so the
+  gap is the missing integration check, not the copy.
+- **`tests/sim/migration.test.ts:101` is named "keeps everything it already carried"** while its
+  corrected assertion now says `balance` is `null`. Rename it.
+- **The genuineness pin does not assert `schemaVersion`**, despite being named for it. Harmless — the
+  independent-path check catches the old fixture on its own.
+- **`turn.ts:26` names its intermediate local `declared`**, where the three other tables and both
+  precedents use `declared<TableName>`.
+- **The regenerated v3 fixture covers a smaller state shape** than the manufactured one it replaced,
+  which carried a `rngStreams["bilge.refill"]` cursor and `puzzle.moves: 1`. Migration never touches
+  `rngStreams`, so nothing is at risk; the fixture is simply thinner.
+- **`SHIP_CLASSES` now throws on implicit string conversion**, being null-prototype and exported.
+  `Object.keys`, spread, `JSON.stringify`, `canonicalJson` and `structuredClone` are all unaffected
+  and no consumer does it.
+- **`battle.plan`'s `token` and `ship.commission`'s `allegiance` have no sim-side guard**, the
+  asymmetry decision 64 closed for `shipClass`. Both are benign — an unknown token is silently a
+  no-op, an unknown allegiance is only ever compared — but they are the same shape.
+- **`harness/src/json.ts:20` uses `key in right`** rather than `Object.hasOwn`. Probed against five
+  prototype-key cases and it produces no wrong answer; style, not a defect.
+- **`docs/wiki-map/04-world-ports-economy.md:618` lists wear** among the sources that become
+  unbreakable blocks in the boarding puzzle, contradicting `03-ships-sailing-sea-battle.md` and
+  decision 61, which exempt it. The code follows 03.
+
+## 2026-09-02 — repair of the slice 3 review findings (cycle 1)
 
 The three blocking findings from the review below are fixed: the prototype key that passed the
 ship-class guard, the v3 to v4 migration that left `balance` structurally invalid, and rock damage
@@ -50,14 +157,16 @@ but a save carrying one walks in behind those guards and reaches the new `RangeE
 method exposes `deserialise` today, so nothing reachable can trigger it. It starts to matter the
 moment there is a `session.load`.
 
-### The last prototype-carrying default
+### The two prototype-carrying defaults
 
 `resolveMovement`'s `ramDamage: RamDamageOverrides = {}` (`battle/collision.ts:38`) is an ordinary
 object literal, and `ramDamageOf` indexes it by a class id (`ram.ts:27`), so an id of `toString`
-would find a function there rather than fall through to the published ram damage. It is unreachable
-in production — every caller passes the null-prototype table decision 65 created, and decision 64
-refuses the id before there is a ship to carry it — but it is the same bug shape that blocked this
-review, one refactor away.
+would find a function there rather than fall through to the published ram damage. `applyCollisions`
+carries an identical `overrides: RamDamageOverrides = {}` default at `ram.ts:19`, and its default is
+never taken by any caller at all. Both are unreachable in production — every caller passes the
+null-prototype table decision 65 created, and decision 64 refuses the id before there is a ship to
+carry it — but they are the same bug shape that blocked this review, one refactor away. One
+`Object.create(null)` each closes both.
 
 ## 2026-09-02 — independent review of slice 3 (OPP-10), PR 3
 
@@ -136,7 +245,8 @@ changed it. It remains the single largest rule in the sea battle.
 **The battle trajectory is bit-identical before and after.** Melee-decided count, sink count and the
 longest battle are unchanged to the unit — 464, 136 and 168 on both sides of the repair — because
 `meleeDamageSmallMicro` is a write-only sink that nothing reads except `meleeSideOf` at battle end.
-Only the verdict of an already-melee-decided battle can move, and 36 of 464 flip. That is what made
+Only the verdict of an already-melee-decided battle can move, and 84 of 464 flip — 60 to the player
+and 24 against, a net of 36. That is what made
 the repair cheap, and it also means the meter carries no gameplay pressure today.
 
 **The player gains from the tie rise only by accident.** The brigand throws the grapple in 343 of

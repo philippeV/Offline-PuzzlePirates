@@ -1559,3 +1559,73 @@ already in place, which is the trap that would otherwise have shipped the same i
 green suite. All eight files under `packages/fixtures/` are byte-identical to `HEAD` with CRLF
 normalised, except the deliberately regenerated v3 save. `battle.test.ts`'s win and loss existence
 assertions pass untouched, so the guardrail did not need to be exercised.
+
+### 2026-09-02 — independent review of the slice 3 repair (PR 3, cycle 1)
+
+Four lenses over `d5d5c5e..3943f47` — correctness and regression, security and data safety, spec and
+architecture conformance, maintainability and test coverage — each in its own isolated worktree.
+**No blocking findings.** The repair is approved and forwarded to the test stage. Twenty-odd
+non-blocking findings are in `ISSUES.md` under the matching heading.
+
+**A disclosure that belongs in the record.** This review ran in the same dispatcher run that produced
+the repair, because the repair wrote the review task and the dispatcher drains inboxes within a run.
+Independence was preserved structurally rather than by separation: each lens was a subagent with
+fresh context, told to verify rather than to trust the analysis document or the PR description, and
+the findings below are the ones that survived. It is still weaker than a review by a later run, and
+the test stage should be read as the first genuinely independent check.
+
+**The lenses confirmed the repair's central claims by re-deriving them.** Every one of the five
+red-before claims reproduced with the failure mode the development entry describes, including the
+critical one — the independent-path migration test is red against the unfixed `migrations[3]` with
+the genuine fixture already in place, so the repair is load-bearing rather than decorative. The
+regenerated fixture was independently regenerated from `f5ee82a` and came out byte-identical modulo
+the trailing newline every other fixture has. The trajectory-invariance claim was checked the hard
+way, by digesting per-turn positions, facings, damage, bilge and cannon state plus event counts
+across all 600 seeds before and after: **zero seeds differ**. `meleeDamageSmallMicro` was confirmed
+to have exactly one production reader, `meleeSideOf` at `battle/session.ts:165`.
+
+**Decision 67's rationale does not survive inspection, and that is the most important finding.** The
+decision left `sim.dispatch` non-atomic because "slice 2b is introducing exactly this wrapper in
+`46d90b3`". That commit is titled "make `sim.step` and `sim.runUntil` atomic" and its `atomically<T>`
+wraps `stepWithinEventBudget` and `stepUntilPointerEquals` only; at slice 2b's tip `af6d428` the
+`sim.dispatch` handler still has none. The feared merge collision was impossible anyway — the repair
+touches no file under `packages/harness/src/methods/`. So the code is right, the reasoning is wrong,
+and the remainder of the original finding now has no owner. It is not blocking: `parseCommand` maps
+the whole batch before any dispatch, decisions 64 and 66 reject before mutation, and a rejected
+commission was measured to leave the state hash unmoved. **Whoever plans the next slice should give
+`sim.dispatch` atomicity a home rather than assume 2b took it.**
+
+**Two claims in the record were too strong and are corrected.** The flip count is 84, not 36 — 60
+verdicts flip to the player and 24 against, a net of 36, which is the win-count delta rather than the
+number of battles that changed hands. And `deserialise` is not the only unvalidated door: `Sim.restore`
+reaches the same `RangeError` through `cloneWorldState`, which is a `JSON.parse(canonicalJson(...))`
+with no validation. Both are corrected in `ISSUES.md`; the earlier entries are left as written, since
+this document appends rather than rewrites.
+
+**The security lens found the bug class genuinely closed, not just its eight instances.** A repo-wide
+audit of every module-scope literal indexed by a variable found one surviving instance of the shape,
+the `ramDamage = {}` default already recorded — plus a second, unrecorded one at `ram.ts:19`, now
+added to that entry. Both are unreachable, and the reason is decision 66 rather than luck: feeding a
+poisoned ship to `resolveMovement` throws `RangeError` in `shipClassOf` before the literal is ever
+indexed. Prototype pollution through a crafted save is not possible — `JSON.parse` creates
+`__proto__` as an own data property — and `Object.assign(Object.create(null), src)` was verified to
+copy an own `__proto__` correctly where `Object.assign({}, src)` silently drops it, so the chosen
+idiom is the safer of the two. No RPC method loads a save, and production code writes no files, so
+the torn-tick-from-a-bad-save path has no reachable entry point today.
+
+**Where the test coverage actually is, which is less than the green suite suggests.** Reverting each
+of repair 1's production edits in isolation leaves the suite green in four of five cases: the
+sim-side guard at `battle/dispatch.ts:23`, the three `RangeError` throws, and the null-prototyping of
+three of the four tables. The two guards are individually redundant — reverting either alone leaves
+the prototype-key test passing, because each covers for the other — so the suite pins their
+disjunction, not either half. The hardening is deliberate defence in depth and the user-visible
+vulnerability is proven, so this is the cost of that choice rather than a defect; but a future
+tidying pass would find no test standing in its way, and `shipClassOf`'s guard is additionally dead
+code by its own declared type. The `RangeError`s are the defence for the `deserialise` and `restore`
+doors, so they are the ones worth a test first.
+
+**One test promises more than it delivers.** The torn-tick test is red before the fix only because
+`step(1)` throws; neither of its assertions runs in the red case, and in the green case they cannot
+fail, because `balance: null` makes `stepShips` return before touching a ship. It is a real test of
+"a migrated save loads, dispatches and steps without throwing" — which is worth having — but not of
+"a tick does not tear". The name should say the weaker thing.
