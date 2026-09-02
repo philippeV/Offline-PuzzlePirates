@@ -7,7 +7,7 @@ type Migration = (save: RawSave) => RawSave;
 const migrations: Record<number, Migration> = {
   1: (save) => save,
   2: (save) => ({ ...save, balance: null, puzzle: null }),
-  3: (save) => ({ ...save, ships: [], battle: null }),
+  3: (save) => ({ ...save, balance: null, ships: [], battle: null }),
 };
 
 export function serialise(state: WorldState): string {
