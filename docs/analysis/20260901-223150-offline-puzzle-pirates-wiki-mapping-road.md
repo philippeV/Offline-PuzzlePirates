@@ -1682,3 +1682,108 @@ doors, so they are the ones worth a test first.
 fail, because `balance: null` makes `stepShips` return before touching a ship. It is a real test of
 "a migrated save loads, dispatches and steps without throwing" — which is worth having — but not of
 "a tick does not tear". The name should say the weaker thing.
+
+### 2026-09-02 — physical test of the slice 3 repair (PR 3, cycle 1)
+
+The first genuinely independent check on the repair, run a dispatcher tick after the review that
+cleared it. Four threads were driven in parallel against a live `pp-harness` in an isolated worktree,
+each told to verify rather than to trust this document. **No blocking failure in the change.** All
+three repairs do what decisions 64 to 73 say. What blocked the stage was not the code but the branch:
+PR 3 could not be merged at all, and that is recorded below with its cause and its fix.
+
+**The guard is stronger than the analysis claimed, and the claim was measured too narrowly.**
+`Object.getOwnPropertyNames(Object.prototype)` returns **twelve** names on node 24.18.0, not eight —
+the record everywhere calls this "the eight `Object.prototype` member names" and omits
+`__defineGetter__`, `__defineSetter__`, `__lookupGetter__` and `__lookupSetter__`. All twelve were
+driven, in both the `crewCount` and the bare variant, over one live session: **24 of 24 refused**,
+every one a JSON-RPC `-32602` with `data.reason` `invalid-params` and the message
+`unknown ship class "<name>"`. The `crewCount` variant that was silently *accepted* before the repair
+is refused identically to the bare one. Rather than compare state hashes, the run took a snapshot at
+the clean baseline and ran `state.diff` after each attempt: **all 24 returned an empty patch**, which
+is a byte-level no-op and a stronger assertion than the one the repair pinned. Two batch probes
+confirm the refusal precedes any mutation — a valid `marker.place` or a valid `sloop` commission
+batched ahead of a poisoned one does not apply either. A valid commission on the same session
+immediately afterwards is accepted and advances `nextEntityId`, so the refusal is class-specific and
+not a blanket failure, and the session then steps, snapshots and restores to the exact hash.
+
+**The migration was checked against a control that reproduces the bug it fixes.** There is no RPC
+method that loads a save, so the production path — `Sim.load` to `deserialise` to `migrate` — was
+driven directly. On the genuine v3 fixture the migrated state is schemaVersion 4, `balance` exactly
+`null`, `ships` `[]`, `battle` `null`, and the puzzle structurally present. Its inertness was
+demonstrated rather than asserted: **every one of the 144 board cells was swept and refused**, 5000
+ticks moved nothing inside `/puzzle`, and the `bilge.fill` cursor never advanced while `marker.drift`
+went 120 to 5120. `puzzle.start` reports `balance-missing` — and does so even for `sailing`, because
+the balance check precedes the unknown-puzzle check. Commissioning two sloops and stepping 2101 ticks
+throws nothing. The control is the part worth keeping: applying the **pre-repair** migration by hand
+to the same fixture and stepping one tick throws
+`TypeError: Cannot read properties of undefined (reading 'crewDutyOutputPerMille')` with the tick
+already advanced 120 to 121 and the markers already moved. The torn tick is real, and the repair
+closes it.
+
+**Battles start, progress and conclude — 130 of them.** Ten seeds across five policies to a 60-turn
+cap, then twenty fresh seeds across four policies to a 120-turn cap: **zero unconcluded, zero
+desyncs, zero stalled turn counters**, longest 65 turns. A win is `/battle/outcome`, not a flag on a
+ship. Both terminal paths reproduce by melee and by sinking: `player-won` at 6 turns on seed 20260902
+transfers `bootyPoe` 659 and 40 cargo units off the brigand; `player-lost` at 14 turns on seed 7919
+takes the player to exactly `10000000` `damageTakenSmallMicro`, the sloop's `fullDamageSmallMicro`,
+and transfers nothing. `battle.disengage` is refused `disengage-not-ready` on turns 1 to 10 with the
+counter visibly walking 10 down to 1, and accepted on turn 11 at 0, ending the battle `disengaged`.
+All nine battle rejection reasons were reached, and **every rejection left the state hash unmoved**.
+
+**The melee change is live, and its mechanism was confirmed in isolation.** On seed 7919 turn 6 the
+only damage event of the turn is an obstacle strike for 500000, and `state.diff` shows exactly one
+replacement: `/ships/0/meleeDamageSmallMicro` from 1000000 to 1500000. Under the pre-change rule it
+would not have moved. **The trajectory-invariance claim holds and is structural, not incidental** —
+`meleeDamageSmallMicro` is written only in `applyShipDamage` and read only by `meleeSideOf` at
+`battle/session.ts:165`, so it reaches no movement, collision, gunnery, minting, repair or sink test.
+**The "36 net of 464, 84 flips, 60 to 24" figures could not be corroborated**, because that corpus
+was not reproduced here; an independent 50-battle sweep found 29 melee conclusions and 4 flipped
+verdicts, 2 each way, which confirms the mechanism and that flips go both directions but says nothing
+about the skew. Anyone relying on the 60:24 asymmetry should re-derive it.
+
+**Determinism holds cold, and nothing recorded moved.** Nine scenario-and-seed combinations across
+`marker-field`, `bilge-session` and `sea-battle` were each run twice in **separate driver processes
+spawning separate harness children**, comparing the whole hash trail and the final `rng.cursors`
+rather than just the final hash: identical in all nine, and identical again for two sessions inside
+one process. All three committed replays verify with their own scenario passed, including
+`marker-drift-diverged-at-tick-5.json`, which reports `divergedAtTick` 5 exactly as designed. Each
+replay was then **re-recorded from scratch over the protocol** into scratchpad copies and matched the
+committed trail checkpoint for checkpoint — the corrupted fixture differing at tick 5 alone, where
+the genuine value was recovered. All eight files under `packages/fixtures/` hash equal to `6d491e9`.
+Only `packages/fixtures/saves/bilge-session-v3.json` was ever expected to have moved, and it did not:
+blob `e923b3c37240e04b157bd81295f37ef252e4f4d0`, 1561 bytes, LF, raw balance keys exactly
+`["bilging"]`, verified from the blob rather than from the working file.
+
+**The measured hazard is confirmed to the seed.** `tests/harness/battle.test.ts` still declares
+`MAXIMUM_TURNS` 120 over 24 seeds of `seed * 7919`. Re-driving that exact mirror policy with the cap
+lifted to 400: the committed 24 all resolve, longest **51 turns** on seed 21, 69 turns of headroom.
+Sweeping seeds 1 to 600 took 165 seconds and found **exactly one** over the cap — **168 turns at seed
+466, root seed 3690254, player-won** — with the next longest at 96. The claim is verbatim correct.
+Nothing was re-seeded and the cap was not touched.
+
+**What actually blocked the stage: PR 3 was unmergeable, and squash is why.** GitHub reported
+`CONFLICTING` across twenty-one files including six `packages/sim/src` modules. There is no content
+behind any of it. PR 2 was squash-merged into `agent/develop` as `eca8058`, minting new SHAs, while
+this branch carries slice 2's *original* commits through the merge at `5575426`; git therefore sees
+slice 2's entire change set arriving independently on both sides. Two measurements settle it:
+`agent/develop`'s tree is **identical** to slice 2's feature tip `0ac1b52`, which this branch already
+contains, and resolving all twenty-one conflicts in favour of this branch **reproduces `6d491e9`'s
+tree byte for byte**. The only content `agent/develop` held that this branch lacked is 68 lines of
+documentation from slice 2's re-verification commit. The merge at `14759c0` takes this branch's side
+for every code, test and fixture file and unions the two documents — `ISSUES.md` newest-first, this
+document chronologically — for a diff against `6d491e9` of **68 insertions and zero deletions**.
+`npm run check` is green on the merged commit at 257 tests, and CI passed on it.
+
+**The merge into `agent/develop` was made with a merge commit, not a squash, and that is a deliberate
+deviation from the queue-test skill.** Squashing PR 3 would detach its history exactly as PR 2's
+squash detached slice 2's, and slices 4 and 5 are branched from *this* branch — they would inherit a
+larger version of the same conflict, as slice 2b already will. Preserving history costs nothing and
+stops the recurrence. This is a workflow decision that outlives the slice, so it is raised for the
+human in `ISSUES.md` rather than settled quietly here.
+
+**Two environment facts, recorded so the next run does not chase them.** A fresh worktree checks the
+v3 fixture out at **1562 bytes, not 1561**, because `core.autocrlf` is `true` globally; the committed
+blob is LF at 1561 and `git status` stays clean. Do not read this as a clobbered fixture. And the
+worktree recipe that works is to copy the main checkout's `node_modules` **including `.bin`** —
+omitting it costs a run on `tsc is not recognized` — then replace `node_modules/@opp` with three
+junctions pointing at that worktree's own `packages/`.
