@@ -738,3 +738,56 @@ feature branch rather than `agent/develop`, because the development stage works 
 would not otherwise see it. It reaches `agent/develop` when PR 1 merges.
 
 **One development task** is emitted: both repairs on the existing branch, extending PR 1.
+
+### 2026-09-02 — development, slice 1 rework (cycle 2)
+
+All three repairs built against the cycle 2 analysis and committed to the feature branch as
+`bfaeaec`, extending PR 1. No new dependencies. `npm run check` is green from cold: 59 tests, 0
+failures.
+
+**Repair 3 first, as decision 35 requires.** `TSImportType[argument.value=…]` became
+`TSImportType[source.value=…]`. The analysis's claim about the boundary was re-verified rather than
+taken on trust: a sim file declaring `import('node:path').ParsedPath` in type position is rejected by
+`tools/check-sim-imports.ts` both before and after the change, and begins failing lint only after it.
+The rule was dead, the boundary was never open, and the fix landed before any test pinned the
+spelling.
+
+**Repair 1.** `MAX_COMMANDS_PER_REQUEST` (100000) added beside the existing limits and applied to
+`sim.dispatch` through the existing `boundedArray`, so the refusal reads `limit-exceeded` like every
+other cap. Both containment layers are in: `handleLine` catches a serialisation failure and answers
+with the request's own id, bounded by `MAX_ECHOED_ID_LENGTH` (256) and carrying a literal message;
+`serve` wraps the readline listener and falls back to `UNANSWERABLE`, a string built once at module
+load. No other method was capped, per decision 31.
+
+**Repair 2.** `tests/gates/purity.test.ts` gained the binding assertion and the floor. Both guards
+from decision 33 are in place — the target file's existence is asserted, and the literal `undefined`
+of an ignored file is rejected before `JSON.parse` sees it. `allowJs: true` added to `tsconfig.json`
+per decision 34; nothing else moved.
+
+**Discovered: `--print-config` normalises severity.** It prints `2` where the config declares
+`'error'`, so a direct `deepEqual` against `simPurityRules` fails on every rule. The test converts
+the declared severity to its number before comparing and leaves the options untouched, which is
+where the real assertion lives. Not a design change — a detail the prototype did not surface because
+it never compared the two shapes directly.
+
+**Every guard was verified by breaking it**, which is the standard the cycle 1 review set and the
+reason this entry can claim the repairs hold:
+
+| Break                                                | Result                                                            |
+| ---------------------------------------------------- | ----------------------------------------------------------------- |
+| Sim block glob `.ts` → `.tsx`                        | Binding test fails: `no-restricted-globals does not reach …`      |
+| Delete `Math.random` from `simPurityRules`           | Floor test fails by name                                          |
+| Delete the whole `no-restricted-properties` entry    | Floor test and the `Date.parse` fixture both fail                 |
+| Remove the `handleLine` wrapper (layer 1)            | The two id-correlation tests fail; the layer 2 test still passes  |
+| Remove the `serve` wrapper (layer 2)                 | The survival test fails; the layer 1 tests still pass             |
+| Restore `requiredArray` on `sim.dispatch`            | The cap test fails                                                |
+
+The fourth and fifth rows are the ones worth keeping: each layer's tests pass while the other layer
+is absent, so the two are independently load-bearing and neither substitutes for the other. That is
+decision 28 confirmed by experiment rather than by argument.
+
+Under the first break the six pre-existing fixture tests all stayed green — the blindness the cycle 1
+review identified, reproduced and now closed.
+
+**Deviation, as in cycles 1 and 2.** This entry is committed to the feature branch, not
+`agent/develop`, for the reason recorded in decision 23. It reaches `agent/develop` when PR 1 merges.
