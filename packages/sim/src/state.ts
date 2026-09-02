@@ -1,11 +1,13 @@
+import type { Balance } from './balance.ts';
 import { createClock } from './clock.ts';
 import { canonicalJson } from './hash.ts';
 import { FIRST_ENTITY_ID, type EntityId, type EntityIdCounter } from './ids.ts';
-import type { PuzzleBalance } from './puzzle/balance.ts';
+import type { BattleState } from './battle/state.ts';
 import type { PuzzleState } from './puzzle/session.ts';
+import type { ShipState } from './ship/state.ts';
 import { createRngStreams, type RngStreams } from './rng.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface Marker {
   id: EntityId;
@@ -19,11 +21,13 @@ export interface WorldState extends EntityIdCounter {
   tick: number;
   rngStreams: RngStreams;
   markers: Marker[];
-  balance: PuzzleBalance | null;
+  balance: Balance | null;
   puzzle: PuzzleState | null;
+  ships: ShipState[];
+  battle: BattleState | null;
 }
 
-export function createWorldState(seed: number, balance: PuzzleBalance | null): WorldState {
+export function createWorldState(seed: number, balance: Balance | null): WorldState {
   return {
     schemaVersion: SCHEMA_VERSION,
     seed: seed >>> 0,
@@ -33,6 +37,8 @@ export function createWorldState(seed: number, balance: PuzzleBalance | null): W
     markers: [],
     balance,
     puzzle: null,
+    ships: [],
+    battle: null,
   };
 }
 

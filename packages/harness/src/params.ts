@@ -67,6 +67,18 @@ export function optionalString(fields: Record<string, unknown>, key: string): st
   return key in fields ? requiredString(fields, key) : undefined;
 }
 
+export function optionalBoolean(
+  fields: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  if (!(key in fields)) return undefined;
+  const value = fields[key];
+  if (typeof value !== 'boolean') {
+    throw new RpcError('invalid-params', `params.${key} must be a boolean`);
+  }
+  return value;
+}
+
 export function optionalCount(fields: Record<string, unknown>, key: string): number | undefined {
   return key in fields ? requiredCount(fields, key) : undefined;
 }

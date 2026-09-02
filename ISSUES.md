@@ -4,6 +4,76 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-02 — development of slice 3 (OPP-10), ship state and sea battle
+
+Nothing here blocks. A sloop-versus-brigand battle plays to a win and to a loss headlessly, every
+battle in the outcome sweep resolves, and `npm run check` is green from cold. What follows is what
+the slice ships alongside that, and where each item starts to matter.
+
+### Implemented but never placed on a board
+
+`tiles.ts` implements whirlpools exactly as the wiki describes them — a 2x2 tile mapping each corner
+to the diagonally opposite one with a quarter turn clockwise — and `collision.ts` handles the
+`whirl` intent, including the published example where a wind-pushed small ship blocks a large ship's
+whirl. But `setup.ts` scatters only rocks and wind, so no committed scenario ever produces one. The
+placement rules for a 2x2 feature are not published, and the slice's task named rocks and wind only.
+It starts to matter when a battle board is authored by hand rather than scattered, which is a slice 5
+concern.
+
+### The agent that proves the headline claim is the brigand's own planner
+
+`tests/harness/battle.test.ts` drives the player's ship with `planBrigandTurn`, the same policy the
+opponent uses. That is what makes the sweep a fair fight and both outcomes reachable, and it is an
+honest test of *drivability* — the plans go through `battle.plan` like any agent's would. It is not
+a test that a *good* player wins, because there is no separate notion of good play to compare
+against. When slice 5 gives a human the same controls, a scripted opening worth beating is the thing
+to write.
+
+### The speed meter has nothing to read it
+
+`stepShipMeters` computes speed every tick from sailing and rigging, multiplies it by duty
+navigation and caps it by bilge exactly as documented, and no code anywhere consumes
+`ship.speedPerMille`. Speed governs league traversal, and there are no leagues until slice 4. The
+cost of leaving it in is one integer per ship per tick; the cost of taking it out would be
+re-deriving the coupling later from a wiki page already read.
+
+### Two overflow policies that are the same policy today
+
+`booty.overflowPolicy` accepts `truncate`, `refuse` and `spill-to-sea`. With one undifferentiated
+cargo unit there is nothing to sort by value, so `truncate` and `spill-to-sea` both take what fits
+and discard the rest, and only `refuse` behaves differently. The distinction becomes real when
+slice 4 introduces commodities with per-unit values.
+
+### Melee is a strength comparison, not a swordfight
+
+`resolveMelee` scores each side as crew times unblocked rows times unblocked columns and gives the
+tie to the defender. It reproduces the *shape* of the handicap the wiki describes — black blocks
+from cannon damage, narrowed board from rum sickness — with no published formula behind the numbers,
+because there is none to find. It decides real battles today, so its bias is worth measuring before
+the swordfight puzzle replaces it in phase 2.
+
+### `whirlpoolOriginOf` scans the whole board
+
+It walks all 576 tiles looking for a matching whirlpool id, and it is now called from inside the
+per-phase tile step. With no whirlpools placed it is never reached; if one is ever scattered, this
+runs up to eight times a turn. The fix is to carry the origin on the tile rather than search for it.
+
+### Damage attribution collapses one ambiguous case
+
+A collision outcome carries a single `damageTakenSmallMicro`, and the turn step attributes all of it
+to `obstacle` when the ship struck one and to `ram` otherwise. A ship that is both grounded on a rock
+and bumped by a mover in the same pass therefore reports its ram damage as obstacle damage. The
+difference is visible only in the melee handicap, which obstacle damage does not raise and ram damage
+does, and the case needs a mover to bump a ship that is simultaneously stopped by a rock.
+
+### Carried forward from slice 2, untouched
+
+The slice 2 review named two follow-ups: the non-atomic `sim.step` that commits a mutation behind a
+`limit-exceeded` return in the 99993-100000 tick window, and the missing test connecting real board
+geometry to the score table. Both belong to the queued slice 2b task and neither was touched here.
+Nothing in this slice makes either worse — the battle's own events are bounded at a handful per
+phase.
+
 ## 2026-09-02 — independent review of slice 2 (OPP-9), PR 2
 
 Four lenses plus a dedicated audit of the slice's headline claim. Nothing here blocks: the published

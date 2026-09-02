@@ -1059,3 +1059,106 @@ because `Replay` carries no schema version although `session.new` already return
 confirm the non-atomic step is the only place a mutation escapes behind an error, and a real
 end-to-end bilging session driven far enough to exercise the pump-wins half of the flood model, which
 no test currently reaches.
+
+### 2026-09-02 — development, slice 3 (OPP-10)
+
+The ship as a state machine and the turn-based sea battle, built on
+`agent/feature/20260902-000200-opp-slice-2-puzzle-framework-and-bilging` at `dfddd63` — slice 2 had
+not merged to `agent/develop`, so this branched from the feature branch in the chain as the task's
+fallback allows. PR 2 is still open at the test stage, so this branch carries slice 2's commits and
+its PR is stacked on them.
+
+**This run resumed an interrupted one.** A previous scheduled run was reaped after ninety minutes
+with substantial uncommitted work in the tree and no changelog entry. That work was kept rather than
+restarted: the ship class table, `ShipState`, the 24x24 board, the tile effects, the two-pass
+collision resolver and the token pool were already written and tested, and the schema had already
+moved to 4 with a migration. What was missing was everything that turns those parts into a battle —
+no turn loop, no firing, no AI, no duty output, no booty, no reducer, and nothing wired into `Sim`.
+
+**What is here now.** `packages/sim/src/battle/` holds eighteen modules. Inherited from the
+interrupted run: `board`, `geometry`, `tiles`, `claims`, `movement`, `collision`, `ram`, `tokens`,
+`plan`, `state`. Added by this run: `setup` (the seeded board layout and the opening formation),
+`fire` (line of fire, range, tall-rock blocking, grapple reach), `gunnery` (the fire-and-grapple
+phase step), `turn` (the four-phase pipeline), `brigand` (the opponent's planner), `booty` (the roll
+and the hold), `session` (start, the per-tick turn clock, end conditions) and `dispatch` (the
+reducer). `packages/sim/src/ship/` gains `duty` (which station produces what) and `meters` (the
+per-tick integration of the four meters), plus `session` for the per-tick ship step. `Sim.dispatch`
+grew two new arms and `Sim.step` two new stages, ordered puzzle then ships then battle so a tick's
+duty output is consumed by the meters that read it inside the same tick.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                         | Rationale                                                                                                                                                       |
+| -- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 46 | The interrupted run's uncommitted work was kept, not restarted                    | It was correct and pinned against the wiki, and reproducing it would have spent the slice re-deciding settled questions. Its one self-contradicting test was fixed  |
+| 47 | Battle lives in `packages/sim/src/battle/`, mirroring `puzzle/`                   | Same reason as decision 37: a separate package cannot be purity-gated and import `@opp/sim` at the same time                                                        |
+| 48 | Ships are commissioned by their own `ship.commission` command                     | Bundling ship creation into `battle.start` would have to be undone in slice 4, where the world commissions ships long before any battle starts                      |
+| 49 | `melee.ts` is kept and wired rather than deleted as scope creep                   | The interrupted run left it unwired. A grapple has to resolve into an outcome or it is a dead end, and the wiki map names exactly this stub as the seam             |
+| 50 | A grapple ends the battle by auto-resolving the melee on aggregate crew strength  | The swordfight puzzle is phase 2. Auto-resolution is what the wiki map itself proposes for this interface boundary, and it keeps grappling a real end condition     |
+| 51 | The war galleon's ram damage reaches the collision resolver as an override        | Its published cell is blank, so the value is invented and must live in `balance.json`; `resolveMovement` takes a per-class override map, empty by default           |
+| 52 | The cannon-load accumulator carries at `PER_MILLE` squared, not `PER_MILLE`       | At one carry the rate loaded a cannon every 1.05 ticks. The tuning's own `_sources` entry says about two per 35-second turn, and two carries produce exactly that   |
+| 53 | `brigand.blunderNoisePerMille` retuned from 150 to 30                            | At 150 the jitter dwarfed every movement weight and the brigand was a random walker wearing a scorer's coat. 30 is three tiles of closing: variety, not noise       |
+| 54 | A blocked turn is not scored as pure loss; a blocked forward is                   | A turn still rotates the ship even when it stops entirely, which is the published escape from being boxed in. Penalising both alike froze a ship in front of a rock |
+| 55 | The board generator reserves each ship's berth and the two tiles ahead of it      | A rock dropped directly ahead of a starting ship made that ship immobile for the whole battle, because a turn's route runs through the square ahead                 |
+| 56 | Half the captured PoE goes to the chest and half to the ship's purse              | The wiki splits it half to the booty chest and half instantly among the crew by booty shares. There is no crew ledger until slice 4, so the purse stands in for it  |
+| 57 | Hold capacity is the class's `holdMassKg`, counted in cargo units                 | The booty tuning's own rationale measures itself against "a sloop hold of 13500 kilograms", so cargo units are kilogram-equivalents until real commodities exist    |
+| 58 | Rum is stocked and read but never consumed in this slice                          | Consumption only matters for the rum-sickness handicap in a melee that is auto-resolved, so `ship.rumPerPiratePerThousandTicks` is unused, deliberately             |
+| 59 | The `no-cannonball` rejection reason was dropped                                  | Cannonballs are spent at load time inside the tick, never by a command, so no command path could ever return it. An unreachable reason is worse than no reason      |
+| 60 | Collision damage is `obstacle` when the ship struck one, and `ram` otherwise      | A ship blocked by a rock claims no square and so cannot also be rammed in the same pass; the one ambiguous case is a grounded ship bumped by a mover                |
+| 61 | Wear and tear emits no `ship.damaged` event                                       | It is continuous, so one event per tick would be noise. The banded meter event already reports it, and the wiki is explicit that wear produces no melee blocks      |
+| 62 | The turn boundary is a tick counter on `BattleState`, mirroring `intervalTick`    | The wiki's 35-second planning window is 2100 ticks. A counter keeps the battle on the same clock as everything else rather than inventing a second scheduler        |
+| 63 | `battle.startingCannonballs` and `startingRum` are scope decisions in the tuning  | A magazine is bought in a port that does not exist until slice 4. Putting the loadout in the tuning file keeps it out of the code, where decision 6 forbids it      |
+
+**The published collision algorithm is reproduced, and its tie-break with it.** The two-pass
+claim-and-resolve, the bump and push rules, rock and board-edge damage at one twelfth of full SF
+damage, and the rule that a same-or-larger class stops a claimant while a smaller one yields all
+come from `03-ships-sailing-sea-battle.md` and are pinned by 24 tests, the wiki's own worked
+examples among them. Ram damage is sized by the *other* ship's class — one collision's worth between
+equal ram classes and two between unequal ones. The one test asserting this had been written with
+the two ships' expectations swapped and contradicted itself two lines further down; the
+implementation was right and the test was corrected.
+
+**Invented constants.** Six new keys, each with a `_sources` entry: `battle.tallRockCount`,
+`battle.smallRockCount`, `battle.windTileCount`, `battle.startingSeparationTiles`,
+`battle.startingCannonballs` and `battle.startingRum`. The board layout and the opening formation
+are nowhere on the wiki and are not even in the wiki map's own list of gaps; they are now named as
+invented. One existing key was retuned — `brigand.blunderNoisePerMille` — and its rationale
+rewritten to say what the number is measured against.
+
+**The coupling criterion was audited rather than asserted.** Every numeric literal left in
+`packages/sim/src/battle/` and `packages/sim/src/ship/` was listed and classified. All but two are
+published rules: the 24x24 board, the four phases, the 35-second planning window, the five-turn
+token lifetime, the range of 3, the disengage counter at 10 turns and its 2 per hit, the 2x2
+whirlpool, and the two collisions dealt between unequal ram classes. The two that are not published
+are `METER_BANDS`, which is the granularity at which a meter emits an event and changes no rule,
+and `MAXIMUM_SCATTER_ATTEMPTS`, a structural bound on board generation of the same kind slice 2
+already has in `MAXIMUM_FILL_ATTEMPTS`. No coupling rate is hard-coded anywhere; slice 2 made this
+claim in absolute terms and its review corrected it, so it is stated here with the exceptions named.
+
+**Two rate bugs were found by arithmetic rather than by a test.** The cannon-load rate loaded a
+cannon roughly every tick, a thousand times faster than its own recorded intent, because the
+accumulator carried at one `PER_MILLE` where the rate is expressed in milli-units per thousand
+ticks. And the brigand's blunder jitter was larger than every weight it perturbed. Both were
+invisible to the tests that covered those modules, because each test asserted the shape of the
+behaviour rather than its rate. The lesson for later slices: a tuning constant whose `_sources`
+entry states an intended outcome should have a test that asserts that outcome, and the cannon rate
+now does.
+
+**No floats reach state.** Every meter is a per-mille integer with a bounded accumulator, damage is
+carried in small-cannonball-equivalent micro units, and a test steps a ship for thousands of ticks
+and asserts `Number.isSafeInteger` on every numeric field it writes. Accumulators are zeroed when a
+meter clamps, so a hull pinned at zero damage cannot bank repair that would swallow the next point
+of wear.
+
+**Deviations from the spec written for this slice.** Whirlpools are implemented in `tiles.ts` and
+handled by the collision resolver, but the board generator never places one — the task named rocks
+and wind, and a 2x2 tile needs placement rules the wiki does not publish. The NPC crew rate is one
+number per allegiance rather than one per station, which is what decision 5 asked for and no more.
+The speed meter is computed from sailing and navigation and capped by bilge as documented, but
+nothing reads it until slice 4 gives it a league to cross.
+
+**Verified.** `npm run check` green from cold: dependency gate, import gate, three typecheck
+projects, lint, and the full suite. The headline claim is a test rather than a claim — an agent
+drives a sloop against a brigand across 24 seeds and reaches both a win and a loss, with no battle
+left unresolved inside 120 turns. Booty is asserted on a real win: the chest is paid, the brigand's
+hold is emptied into it, and a loss pays nothing.
