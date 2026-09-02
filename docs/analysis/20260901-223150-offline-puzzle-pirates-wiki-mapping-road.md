@@ -2310,3 +2310,57 @@ real market now and the test names `insufficient-cargo`. Verified by mutation: m
 fall back to `ship.bootyCargo` — what decisions 86 to 89 forbid — used to pass the whole suite and now
 fails exactly that test and nothing else. The two settlement tests and the two mass tests were each
 proved against the code they replace in the same way.
+
+### 2026-09-02 — development, slice 4c: pinning the world dispatcher (items 5 to 7)
+
+The half of slice 4c that changes no production code. Slice 4's review injected thirty faults and
+sixteen died; every survivor is closed here, and each was re-injected against this suite to confirm
+it now fails. The point of the task was never the tests themselves — it was that slice 5 copies
+whatever pattern it finds, and an untested dispatcher is the pattern that would spread.
+
+**What the surviving faults had in common.** Not missing tests — the dispatcher had tests. They
+asserted the wrong altitude. A command's result was checked for `accepted` or `rejected` without
+asking which, an event was checked for existing without asking what it carried, and a rounding test
+recomputed its expectation with production's own formula so that changing the formula changed both
+sides of the assertion together. Each of those reads as coverage and defends nothing.
+
+**The events.** `world.started`, `voyage.charted`, `voyage.ported`, `market.traded` and
+`booty.divided` are now pinned field by field in `tests/world/dispatch.test.ts`. The traded side
+cannot invert, the leg count cannot zero, the ported island cannot hard-code itself to the island the
+voyage left, and `crewCutPoe` cannot swap with `pirateSharePoe`.
+
+**A ninth unasserted rejection reason, found rather than listed.** The task named eight; diffing the
+rejection union against what the suite asserted turned up `not-at-island`. It appeared in the tests
+only as `chartVoyage`'s string return, so `port()`'s own guard was never reached and renaming both of
+its returns passed 412 of 412. It is now pinned by charting to Doyle and porting from the open-water
+league point between the two islands.
+
+**Two more survivors, closed after they were found.** The dispatcher's own `unknown-island` (in
+`startWorld` and `charter`) and `unknown-commodity` (in `trade`) were pinned only at `chartVoyage`
+and `buyCommodity`, so renaming them at the dispatcher passed the whole suite. Same shape as the
+ninth: a name asserted somewhere, and therefore assumed to be asserted everywhere.
+
+**Rounding was a fixture problem, not a coverage problem.** The crew-cut test divided numbers that
+divide exactly, so `floor` and `ceil` agreed. It now divides 1003 PoE against literal expected values
+of 250 and 301 rather than production's formula, which kills both `floor`-to-`ceil` mutants and the
+swapped-field mutant in one assertion. `small-cannon-ball` — the only commodity whose mass is not a
+whole kilogram, and the commodity the whole of items 1 to 4 turns on — was never bought or sold in any
+test; it is now traded at the free-hold boundary. And plundered units are asserted to be integers, so
+a fractional lot cannot reach the hash unnoticed.
+
+**`orientationCostOf` was tested by being handed its own answer.** Decision 76's entire point is which
+of the two league costs a leg pays, and the 40 % ratio was checked only by passing the constant
+directly to `legTicksRequiredOf`. Nothing measured a voyage's duration, so returning the diagonal cost
+unconditionally passed everything — across island pairs the routes use 52 horizontal legs against 88
+diagonal ones. A test now sails and measures.
+
+**One judgement call worth knowing about.** `tests/harness/world-commands.test.ts` opens on the
+default `marker-field` scenario, which has no balance and no ships, so its six well-shaped commands
+genuinely resolve to `balance-missing` and `world-not-started`. Those exact outcomes are what is
+pinned, rather than switching the session to `pillage-loop` so the commands would succeed. The
+smaller change kills the mutant that mattered — refusing every world command unconditionally passed
+17 of 17 — and it leaves the file's malformed-input half and its batch-atomicity test, which were
+already load-bearing, untouched. Switching scenarios would be a stronger test and a larger reshaping;
+it is not done here.
+
+`npm run check` green from cold at 435 tests, up from 412 at the `agent/develop` tip.

@@ -18,6 +18,8 @@ const TICK = 4242;
 const HOME_ISLAND: IslandId = 'alkaid';
 const DESTINATION: IslandId = 'doyle';
 const UNCOLONIZED_ISLAND: IslandId = 'edgars-choice';
+const UNKNOWN_ISLAND = 'sirius' as IslandId;
+const UNKNOWN_COMMODITY = 'kraken-ink' as CommodityId;
 const LEGS_TO_DESTINATION = 2;
 const OPEN_WATER_LEG_INDEX = 1;
 const TRADED_COMMODITY: CommodityId = 'small-cannon-ball';
@@ -197,6 +199,31 @@ test('a world that has already started refuses to start again', () => {
   assert.equal(state.pirate?.atIslandId, HOME_ISLAND);
 });
 
+test('an island the archipelago does not hold is refused, starting or charting', () => {
+  const opening = worldOf();
+
+  assert.equal(
+    reasonOf(applyWorldCommand(opening, { op: 'world.start', islandId: UNKNOWN_ISLAND })),
+    'unknown-island',
+  );
+  assert.equal(opening.pirate, null);
+
+  const [state, ship] = startedWorldOf();
+
+  assert.equal(
+    reasonOf(
+      applyWorldCommand(state, {
+        op: 'voyage.chart',
+        shipId: ship.id,
+        toIslandId: UNKNOWN_ISLAND,
+        voyageType: 'trade',
+      }),
+    ),
+    'unknown-island',
+  );
+  assert.equal(state.voyage, null);
+});
+
 test('every world command before the world starts is refused for want of a world', () => {
   const state = worldOf();
   const ship = createShip(state, { shipClass: 'sloop', allegiance: 'player' });
@@ -322,6 +349,34 @@ test('porting out of a running battle is refused, so the world is never stranded
   assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.port' })), 'battle-running');
   assert.notEqual(state.voyage, null);
   assert.equal(state.pirate?.atIslandId, null);
+});
+
+test('a commodity the catalogue does not list is refused on both sides of a trade', () => {
+  const [state, ship] = startedWorldOf();
+
+  assert.equal(
+    reasonOf(
+      applyWorldCommand(state, {
+        op: 'market.buy',
+        shipId: ship.id,
+        commodityId: UNKNOWN_COMMODITY,
+        units: TRADED_UNITS,
+      }),
+    ),
+    'unknown-commodity',
+  );
+  assert.equal(
+    reasonOf(
+      applyWorldCommand(state, {
+        op: 'market.sell',
+        shipId: ship.id,
+        commodityId: UNKNOWN_COMMODITY,
+        units: TRADED_UNITS,
+      }),
+    ),
+    'unknown-commodity',
+  );
+  assert.deepEqual(ship.cargo, []);
 });
 
 test('an island that never opened a dock refuses to trade', () => {
