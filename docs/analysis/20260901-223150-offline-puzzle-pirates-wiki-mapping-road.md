@@ -1296,3 +1296,29 @@ merely tick and hash, verified on a dirty session at tick 30420 with all four cu
 segmented `applyGravity` is algebraically and empirically equivalent to the old loop on crab-free
 boards; the harness survives malformed, oversized and prototype-polluting input without dying; and
 `settleTicks` reaches neither state nor score.
+
+### 2026-09-02 — development, slice 2c (OPP-14)
+
+The bonus-shape token layer and the maneuver meter, on
+`agent/feature/20260902-094000-opp-slice-2c-bilging-token-layer`, branched from the slice 2b head
+`af6d428` rather than from `agent/develop`: slice 2b is still in the test stage and `agent/develop`
+is at `eca8058`, which has no critters and no star levels to hang a token layer off. The task file
+sanctions the unmerged base explicitly.
+
+**The representation, decided before the adjacency rule was written**, because decision 58 gated
+this slice on it and everything else follows from it.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                              | Rationale                                                                                                                                                                                                                                             |
+| -- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 61 | Bonus halves live in a parallel `shapes: number[]` on `Board`, indexed exactly like `cells`             | `BoardCell` stays a bare number, so colours 0-15, empty at -1 and the three critter sentinels keep the meanings decision 46 gave them, and every board test written against them still holds. Widening the encoding would re-partition a namespace that board, gravity, resolve, critters and the fixtures all read directly |
+| 62 | A shape is `symbol * 2 + half`, 0 to 7, and -1 for none                                                | The eight published shapes fit one small non-negative integer, so `canonicalJson`'s safe-integer guard covers the payload for free and no enum string reaches hashed state                                                                              |
+| 63 | Gravity carries the shapes inside `compactSegment` rather than replaying the permutation afterwards     | `applyGravity` returns `CellFall { row, distance }` with no column, so the permutation cannot be reconstructed from its result. One traversal that moves both arrays is the only version that cannot drift out of lockstep                              |
+| 64 | The schema goes to 4, with a real v3 to v4 migration and a committed v3 save fixture                   | `Board` gains a field, so every v3 save lacks it. Slices 1 and 2 both set the precedent that a migration is written only when a committed older-schema fixture exercises it                                                                             |
+| 65 | Token pieces spawn from a new `bilge.tokens` stream, after the critter pass, only onto refilled colour cells | Decision 52: draws on `bilge.refill` would shift the pinned refill order. Spawning after critters and only where `isColourCell` holds keeps a shape off a crab, a puffer and a jelly, so a shape never rides something that is not a bilge piece         |
+| 66 | The spawn rate is stated as a conditional rate in its `_sources` entry                                  | Decision 53's honesty rule, and the crab-rate lesson the slice 2b review left: a gate over a spawn band silently turns a flat stated rate into a lie. The draw happens only on a refilled colour cell while performance is good, and the entry says so   |
+| 67 | A pair is two orthogonally adjacent matching halves, resolved once per settle, ascending index order, each half consumed at most once | The wiki says only that the halves are "adjacent" and states no orientation. Requiring the top half directly above the bottom would be a stricter rule than the source gives, with no published pair rate to calibrate the difference against. Ascending index order makes the pass deterministic without a draw |
+| 68 | A "bonus piece" on the meter is one completed symbol, that is one removed pair                          | Halves come in twos, so the published "3 bonus pieces fill the bilge meter" is only coherent if the unit is the completed symbol, and the sloop's published 3 / 6 silver / gold bilge row reads the same way                                            |
+| 69 | The meter is the sloop's bilge bar alone, capped at the published gold 6, with no consumer               | The task scopes out what the meter feeds, and the wiki's full `ManeuverMeter` is per ship, per shape, across three duties. A cap keeps a long session bounded without inventing a consumer                                                             |
+| 70 | The published 3 and 6 live in code, not in `balance.json`                                               | Decisions 44 and 54: the file is for invented numbers, and a sourced value in it blurs the line it exists to draw                                                                                                                                      |
