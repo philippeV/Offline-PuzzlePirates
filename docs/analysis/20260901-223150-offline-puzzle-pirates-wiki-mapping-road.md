@@ -1169,6 +1169,133 @@ level, so the shipped 0-2 band scores as a 7-star board. That is the deviation r
 of the development entry above, and the follow-up slice owns it along with star levels past 2. A
 census of all 132 swaps on 260 opening boards again found no line of six and no five-line clear, so
 `comboMultiplierByLineCount[5]` stays unreachable.
+
+### 2026-09-02 - development, slice 2b (OPP-13)
+
+The part of Bilging slice 2 deferred: the three critters, the star levels that gate them, star level
+as an input to scoring, and the below-waterline fall slowdown. Branched from `agent/develop` at
+`eca8058`, in a separate worktree because the main checkout was held by the slice 3 review.
+
+**The two items the slice 2 review named ahead of critters were taken first.** `sim.step` and
+`sim.runUntil` now snapshot before stepping and restore on failure, so a call refused by the event
+budget leaves `tick` and `stateHash` exactly where they were, as every other rejected call in the
+protocol already did. The tests were confirmed to fail on the unfixed code rather than merely to
+pass on the fixed one, and the boundary was re-measured independently across three seeds. And the
+suite no longer passes on a broken scorer: a hand-painted board now clears a 4-run plus a 3-run and
+asserts 16 points on `bilge.cleared`, `puzzle.scored` and `totalScore`, derived from `2L-3` and the
+7-star multiplier table by hand rather than from any recorded hash.
+
+**What is here.** Four new sim modules - `critters.ts`, `gravity.ts`, `swap.ts` and `move.ts` - and
+`resolve.ts` reshaped to take an optional opening clear so a poke or a jelly sweep can start a
+resolve that then cascades normally. `applyGravity` moved out of `board.ts` and became a segmented
+compaction that splits a column at each crab, which is byte-identical to the old loop on a board
+with no crabs. `bilge.poke` is a new command, `crab-not-swappable`, `not-a-puffer` and
+`poke-outside-board` are new rejection reasons, and `bilge.cleared` carries `settleTicks`.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                       | Rationale                                                                                                                                                                                                                                      |
+| -- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 46 | Critters are negative cell sentinels: crab -2, puffer -3, jelly -4                             | `BoardCell` stays a bare number, so no schema bump and no change to canonical hashing. Colours own 0-15 and empty owns -1 already                                                                                                              |
+| 47 | The crab anchors its column and climbs one row per resolve step, clearing above the water line | The only reading that satisfies all three published claims at once: immovable, cleared when it rises above the water line, and a bonus scaling with water height rather than its own height                                                    |
+| 48 | Crab bonus is `floor(9 * n^2 * bilgePerMille / 1000)`                                          | 9 is chosen so two crabs at full water score 36, inside the only published anchor: between a minimum bingo at 27 and a minimum sea donkey at 48                                                                                                |
+| 49 | The puffer pays 0 points per cell                                                              | "Score-negative unless it triggers a chain" only holds if the detonation itself pays nothing while the chain it causes scores normally                                                                                                         |
+| 50 | The jelly is cleared along with the colour it sweeps                                           | A jelly that survives its own sweep is immortal, since nothing else can remove it                                                                                                                                                              |
+| 51 | Every critter effect resolves inside a swap or a poke, never per tick                          | `tests/puzzle/determinism.test.ts` pins that `sim.step` never opens a puzzle RNG stream. A per-tick clear would need a refill draw and would break it                                                                                          |
+| 52 | Critters spawn from a new RNG stream, `bilge.critters`                                         | Adding draws to `bilge.refill` would shift the pinned refill draw order; a separate stream is independent by construction                                                                                                                      |
+| 53 | Each spawn band maps to exactly one critter; a locked gate yields no critter                   | A band that fell through to the next critter would make `crabSpawnPerMille` silently move the puffer rate, so the file would no longer state the rates it produces                                                                             |
+| 54 | The published 3 / 5 / 6 star gates live in code, not `balance.json`                            | Decision 6 and decision 44: the file is for invented numbers, and a sourced value in it blurs the line it exists to draw                                                                                                                       |
+| 55 | `maxStarLevel` is 7                                                                            | The level the wiki anchors: 7 colours published at 7 stars, and every critter unlocked at or below it                                                                                                                                          |
+| 56 | Star level scales the combo multipliers, floored at 1                                          | The published table is headed at 7-star level and the wiki says low levels score lower without publishing figures. Index 7 is 1000 per mille so the published table stays exact, and the floor keeps single lines at their published 3 / 5 / 7 |
+| 57 | The below-waterline slowdown is reported as `settleTicks`, not simulated                       | Decision 40 keeps resolution instant. The number gives slice 5 something to animate with while touching neither score nor state, which is all the wiki's timing claim needs before there is a renderer                                         |
+| 58 | The bonus-token layer is deferred to slice 2c                                                  | It needs a per-piece payload on every cell, which `BoardCell = number` has no room for. The task gated it on fitting without reshaping the engine, and it does not                                                                             |
+| 59 | `ResolveStep.kind` rather than inferring the rate from `chain === 0`                           | A poke and a jelly sweep both open a resolve with a step that is neither a combo nor a chain, and each scores at its own rate                                                                                                                  |
+| 60 | A separate `poke-outside-board` rejection reason                                               | `swap-outside-board` means the horizontal pair does not fit, which is not what a single-cell click can fail                                                                                                                                    |
+
+**The published anchors are reproduced.** Two crabs cleared at full water score 36, between a bingo
+at 27 and a sea donkey at 48. The 15 published combo rows still come out of `comboScoreOf` exactly,
+now asserted at star level 7, which is what the table always was. The three documented interactions
+hold: jelly plus crab does nothing and rejects, jelly plus puffer detonates the puffer and destroys
+the jelly, and a crab caught in an adjacent puffer's blast pays no bonus.
+
+**Nine invented constants**, each with a `_sources` entry: the three spawn rates, the three critter
+scores, the star scale table, and the two fall rates. `maxStarLevel` moved from 2 to 7 and its
+`_sources` entry was amended, since it no longer describes a band with no critter in it.
+
+**The opening board did not move.** Critter gates start at 3 stars and `startingStarLevel` is 0, so
+no critter can spawn on a fresh board and `bilge-opening.json`'s `cells` array is unchanged; only
+its hash moved, with the balance block.
+
+**A correction to a figure recorded this slice.** The event-budget boundary that the atomicity tests
+pin is not the 99992 / 99993 the slice 2 test stage measured. Raising `maxStarLevel` to 7 adds five
+more `puzzle.levelChanged` events to a long step, moving it to 99987 / 99988. The measurement was
+right when it was taken; it is balance-dependent, which is worth knowing before anyone quotes it
+again.
+
+**What is left for the follow-up.** The bonus-shape token layer, per decision 58. A development task
+is queued for it.
+
+### 2026-09-02 — independent review, slice 2b (OPP-13), PR 4
+
+A 4-lens review of PR 4. **Approved, no blocking findings**, and forwarded to the test stage. What
+follows is only what the review changed or added to the design record; the full non-blocking list is
+in `ISSUES.md` under the matching heading.
+
+**The interpretive core survived independent re-derivation.** Decision 47 and decision 48 were the
+load-bearing judgements of this slice, so the review re-derived them from
+`docs/wiki-map/01-duty-puzzles.md` without reference to this repo's constants. A minimum bingo is
+`3x3x3` = `(3+3+3) x 3` = 27 and a minimum sea donkey is `3x3x3x3` = `12 x 4` = 48, so the published
+interval is (27, 48) and the shipped 36 sits inside it. The minimum-instance reading is the only
+coherent one: the largest published bingo, `3x5x5` = 51, already exceeds 48, so any other reading
+makes the interval empty. Decision 47's climb model is a defensible reading of wiki:99 rather than a
+contradiction of it, because under a static crab a chain could not free crabs at all — which
+wiki:97 says it can — and a crab spawned in the bottom rows would anchor its column permanently. All
+15 published combo rows reproduce exactly at star 7, and the efficiency matrix with them.
+
+**Two design consequences the slice did not record.**
+
+- **The crab's spawn rate is conditional, and the condition almost never holds.** Decision 53 chose
+  one critter per band specifically so `balance.json` would state the rates it produces. The
+  water-line gate on the crab band defeats that for the crab alone: `applyGravity` puts every vacancy
+  at the top of its column segment, so refills land dry and a crab-band draw over a dry cell yields
+  nothing rather than falling through. Measured, the effect is not a small correction —
+  **0 crabs across 5 seeds x 400 swaps at star 7 with the board fully flooded**, against a stated 15
+  per mille, while puffers and jellies spawned freely. The crab mechanic is effectively absent from
+  normal play at the shipped constants. This is a balance consequence rather than a defect against
+  the written design, which is why it did not block, but it is the first thing the follow-up should
+  settle: either draw crab spawns only among below-water refills, or restate the rate as the
+  conditional one it is. The rule itself also wants a decision row of its own — it is a consequence
+  of decision 47, since a crab spawning dry would clear instantly for a free bonus.
+- **The climb and the spawn write to the same cells in one step.** `settleStep` captures `refilled`
+  before `climbCrabs` and then hands that stale list to `spawnCritters`, so a crab that climbs into a
+  refilled cell and stays at or below the water line is overwritten by the critter spawned there.
+  Rare, but it contradicts decision 47's "leaves the board only above the water line or in a blast".
+  The ordering inside `settleStep` is therefore load-bearing in a way the decision table does not
+  say, and the follow-up should either recompute `refilled` after the climb or spawn before it.
+
+**`settleTicks` is measured from survivors only.** Decision 57 gave it no consumer, so this cost
+nothing yet, but the number is derived from `CellFall`s and a fall is recorded only for a surviving
+cell that moved. A clear with nothing surviving above it therefore reports zero: a full 12-cell
+column clear reports 0 ticks while a bottom-row 3-run reports 6. Slice 5 should not consume it as a
+settle-time estimate in its present shape.
+
+**Test-strength evidence, for the record.** 25 mutations were applied across `scoring.ts`,
+`critters.ts`, `gravity.ts`, `move.ts` and `resolve.ts`: 19 killed, 1 proved an equivalent mutant,
+and 2 real survivors — chain-step scoring (decision 59 is untested; collapsing `ResolveStep.kind` to
+`combo` stays green while moving a cascade from 4 points to 5) and the water-line boundary of the
+fall rate. The scoring-wiring test the slice 2 review required is present, hand-derived and
+demonstrably fails when the wiring is cut. The re-blessed fixtures were confirmed not to be carrying
+the suite, with one exception worth knowing: chain-step scoring is guarded by the replay fixture and
+by nothing hand-derived.
+
+**Verified and correct, so that the test stage need not repeat it:** the opening board array is
+byte-identical to the pre-slice one and only its hash moved; `bilge.refill` ends at an identical
+cursor after 40 scripted clearing swaps, so the pinned draw order is untouched; `sim.step` opens no
+puzzle stream across 50000 idle ticks; the atomicity fix restores the entire canonical state, not
+merely tick and hash, verified on a dirty session at tick 30420 with all four cursors advanced; the
+segmented `applyGravity` is algebraically and empirically equivalent to the old loop on crab-free
+boards; the harness survives malformed, oversized and prototype-polluting input without dying; and
+`settleTicks` reaches neither state nor score.
 ### 2026-09-02 — development, slice 3 (OPP-10)
 
 The ship as a state machine and the turn-based sea battle, built on
@@ -1892,6 +2019,237 @@ division, with the proceeds going back into the chest. That is a second selling 
 price surface, and the loop closes without it, so it is not built — `market.sell` sells from the
 hold only.
 
+### 2026-09-02 — physical test of slice 2b (OPP-13), PR 4
+
+The test stage drove the real `pp-harness.ts` over stdio from the main checkout on the feature
+branch, never a worktree, so the `node_modules/@opp/*` trap the task warned about could not fire.
+The cold baseline reproduced: `npm run check` green at **130 tests** before the integration merge
+below, **286** after it.
+
+**Every behaviour the slice claims was reproduced through the protocol.**
+
+The star ramp is exact. A `bilge-session` sits at star 0 and steps one level per 3600 ticks to a
+hard cap: star 3 arrives at tick 10800 and not at 10799, star 7 at 25200, and tick 28800 is still
+star 7. The colour count follows it — 200 swaps at each of stars 0, 2, 4, 6 and 7 left a board whose
+highest colour index was 3, 4, 5, 6 and 6 against a `colourCountByStarLevel` of 4, 5, 6, 7 and 7.
+An idle board floods to `waterLineRow` 3 and `bilgePerMille` 1000 by tick 7200 and stays there.
+
+`bilge.poke` behaves as decisions 49 and 60 describe. A puffer at (10,1) cleared exactly
+`[9,10,11,21,22,23,33,34,35]` — the clipped 3x3 — for **0 points**, took the move counter from 20 to
+21, advanced no tick, and the chain it opened scored normally at 3 cells for 3 points, carrying
+`totalScore` from 34 to 37. Poking a colour gives `not-a-puffer`; poking (12,0), (0,12) and (-1,0)
+gives `poke-outside-board`; all four leave the state hash untouched.
+
+The jelly does both published things. Swapped onto colour 0 with 32 of that colour on the board, the
+opening step cleared **33** cells — the colour plus the jelly itself, decision 50 — for 33 points at
+one per cell, and left no jelly. Swapped onto a puffer it detonates the puffer **first**: the
+opening clear is the 3x3 centred on the puffer's own square, which contains the jelly, for 0 points,
+and both critters are gone.
+
+Star level scales scoring and never penalises it. Restoring one snapshot per swap, every scoring
+swap on 15 boards was played once at star 0 and once at star 7 with the board byte-identical:
+**527 clears of identical geometry, 69 scored strictly higher at star 7, 458 scored the same, and
+none scored lower.** The equal ones are single lines, whose multiplier is floored at 1 — decision
+56 holding exactly. A three-line clear went 9 to 27, a 3-and-4 line clear 8 to 16.
+
+`settleTicks` is reported and inert. It was present on all 112 `bilge.cleared` events measured,
+every value a multiple of 3, and the flooded board's histogram sits where the water rate puts it
+(18 dominant, three cells at 6 ticks) against the dry board's (9 dominant, three cells at 3).
+`totalScore` equalled the sum of step points exactly on both. The string `settleTicks` does not
+occur anywhere in the canonical state, and two identical runs at star 3 end on the same hash.
+
+Save, load and replay round-trip with critters on the board. A `snapshot.restore` on a session
+carrying a jelly returned the same hash and a byte-identical board after 25 divergent moves; the
+only difference on read-back is key **order**, which `state.get` reports as stored and the canonical
+hash does not see. A 120-command log replayed through `replay.verify` under its own scenario to
+`ok: true` at the recorded hash, and to `ok: false` without the scenario, as the skill warns. At the
+sim level — there is no save/load RPC — a session saved at star 6 with two puffers on the board
+reloaded to the same hash and stayed identical through 40 further moves and 120 ticks.
+
+**The two review findings, observed as gameplay.**
+
+*Crabs are reachable, but at about a fourteenth of their stated rate.* The review measured 0 crabs
+in 5 seeds x 400 swaps and asked whether they are unreachable at all. They are not: across
+**8 seeds x 400 moves at star 7 on a fully flooded board, 5 crabs spawned, climbed and cleared**,
+one paying a 13-point step. The mechanism is now measured rather than inferred. `waterRowsOf` keeps
+three dry rows at every flood level, so `waterLineRow` bottoms out at **3**, and `applyGravity`
+stacks a step's vacancies at the top of the column; a refill can therefore only land at or below the
+water line when a single column loses **4 or more** cells in one settle step. Over 838 settle steps
+that happened often enough to put **229 of 4828 critter draws — 4.74 per cent** below the water
+line. At `crabSpawnPerMille` 15 that predicts 3.4 crabs; 5 were seen. The effective crab rate in
+play is therefore about **1 per mille of refills against a stated 15**, and the nominal expectation
+over the same draws would have been 72. This is a tuning-and-mechanism question, not a broken
+feature: every crab that did spawn behaved exactly as decision 47 and the wiki describe.
+
+*A player almost never sees a crab between moves.* Because eligible vacancies sit at row 3 and
+`climbCrabs` runs before `crabsAboveWaterLine` inside the same settle step, a crab spawned at the
+water line is cleared on the next step of the **same** resolve. Across 2000 moves the board carried
+a crab between moves **zero** times. The wiki's "denies its square until it climbs out" is not
+observable at the current tuning.
+
+*The stale-`refilled` overwrite was not observed.* No crab vanished mid-water without a `crabs`
+entry and without paying. With only 5 crabs in the sample this excludes nothing — the code path at
+`resolve.ts:61-67` is unchanged and the finding stands as reviewed.
+
+**Nothing blocking was found, so PR 4 was merged. Two decisions were taken to get there.**
+
+74. *The integration merge is the test stage's to make.* PR 4 was `CONFLICTING` because slice 3
+    landed on `agent/develop` after this branch left it. `agent/develop` was merged into the branch
+    at `e40293d`; the resolutions are in that commit message. One of them matters beyond the merge:
+    git auto-merged `sim.ts` cleanly to slice 3's explicit command routing, which **silently dropped
+    `bilge.poke`**, because slice 2b had reached `applyPuzzleCommand` through a fallthrough. A clean
+    auto-merge was wrong, the typecheck caught it, and `bilge.poke` is routed explicitly now. Every
+    probe above was re-run on the merged tree and reproduced byte for byte apart from the state hash.
+75. *PR 4 is merged with a merge commit, not a squash.* This repeats the deviation recorded for
+    PR 3 and for the same reason: squashing detaches the history that slices 4 and 5 are branched
+    from and mints exactly the conflict resolved here. It remains raised for the human in
+    `ISSUES.md` rather than settled quietly.
+
+### 2026-09-02 — independent review of slice 4 (PR 5, cycle 0)
+
+Four lenses ran concurrently against the branch head `7306a53`, each in its own worktree. The review
+approved: nothing met the blocking test, and the slice went forward to the test stage. Everything
+found is recorded in `ISSUES.md` under the same date. What follows is only what the review changed or
+revealed about the *design*, which is what the next agent needs.
+
+**Two recorded decisions are not implemented as written, and both should be read as open rather than
+settled.**
+
+Decision 83 states `stepWorld`'s rule as ownership — "a battle nobody sailed into is not the world's
+to tidy up". The code guards on `state.voyage === null`, which asks whether *a* voyage is running, not
+whether *this* voyage owns the battle; `settleEncounter` never reads `voyage.shipId`. A probe on the
+pillage-loop scenario at seed 2 — chart an `evade` voyage, which can never spawn an encounter, then
+hand-start a battle and disengage — has the world strike the brigand off a battle no voyage owned.
+Slice 3's regression test passes only because it never has a voyage running. The same seam lets
+`battle.disengage` followed by `voyage.port` orphan a concluded battle until the next voyage's first
+tick. **Decision 83 stands as the intended rule; the implementation is a weaker approximation of it
+and is queued for repair.**
+
+Decision 88 claims the shared mass budget "makes division mass-neutral and removes any need for a
+capacity check when the chest empties". It is not mass-neutral. Mass is floored per lot array, so
+merging the chest into the hold re-floors the combined sum and can gain a kilogram —
+`small-cannon-ball` at 7100 g is the only commodity that triggers it, and it is buyable and
+plunderable. **The conclusion drawn from decision 88 — that no capacity check is needed — does not
+follow from its premise, and a check is queued.** The rest of the decision holds: the budget genuinely
+is shared, and a full hold genuinely does refuse plunder.
+
+**The tuning is tighter than its provenance claims, and the encounter rate is the case that matters.**
+Six `_sources` entries describe outcomes the constants do not deliver, all siblings of the
+`tradeSpawnPenaltyPerMille` defect this slice already found and fixed. The consequential one is
+`world.encounterChancePerMille`: because a pillage always adds both the difficulty term and the 300
+pillage bonus, the base 250 is never the per-leg chance. The real range across the chart is 550 to
+1000 per mille, and the only six-leg route out of Alkaid yields **4.61 expected battles** against the
+entry's stated 1.5. The entry says "a voyage rather than a gauntlet"; the tuning delivers the
+gauntlet. This is a balance decision the roadmap will have to take deliberately once a renderer makes
+a pillage observable — recorded here so slice 5 does not inherit the number as though it were
+measured.
+
+**The verification machinery held, and was checked rather than trusted.** The five re-blessed fixtures
+were independently reproduced: a live state rolled back across exactly the slice-4 delta reproduces
+every committed old hash, and every checkpoint reproduces its new hash live. No tick count, marker
+position or meter value moved. The diverged replay twin still differs from its sibling in exactly the
+tick-5 checkpoint, with its `note` intact. The layering gates were proved to enforce over the new
+`world/` subdirectory by planting a violation in a nested directory and watching them exit 1 — they
+are depth-agnostic by construction, so the fact that they were not modified for `world/` is correct
+rather than an oversight. The `_sources` bijection test bites in both directions.
+
+**Determinism is sound, including the part that looked riskiest.** The two new streams are lazily
+created and therefore path-dependent, but fully determined by the same inputs, and `canonicalJson`
+sorts keys so insertion order never leaks into the hash. Save/load and snapshot/restore were cut at
+six points across four seeds, including cuts inside a running battle, and reproduced identically each
+time. No world code draws from a pre-existing stream.
+
+**The tests defend the arithmetic and not the protocol.** Thirty injected faults, full suite each:
+sixteen died, fourteen survived, and the survivors cluster entirely in the dispatcher. Five of eight
+new events are asserted nowhere, nine of eighteen new rejection reasons are never asserted by name,
+and the one test covering this slice's own headline correction — that plunder is unsellable until
+divided — never reaches `sellCommodity` at all, because its fixture has no market. The production
+code is correct in every case probed; it is the protection that is missing. **This is the pattern
+slice 5 must not copy:** new events and rejection reasons need a test that names them, not a test that
+asserts the status was one of two values.
+
+**A layering drift worth knowing about.** `battle/booty.ts` now imports `cargoLotsMassKgOf` from
+`world/cargo.ts`, so the battle layer depends on the world layer. Decision 80 meant to keep the
+world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
+the dependency runs opposite to the stated intent, and slice 5 should not deepen it.
+
+### 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
+
+Three threads drove real `pp-harness` processes over stdio against the merged branch `6808738`. The
+slice passed and was merged into `agent/develop`. Full findings are in `ISSUES.md` under the same
+date; what follows is what the test changed about the design record.
+
+**The merge with slice 2b was the first half of the work.** PR 4 landed while slice 4 was under
+review, colliding in six files. `balance.json` was merged programmatically rather than by hand — a
+union of both sides, checked to 71 constants against 71 `_sources` entries with the bijection intact,
+`bilging.maxStarLevel` the only key the two sides disagreed on and only develop having changed it.
+The three bilging fixtures were re-blessed from live runs and each proven by rolling back across
+exactly the slice-4 delta to reproduce develop's committed hash. `npm run check` is 412/412 exit 0
+from cold on the merged result, up from 383 by slice 2b's tests.
+
+**The `_sources` prose for the encounter rate is wrong, and now it is wrong with evidence.** 540 real
+voyages — six destinations, three voyage types, thirty seeds — put the six-leg Keris pillage at 4.50
+battles against the 4.61 the review predicted statically and the "about one and a half" the entry
+claims, and the eight-leg McGuffin's route at 6.50 against a predicted 6.60. Observed per-leg rates
+track `550 + difficulty/2`; every one of the 60 legs sailed at difficulty 875 or above carried a
+brigand, and the arrival leg at McGuffin's Isle is a certainty hit 30 times out of 30. **The tuning
+value is not being changed here** — this is recorded so the decision to keep or move it is taken
+deliberately, with the measurement in hand, rather than inherited from a sentence that does not
+describe the code.
+
+**Decision 86 is half-implemented, and it predates slice 4.** Its premise is that coin taken is not
+coin owned until it is divided. `awardBooty` splits the roll — half straight into `winner.poe`, half
+into `bootyPoe` — so `booty.divide` only ever divides half of what a pillage rolls. The line is from
+slice 3; slice 4 added `bootyCargo` beside it without revisiting the coin, which is how the goods half
+and the coin half came to follow different rules. **Goods obey decision 86 exactly; coin does not.**
+
+**Decision 89's justification is unreachable with the shipped tuning.** The guard was widened because
+"a roll can pay no coin"; with `booty` as shipped, `rollBooty` yields 600 to 1000 PoE and `awardBooty`
+always leaves at least 300 in the chest, so a goods-but-no-coin chest cannot occur. The guard is
+correct and harmless — only its reason is dead, and it will become reachable the moment the coin split
+above is revisited.
+
+**A loss is nearly free, but not free, and this corrects the review.** Over 55 isolated losses the
+complete set of fields that ever change is `shipCount`, `damageTakenSmallMicro` and
+`meleeDamageSmallMicro`. No coin, cargo, chest, crew or rum moves. But melee damage is monotone —
+only ever incremented, with no repair path anywhere in the codebase, where hull damage heals through
+carpentry — so the win rate decays inside a single voyage from 17.3% on the first battle to 0% by the
+third. The review's "evade buys nothing" was too strong: evade buys 57% of the voyage time and a ship
+whose boarding strength is not permanently spent. **Whether melee damage should be repairable is an
+open design question this slice surfaced rather than created.**
+
+**Determinism across a process boundary is proven, not assumed.** 55 cut points over six seeds, each
+with the writing process `SIGKILL`ed and a fresh one loading the save: load hash, final hash, final
+tick, RNG stream set, cursor values and tail command results matched on every one. Nineteen cuts
+landed inside a running battle, all mid-turn. Seven more were placed tick-by-tick around the exact
+moments slice 4's lazily-created streams come into existence, including two cuts one tick apart
+straddling the birth of `world.plunder` and `booty.poe`; both sides agreed on which streams existed.
+The pass was made meaningful by a negative control — perturbing an RNG cursor by 1 or deleting a
+stream entry diverges both hashes. One thing learned for future triage: **nudging a marker diverges
+the load hash but the final hash re-converges**, because marker drift clamps at the field edge and is
+an absorbing state. The marker domain is a weak canary over long runs; the RNG cursors are the strong
+one.
+
+**`session.load` arrived without `session.save`.** Decision 84 exists because "save, reload, identical
+hash" was undrivable over the protocol, and it is still only half closed: `session.save` answers
+`method-unknown`. A save is obtainable as `state.get {pointer:""}` through `JSON.stringify`, which
+round-trips byte-exactly, so nothing is blocked — but the decision's stated goal is not met by the
+method set as shipped.
+
+**One review finding was corrected by the merge itself.** The review measured, on the pre-merge
+branch, that a save with a bogus `voyage.route` advanced a tick and lost its events before throwing.
+Slice 2b's `atomically` wrapper around `stepWithinEventBudget` arrived with `agent/develop` and
+restores the session exactly; driven over the protocol, `/tick` and `/voyage` are both unchanged after
+the error. What survives is only that such saves are accepted at load time and surface as
+`internal-error` rather than `invalid-params`.
+
+**Both settlement-guard defects reproduce over the wire, and the second is the urgent one.** The
+review found them in-process; the test confirmed both over the protocol with matched controls. Defect
+1 — the world striking a brigand off a battle no voyage owned — needs a `battle.start` issued during a
+voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `battle.disengage`
+followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
+stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
+voyage's first tick. The queued repair task has been reordered to put defect 2 first.
 ### 2026-09-02 — development, slice 5: the isometric renderer and the playable client (OPP-12)
 
 The slice that turns a simulation into a game. Two new packages — `packages/view` (PixiJS v8) and

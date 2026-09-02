@@ -32,6 +32,21 @@ function fileReplacing(name: string, key: string, value: unknown): Record<string
   return fileWith(name, { ...FILE[name], [key]: value });
 }
 
+test('every tuning key the file declares is read into the balance', () => {
+  const balance = balanceOf(FILE) as unknown as Record<string, Record<string, unknown>>;
+
+  for (const name of BLOCK_NAMES) {
+    const declared = Object.keys(FILE[name] ?? {}).filter((key) => !key.startsWith('_'));
+    const read = Object.keys(balance[name] ?? {});
+
+    assert.deepEqual(
+      read.sort(),
+      declared.sort(),
+      `the ${name} block declares keys the parser never reads, or reads keys it does not declare`,
+    );
+  }
+});
+
 test('the committed balance file parses into every declared block', () => {
   const balance = balanceOf(FILE);
 

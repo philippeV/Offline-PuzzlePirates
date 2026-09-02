@@ -1,7 +1,16 @@
 import { Container, Graphics, Rectangle, type FederatedPointerEvent } from 'pixi.js';
 
-import { BILGE_RULES, EMPTY_CELL, flatIndexOf, ratingOf, swapPartnerOf } from '../client/rules.ts';
-import type { Board, PuzzleState, SimEvent } from '../client/rules.ts';
+import {
+  BILGE_RULES,
+  CRAB_CELL,
+  EMPTY_CELL,
+  JELLY_CELL,
+  PUFFER_CELL,
+  flatIndexOf,
+  ratingOf,
+  swapPartnerOf,
+} from '../client/rules.ts';
+import type { Board, BoardPosition, PuzzleState, SimEvent } from '../client/rules.ts';
 import type { Scene, SceneContext } from './scene.ts';
 import {
   HUD_ACCENT,
@@ -76,6 +85,12 @@ const CELL_MARKERS: MarkerShape[] = [
 const DEFAULT_BOARD_WIDTH = 12;
 const DEFAULT_BOARD_HEIGHT = 12;
 const SEA_BACKDROP = 0x0a1219;
+
+const CRITTER_ART: Record<number, { fill: number; shape: MarkerShape }> = {
+  [CRAB_CELL]: { fill: 0xd0442f, shape: 'plus' },
+  [PUFFER_CELL]: { fill: 0xe8a33d, shape: 'star' },
+  [JELLY_CELL]: { fill: 0xb478d8, shape: 'ring' },
+};
 const EMPTY_FILL = 0x131c25;
 const CELL_GAP = 2;
 const CASCADE_SWAP_MS = 130;
@@ -119,7 +134,7 @@ export function createPuzzleScene(context: SceneContext): Scene {
   const bilge = createMeterBar('Bilge', PANEL_INNER_WIDTH, HUD_WATER);
   const caption = createText('', 14, HUD_ACCENT);
   const hint = createParagraph(
-    'Click a tile to swap it with the tile on its right. The last column cannot start a swap.',
+    'Click a tile to swap it with the tile on its right. The last column cannot start a swap. Click a puffer to pop it.',
     12,
     HUD_DIM_INK,
     PANEL_INNER_WIDTH,
@@ -306,11 +321,15 @@ export function createPuzzleScene(context: SceneContext): Scene {
     renderPanel(puzzle);
   }
 
-  function performSwap(x: number, y: number): void {
+  function performAt(x: number, y: number): void {
     const board = boardOf();
-    if (board === null || !isSwapOrigin(board, x, y)) return;
+    if (board === null) return;
+    const pokes = board.cells[flatIndexOf(board, x, y)] === PUFFER_CELL;
+    if (!pokes && !isSwapOrigin(board, x, y)) return;
     const before = [...board.cells];
-    const result = client.dispatch({ op: 'bilge.swap', x, y });
+    const result = client.dispatch(
+      pokes ? { op: 'bilge.poke', x, y } : { op: 'bilge.swap', x, y },
+    );
     if (result.status === 'rejected') return;
     cascade = cascadeStepsOf(before, result.events, board);
     cascadeIndex = 0;
@@ -342,6 +361,16 @@ export function createPuzzleScene(context: SceneContext): Scene {
     return flatIndexOf(board, x, y);
   }
 
+  function tileUnder(event: FederatedPointerEvent): BoardPosition | null {
+    const board = boardOf();
+    if (board === null) return null;
+    const local = event.getLocalPosition(boardLayer);
+    const x = Math.floor(local.x / placement.cellSize);
+    const y = Math.floor(local.y / placement.cellSize);
+    if (x < 0 || y < 0 || x >= board.width || y >= board.height) return null;
+    return { x, y };
+  }
+
   function onPointerMove(event: FederatedPointerEvent): void {
     hovered = cellUnder(event);
   }
@@ -351,10 +380,9 @@ export function createPuzzleScene(context: SceneContext): Scene {
   }
 
   function onPointerTap(event: FederatedPointerEvent): void {
-    const board = boardOf();
-    const index = cellUnder(event);
-    if (board === null || index === null) return;
-    performSwap(index % board.width, Math.floor(index / board.width));
+    const tile = tileUnder(event);
+    if (tile === null) return;
+    performAt(tile.x, tile.y);
   }
 
   function moveCursor(dx: number, dy: number): boolean {
@@ -366,7 +394,7 @@ export function createPuzzleScene(context: SceneContext): Scene {
   }
 
   function swapAtCursor(): boolean {
-    performSwap(cursorX, cursorY);
+    performAt(cursorX, cursorY);
     return true;
   }
 
@@ -464,6 +492,15 @@ function drawCell(graphic: Graphics, colour: number, x: number, y: number, size:
   const corner = Math.max(3, side * 0.18);
   if (colour === EMPTY_CELL) {
     graphic.roundRect(left, top, side, side, corner).fill({ color: EMPTY_FILL, alpha: 0.7 });
+    return;
+  }
+  const critter = CRITTER_ART[colour];
+  if (critter !== undefined) {
+    graphic.roundRect(left, top, side, side, corner).fill({ color: critter.fill });
+    graphic
+      .roundRect(left, top, side, side, corner)
+      .stroke({ width: 2, color: SEA_BACKDROP, alpha: 0.9 });
+    drawMarker(graphic, critter.shape, left + side / 2, top + side / 2, side * 0.3, inkOn(critter.fill));
     return;
   }
   const fill = CELL_COLOURS[colour % CELL_COLOURS.length] ?? SEA_BACKDROP;

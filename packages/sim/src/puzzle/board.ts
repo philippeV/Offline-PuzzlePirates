@@ -2,6 +2,9 @@ export type BoardAxis = 'horizontal' | 'vertical';
 export type BoardCell = number;
 
 export const EMPTY_CELL = -1;
+export const CRAB_CELL = -2;
+export const PUFFER_CELL = -3;
+export const JELLY_CELL = -4;
 
 export interface Board {
   width: number;
@@ -32,6 +35,14 @@ export function cellAt(board: Board, x: number, y: number): BoardCell | undefine
   return board.cells[flatIndexOf(board, x, y)];
 }
 
+export function isColourCell(cell: BoardCell | undefined): cell is BoardCell {
+  return cell !== undefined && cell >= 0;
+}
+
+export function rowOf(board: Board, index: number): number {
+  return Math.floor(index / board.width);
+}
+
 export function swapPartnerOf(rules: BoardRules, x: number, y: number): BoardPosition {
   if (rules.swapAxis === 'horizontal') return { x: x + 1, y };
   return { x, y: y + 1 };
@@ -51,24 +62,12 @@ export function clearCells(board: Board, cells: number[]): void {
   for (const index of cells) board.cells[index] = EMPTY_CELL;
 }
 
-export function applyGravity(board: Board): void {
-  for (let x = 0; x < board.width; x += 1) collapseColumn(board, x);
-}
-
-export function refillBoard(board: Board, draw: () => BoardCell): void {
+export function refillBoard(board: Board, draw: () => BoardCell): number[] {
+  const refilled: number[] = [];
   for (let index = 0; index < board.cells.length; index += 1) {
-    if (board.cells[index] === EMPTY_CELL) board.cells[index] = draw();
+    if (board.cells[index] !== EMPTY_CELL) continue;
+    board.cells[index] = draw();
+    refilled.push(index);
   }
-}
-
-function collapseColumn(board: Board, x: number): void {
-  const survivors: BoardCell[] = [];
-  for (let y = 0; y < board.height; y += 1) {
-    const cell = cellAt(board, x, y);
-    if (cell !== undefined && cell !== EMPTY_CELL) survivors.push(cell);
-  }
-  const vacated = board.height - survivors.length;
-  for (let y = 0; y < board.height; y += 1) {
-    board.cells[flatIndexOf(board, x, y)] = survivors[y - vacated] ?? EMPTY_CELL;
-  }
+  return refilled;
 }

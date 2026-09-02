@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  CRAB_CELL,
   EMPTY_CELL,
+  JELLY_CELL,
   MINIMUM_DRY_ROWS,
   MINIMUM_RUN_LENGTH,
   MINIMUM_WATER_ROWS,
   PER_MILLE,
+  PUFFER_CELL,
   applyGravity,
   clearCells,
   findRuns,
@@ -33,6 +36,30 @@ test('gravity drops each column to the bottom preserving its order', () => {
   applyGravity(board);
 
   assert.deepEqual(board.cells, [EMPTY_CELL, EMPTY_CELL, EMPTY_CELL, 2, 1, 4, 7, 6]);
+});
+
+test('a crab anchors its column so each segment compacts on its own', () => {
+  const above: Board = { width: 1, height: 5, cells: [1, 2, CRAB_CELL, 3, 4] };
+  clearCells(above, [1]);
+  applyGravity(above);
+
+  assert.deepEqual(above.cells, [EMPTY_CELL, 1, CRAB_CELL, 3, 4]);
+
+  const below: Board = { width: 1, height: 5, cells: [1, 2, CRAB_CELL, 3, 4] };
+  clearCells(below, [3]);
+  applyGravity(below);
+
+  assert.deepEqual(below.cells, [1, 2, CRAB_CELL, EMPTY_CELL, 4]);
+});
+
+test('a critter never forms a run and never extends one', () => {
+  const crabs: Board = { width: 4, height: 1, cells: [CRAB_CELL, CRAB_CELL, CRAB_CELL, CRAB_CELL] };
+  const split: Board = { width: 5, height: 1, cells: [1, 1, PUFFER_CELL, 1, 1] };
+  const trailing: Board = { width: 3, height: 1, cells: [1, 1, JELLY_CELL] };
+
+  assert.deepEqual(findRuns(crabs, MINIMUM_RUN_LENGTH), []);
+  assert.deepEqual(findRuns(split, MINIMUM_RUN_LENGTH), []);
+  assert.deepEqual(findRuns(trailing, MINIMUM_RUN_LENGTH), []);
 });
 
 test('a refill leaves no empty cell and draws in ascending index order', () => {
