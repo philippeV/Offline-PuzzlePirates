@@ -2639,3 +2639,64 @@ voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `b
 followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
 stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
 voyage's first tick. The queued repair task has been reordered to put defect 2 first.
+
+## 2026-09-03 — independent review of the slice 4b repair (PR 7, cycle 1)
+
+Four lenses ran concurrently against `caf8cec`, each in its own worktree. The review approves and
+the slice goes to the test stage. `cycle` stays 1. Full findings are in `ISSUES.md` under the same
+heading; what follows is only what the review changed about the design record.
+
+**The invariant of decision 124 is closed by construction, not merely observed at two altitudes.**
+`stowLot` has exactly three production callers: the buy path, guarded by `isShipSupply`; the plunder
+path, which can now only receive a `PLUNDERABLE_COMMODITY_IDS` id; and `transferLots`, whose sole
+caller `divideBooty` can only propagate a lot some other route already stowed. `battle/booty.ts`
+moves counters, never lots, and nothing else in `packages/sim` or `packages/harness` assigns to
+`.cargo` or `.bootyCargo`. There is no fourth route. The one unguarded route is `deserialise`, which
+decision 123 already accepts.
+
+The two assertions are independent, and the review proved it in both directions rather than assuming
+it: an off-by-one on the draw bound is caught by the encounter test only, and a `stowLot` call
+injected into `divideBooty` is caught by the soak only.
+
+**Decision 122's stated rationale is not the property the code has.** The pre-filtered array was
+chosen over a re-roll to keep stream consumption constant. `nextIntInRange` rejection-samples above
+`2^32 - (2^32 % span)`, and `2^32 % 16 === 0` while `2^32 % 11 === 4` — so the old sixteen-id draw
+consumed exactly one uint32 always and the new eleven-id draw has a ~1e-9 chance of consuming more.
+Consumption became marginally *less* constant. The decision remains right — a re-roll varies with
+the draw's history, which is far worse — but for the reason that one draw beats a variable number,
+not because eleven is as clean as sixteen. Nothing to change in the code.
+
+**The narrowed draw removed a mass leak, which the cost note does not mention.** All eleven
+plunderable ids weigh 1000 g/unit, so the materialised lot's mass now equals the counter it zeroes
+exactly. Under the sixteen-id draw a heavy ball floored units down and deleted the remainder from
+the laden hold — a 40 kg chest drawn as `large-cannon-ball` became 1 unit and lost 47% of itself.
+Pillage voyages therefore come home slightly heavier, in the opposite direction to the reward shift
+the analysis did record. That reward shift is also asymmetric in a way worth stating: expected value
+*falls*, roughly 550 to 480 base PoE per plunder, because the two rum ids drew 40 units at the
+refined price and took the high-value tail with them. No spec pins either number.
+
+**The determinism suite cannot see a change to world RNG consumption.** Decision 122 predicted the
+hashes would move and the build entry correctly recorded that they did not. The structural reason:
+`tests/sim/determinism.test.ts` is entirely self-comparative, and every literal hash in the repo
+lives in the bilge and marker fixtures, whose golden has no ships. No pinned artifact covers voyage,
+encounter, plunder, market or battle. This is a standing gap, not a property of this change, and it
+is filed as a coverage rule rather than as an instance.
+
+**Every mutation claim in the build entry reproduces, including the contested one.** Reverting the
+draw to sixteen ids fails the soak invariant on exactly 4 of the 12 seeds — `7919: 2 swill`,
+`71271: 2 swill`, `79190: 2 grog`, `95028: 2 small-cannon-ball`. One lens first reported this claim
+false; that result was an artifact of the review worktrees sharing a `node_modules` whose `@opp/sim`
+resolved to a pristine checkout, so the soak never saw the mutation. It was discarded after being
+reproduced correctly. Nine further mutations were run beyond the three the task named and none
+survived. Two calibration notes for the record: the soak is non-vacuous today at 10 plunder draws
+across 12 seeds but nothing asserts that plunder fires, and four of the ten new tests bear on the
+defect while six are adjacent coverage or canaries.
+
+**Decision 125's merge is sound.** Verified by diff-of-diffs against the merge base rather than from
+the commit message: each side survives whole, differing only by a blank separator line and one
+reworded sentence, every heading in either parent is present in the result, and no conflict marker
+exists anywhere. Decisively, the merge touches no file under `packages/sim/src/world/` or
+`tests/world/`, so develop's ~1900 lines cannot interact with the repair surface. One wart it did
+leave: this document is oldest-first, and the union resolution appended develop's slice-4 physical
+test section *after* the two 2026-09-03 slice-4b sections, so the file now ends on an out-of-date
+entry. Ordering only; nothing lost.
