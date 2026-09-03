@@ -4,6 +4,30 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — analysis of the playable-client bug sweep, cycle 0
+
+Two findings turned up while mapping the twelve UI-sweep findings against `agent/develop` at
+`5243cf5`. Neither is in the sweep's scope, and neither is worth stopping for today, because both are
+latent behind the same fact: a player ship's `cargoUnits` is structurally always 0.
+
+**`freeHoldOf` adds kilograms and units together under one name.** `battle/booty.ts:48-57` subtracts
+`ship.cargoUnits + ship.bootyCargoUnits + stowedMassKgOf(cargo, bootyCargo) + magazineMassKgOf(ship)`
+from `holdMassKg`. The first two terms are abstract plunder-unit counters treated as kilograms; the
+third converts real lots through `massGramsPerUnit`. The two are not in the same unit and are summed
+anyway. It is invisible today because nothing ever increments a player ship's `cargoUnits` — the same
+fact behind sweep finding 3 — so the terms that would disagree are 0. It starts to matter the moment
+anything credits a player hull with plunder units directly rather than through
+`materialisePlunder`, at which point the hold budget silently mis-measures by the ratio between a
+unit and a kilogram. Recorded here rather than repaired because the repair is a decision about which
+unit the budget is denominated in, and that belongs to a balance pass with the human, not to a UI
+sweep.
+
+**`divideBooty` leaves `bootyCargoUnits` standing.** `world/division.ts:15-37` clears `bootyCargo`
+and `bootyPoe` but never touches `bootyCargoUnits`, so the counter survives a division that has
+already moved the goods it counts. This is adjacent to the already-filed entry "`booty.divide` can
+leave an un-materialised chest counter behind" and is cited rather than re-raised as new; the pair
+should be repaired together, and both are held by the same `freeHoldOf` unit question above.
+
 ## 2026-09-03 — physical test of slice 4c (OPP-16), PR 9, cycle 1
 
 One finding, environmental rather than in the product.

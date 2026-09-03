@@ -4897,3 +4897,281 @@ The `queue-test` skill prescribes `gh pr merge --squash`. The task file instead 
 commit, because PRs 1 to 8 all used one and the ancestry matters to what follows. The task file wins:
 PR 9 was merged with `--merge`. A squash here would have flattened the PR 8 integration merge that
 this branch carries and made the next slice's merge base incoherent.
+
+### 2026-09-03 — analysis of the playable-client bug sweep, cycle 0
+
+Lineage `20260903-224010-playable-client-ui-bug-sweep`. Mode `spec`; the source of truth is
+`claude-queue/specs/20260903-224010-playable-client-ui-bug-sweep.md`, twelve findings from a
+physical pass driven through a real browser against the Vite dev server. No Jira project is set on
+this task, so no ticket was created and no board was moved.
+
+#### The problem, restated
+
+The client is playable end to end and the sim underneath it is well tested, but the surface the
+player actually touches tells them things that are not true. It reports a hold of zero while the
+hold is full, announces a sinking that never happens, offers a button for a move the ship can never
+make, enables a submit the sim will refuse, and destroys the field you are typing into twice a
+second. None of these is a crash. All of them are the game lying to the player, and that is the
+class of defect this sweep exists to close.
+
+#### What mapping the ground changed about the spec
+
+Three of the spec's premises did not survive contact with `agent/develop` at `5243cf5`, and saying
+so is the point of this section rather than a quibble.
+
+**The branch premise is stale.** The spec says the client "is on branch
+`agent/feature/20260902-000500-opp-slice-5-renderer-and-playable-client`. It is not merged into
+`agent/develop`." It merged as PR 8 (`391b93e`) and `agent/develop` is now `5243cf5`, two merges
+further on. Every finding below was re-confirmed against `5243cf5`, not against the branch.
+
+**Finding 1 is already fixed, except for its depth.** The spec describes `GameClient.restore`
+assigning `this.sim = Sim.load(text)` before validating. Commit `358196e` — the slice 5 cycle-1
+repair, decisions 111 to 114 — already replaced that with the candidate-then-swap shape the spec asks
+for. `client/client.ts:114-129` builds the `Sim` into a local, keeps `{sim, lines, scene}`, and
+restores all three if `syncScene`/`announce` throw. Re-implementing it would be a no-op.
+
+What is *not* fixed is how deep the guard looks. `worldStateOf` (`sim/src/save.ts:92-97`) checks the
+thirteen top-level keys against four coarse kinds and then casts. A save with `puzzle: {}`, or with
+`balance.bilging` deleted, passes every check, loads, returns from `restore` without throwing, and
+prints *"Yer voyage be restored."* — then kills the render loop one frame later inside
+`client.advance` then `sim.step`, outside any `try`. That residual is already recorded in `ISSUES.md`
+("A spoiled save one level down still costs the running voyage"), and it is what slice A repairs.
+The spec's own reproduction, a bare `schemaVersion` payload, no longer reproduces.
+
+**Finding 5 is a decision, not a defect — but the research found a real gap inside it.** Decision 115
+already recorded that pointer identity decides poke from swap, explicitly accepting that "a
+puffer-on-puffer swap is unreachable from the pointer". The spec asks for exactly that record, and it
+exists. However, the wiki states plainly that *"Swapping two pufferfish simply swaps them as if they
+were normal pieces"* — so the unreachable case is not an edge, it is a documented rule the client can
+never produce. That is worth closing, and it can be closed without adding the gesture line decision
+95 excludes. See decision 146.
+
+#### Finding 12 — the one that needed research, and what the research says
+
+The spec claims the real board is 6 wide by 12 tall and asks for confirmation against the wiki before
+changing anything. This repo's own source map says the opposite is knowable:
+`docs/wiki-map/01-duty-puzzles.md:92` records **"The wiki does not publish the grid dimensions."**
+That is accurate about the wiki *text*, and it is why `balance.json` carries a placeholder 12x12.
+
+The dimensions are nevertheless establishable, from three independent lines of evidence that agree:
+
+| Source                                                 | Evidence                                                                            |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Official YPPedia screenshot `Bilge.png` (447x598)      | Board interior measures 273 x 543 px; 273/6 = 45.5 px per cell, 543/45.25 = 12 rows  |
+| `hrt/Bilger`, a C++ bilge solver linked from YPPedia   | `#define BOARD_WIDTH 6`, `#define BOARD_HEIGHT 12`, `DEFAULT_WATER_LEVEL 3`          |
+| `jmitash/BilgeBot`, an independent Java screen-scraper | `PIECES_PER_ROW = 6`, `PIECES_PER_COL = 12`, capture rectangle 285 x 555 px          |
+
+Sources: <https://yppedia.puzzlepirates.com/Bilging>,
+<https://yppedia.puzzlepirates.com/images/6/63/Bilge.png>, <https://github.com/hrt/Bilger>
+(`src/Definitions.hpp`),
+<https://raw.githubusercontent.com/jmitash/BilgeBot/master/src/com/knox/bilgebot/PieceSearch.java>.
+
+Two claims were chased and **not** confirmed, and are recorded so the next pass does not re-chase
+them: a hidden or buffer thirteenth row (the widely repeated "6 by 13" appears in no retrievable
+source, and neither solver models one), and any variation of board size by ship class (every source
+describes one board; what scales with rank is which special pieces appear, at star levels 3, 5 and 6
+— which this repo already implements exactly).
+
+The height is already right. Only the width is wrong, and the water-line rule the wiki does publish —
+at least three rows of water, the top three always dry — is untouched by a width change and is
+already encoded as this repo's `MINIMUM_WATER_ROWS + MINIMUM_DRY_ROWS` floor.
+
+#### The design
+
+Nothing here needs new architecture. Every fix lands on a seam that already exists, and the whole
+sweep is a set of small corrections in three layers:
+
+- **The save sink.** One function, `worldStateOf`, gains depth. Decision 111 already settled that the
+  guard belongs in `deserialise` and not in the client, "one sink serves the client, `session.load`
+  and the tools". That holds; the sink just has to look past depth 1.
+- **The sim's rule exports.** Two predicates that decide whether a plan is legal — `affordable` and
+  `restsRequiredBy` — are module-private in `battle/dispatch.ts` and `battle/plan.ts`, so the planner
+  cannot ask the questions it needs to ask and instead guesses. They become exports, reaching the
+  view through the existing `client/rules.ts` facade, exactly as `planRejectionOf` already does.
+- **The panels and scenes.** Read the field that holds the answer instead of the one that does not,
+  build controls once and update them in place, and stop drawing a label twice.
+
+The alternative considered and rejected for the two rule exports was re-deriving affordability inside
+`planner.ts` from `heldTokensOf` and `cannonsLoaded`, both of which the planner already holds. It is
+fewer lines and it is wrong: it puts a game rule in the view, where no gate can see it. The repo
+already has one of those — `scenes/bilgeGesture.ts` decides poke-versus-swap, and
+`tools/check-view-boundary.ts` cannot detect it because it matches import specifiers, not logic. One
+such rule is a recorded decision; two would be a pattern.
+
+The alternative considered and rejected for finding 4 was making a lost battle actually cost
+something. See decision 138 — it is a balance change wearing a bug's clothes.
+
+#### Decisions taken without a human, continuing the series
+
+Numbering starts at **132**. The highest number used anywhere in the repo is 131 (with sub-letters
+131a-c). The unresolved collision in the 90s between slice 4b and slice 5 is escalated to the human
+in `ISSUES.md` and is untouched here; 132 onward collides with nothing on any branch.
+
+**132. This sweep targets `agent/develop`, not the slice 5 branch.** The spec's "not merged" premise
+predates PR 8. Working the branch would re-fix what `391b93e` and `5243cf5` already carry.
+
+**133. Finding 1's containment is closed; only its depth is reopened.** `358196e` implements
+decisions 111-114 already. Re-doing the candidate-then-swap would be a no-op, and claiming it as work
+would misreport the state of the code.
+
+**134. The deepened guard extends `worldStateOf` and rejects; it never normalises.**
+`tests/sim/migration.test.ts` asserts `deepEqual` on loaded state, so a guard that fills in a default
+or coerces a field breaks migration. Rejecting is the only safe verb here.
+
+**135. The guard's depth is bounded by what actually crashes, not by what the type system can
+express.** A full structural validator would duplicate `WorldState` and `balanceParse.ts` and would
+rot against them. The checks are the known crash paths: `board.cells.length === width*height`,
+`puzzle.frame` present, `balance` either null or fully populated, `shipClass` in `SHIP_CLASS_IDS`,
+`voyage.route` and `voyage.shipId` resolvable, `battle.ships[].shipId` resolvable, and every number a
+safe integer. Each one is a failure someone has already observed and filed.
+
+**136. The token and gun affordability predicate is exported from the sim, not re-derived in the
+planner.** `dispatch.ts:63-66` must remain the single definition of whether a plan is affordable; the
+planner mirrors it by calling it. A copy in the view is invisible to all six gates.
+
+**137. `restsRequiredBy` is exported for the same reason, and Rest is hidden — not disabled — on a
+ship that can never rest.** A sloop has `movesPerTurn: 4` and `PHASES_PER_TURN` is 4, so
+`restsRequiredBy` is 0 and *any* Rest is refused. A permanently greyed button still says the move
+exists; on a four-mover it does not. A sloop idles with the always-legal `{kind:'none'}`.
+
+**138. The `player-lost` line stops promising a consequence; the consequence itself stays a balance
+question for the human.** The sim applies nothing on a loss, and
+`tests/world/encounter.test.ts:245-268` *pins that as intended* ("a lost battle pays no cargo but
+still strikes the brigand off"). Making a loss bite would move the soak invariants and the 24-seed
+battle sweep, and it is already filed in `ISSUES.md` as a balance question. This sweep's remit is the
+client telling the truth, so the message is corrected to narrate the outcome the way the `disengaged`
+arm already does, and the balance question is left standing, untouched and still open.
+
+**139. The booty panel sums the `cargo` lots for the hold, and names `cargoUnits` for what it is.**
+Nothing ever increments a player ship's `cargoUnits` — it is the brigand-side plunder pool, seeded
+only on spawned brigands and drained winner-ward by `awardBooty`. For a player ship it is
+structurally always 0, so the current readout is not merely stale, it can never be right.
+
+**140. The market panel adopts the build-once, refresh-in-place shape `ye.ts` and `chat.ts` already
+use.** This is why the chat input keeps focus while the market input does not; the precedent is three
+files away in the same directory.
+
+**141. `restore` preserves the current scene and lets `syncScene` normalise it, rather than adding a
+scene to the save schema.** Putting a `SceneId` in `WorldState` means a schema bump, a migration, and
+a view concept inside the sim that `check-view-boundary.ts` exists to prevent. `syncScene`'s three
+rules already correct any stale value, so preserving the field is sufficient and costs nothing.
+
+**142. Island names are no longer truncated to their first word.** `shortNameOf` keeps the leading
+word, which turns `Isle of Keris` into `Isle` — the one name where the leading word carries no
+identity. The CSS already wraps.
+
+**143. The radial menu drops its centre title.** It draws the object's own label a second time, 54px
+below where `paintObjects` already drew it, and the ring's backdrop is only 35% opaque so both are
+visible at once. The title parameter has no other use.
+
+**144. The bilging board becomes 6 wide by 12 tall.** Confirmed by the three independent sources
+above. Recorded honestly: this contradicts nothing the wiki *says*, because the wiki says nothing —
+it corrects a placeholder that was chosen in the absence of evidence, and the evidence now exists.
+
+**145. The width change re-blesses every determinism artefact in the same commit, and lands last.**
+`createBilgeBoard` draws `width*height` colours from the `bilge.fill` stream, so halving the width
+changes every board, every downstream stream cursor and every state hash. The goldens, the scenario
+and replay fixtures, the two committed bilge saves, `COMMITTED_V3_CELLS` and the four Playwright
+screenshots all encode 144 cells. Splitting the re-blessing from the change would leave the tree red
+in between.
+
+**146. A puffer beside a puffer swaps; decision 115 otherwise stands.** The wiki is explicit that two
+pufferfish swap as ordinary pieces. `gestureAt` already receives the whole board and the position, so
+it can look at the swap partner and answer `swap` when both cells are puffers — no modifier, no
+second gesture, nothing decision 95 excludes. Every other cell keeps the recorded mapping.
+
+**147. Puffer-beside-ordinary is left exactly as the sim has it.** No documentation states whether it
+swaps or pops. The repo's `applyBilgeSwap` falls through to a plain swap; the community solver pops
+it. An undocumented rule is not changed to match one implementation's guess.
+
+**148. This analysis appends to the running document rather than opening
+`docs/analysis/<lineage>.md`.** The queue skill names a per-lineage file, but this repo keeps one
+append-only analysis document that every stage reads as shared memory, governed by decision 118. A
+second file would fragment it. The task's `analysis_doc` points here.
+
+**149. Commit subjects carry no Jira key.** Every existing subject is `OPP-<n> — <summary>`, but
+`jira_project` is empty on this task, so no issue exists to name. Subjects use the bare summary form.
+Stated rather than done silently, because it breaks an otherwise unbroken convention.
+
+#### What this costs, recorded rather than hidden
+
+The view has **no DOM or Pixi test coverage at all** — no jsdom, no happy-dom, no vitest anywhere in
+the repo. `tests/view/` covers only the Pixi-free seams (`gestureAt`, `walking`, `projection`,
+`clock`, `ticker`, and `GameClient` itself), and the only browser-level check is four Playwright
+screenshot comparisons that never touch the DOM panels. Six of the twelve findings are in files with
+literally zero automated coverage: `panels/booty.ts`, `panels/market.ts`, `panels/minimap.ts`,
+`scenes/radial.ts`, `scenes/planner.ts` and `panels.css`.
+
+This sweep does not fix that, and pretending otherwise would be the dishonest move. What it does
+instead: every fix that *can* be pulled onto a testable seam is, and the rest is verified physically
+by the test stage. `gestureAt` is already such a seam and gains a case. The two exported sim
+predicates are testable in `tests/battle/`. The deepened save guard is testable in `tests/sim/` — and
+must be, because `ISSUES.md` records that decision 111's guard shipped with no test at all, which is
+how its depth limit went unnoticed. The panel repairs are verifiable only through the browser.
+
+The standing gap — that the panel layer is unit-testable only if someone adds a DOM environment — is
+a real cost of these repairs landing without one. It is filed, not solved.
+
+#### Two things found while mapping, neither in scope
+
+Both go to `ISSUES.md` rather than into a slice:
+
+- `freeHoldOf` subtracts `ship.cargoUnits` as **kilograms** while converting `cargo` lots through
+  `massGramsPerUnit`. The two quantities are added together in one budget under one name and are not
+  in the same unit. Nothing observable is wrong today only because a player ship's `cargoUnits` is
+  always 0 — the same fact behind finding 3. It becomes a real defect the moment anything credits a
+  player ship with plunder units.
+- `divideBooty` clears `bootyCargo` and `bootyPoe` but leaves `bootyCargoUnits` standing. Adjacent to
+  an entry already filed ("`booty.divide` can leave an un-materialised chest counter behind"), and
+  cited rather than re-raised.
+
+#### Slicing
+
+Four development tasks. The findings group cleanly by risk, and risk is what a reviewer needs to be
+able to see:
+
+| Slice | Findings        | Layer                             | Why it is its own slice                                      |
+| ----- | --------------- | --------------------------------- | ------------------------------------------------------------ |
+| A     | 1 (residual)    | `sim/save.ts`, `sim.ts`, tests    | The only High. Touches the load path every stage depends on  |
+| B     | 2, 4, 7, 8      | sim exports + battle scene + CSS  | The battle screen telling the truth; needs two sim exports   |
+| C     | 3, 6, 9, 10, 11 | `view/panels`, `client`, `radial` | Pure view repairs, no sim change, individually tiny          |
+| D     | 5 (partial), 12 | `balance.json` + every fixture    | The only determinism re-blessing; must not hide in a diff    |
+
+Not more than four: findings 3, 6, 9, 10 and 11 are each a handful of lines in a different file with
+no shared risk, and five separate round trips through review and test would cost far more than they
+would catch. Not fewer: slice D rewrites 144-cell fixtures and four screenshot baselines, and a real
+defect in slices B or C would be invisible inside that diff.
+
+**They must land in order A, B, C, D.** They are independent in content — no two touch the same file
+— but B, C and D can each shift the four Playwright screenshot baselines, and a baseline re-blessed
+on one branch is a false failure on the next. Each rebases on `agent/develop` after the one before it
+merges.
+
+#### What done means
+
+For every slice: `npm run check` from cold, exit 0, all six gates, no test count lower than the 535
+on `5243cf5`; `npm run build` clean; `npm run smoke` green or its baselines deliberately re-blessed
+with the reason recorded. Per slice, on top of that:
+
+- **A** — a save with any one of the named nested keys removed is refused by `Sim.load` with a message
+  naming the field, the running game is untouched, and there is a test in `tests/sim/` for the guard
+  at both depths, top-level and nested.
+- **B** — at turn 1 with an empty token pool, **Set the turn** is disabled rather than refused; a
+  sloop is offered no Rest button; the planner's refusal text is readable with the chat overlay
+  present; a lost battle's message no longer promises a sinking that does not happen.
+- **C** — buying 1 Hemp shows a hold of 1, not 0; the Units field keeps focus and caret through at
+  least ten seconds of running clock; `Isle of Keris` reads as `Keris`; a save taken in the puzzle
+  scene reopens in the puzzle scene; the radial shows one copy of the object's name.
+- **D** — the board is 6 wide and 12 tall in `balance.json` and on screen, the duplicated
+  `DEFAULT_BOARD_WIDTH`/`DEFAULT_BOARD_HEIGHT` constants in `scenes/puzzle.ts` are gone, every
+  determinism artefact is re-blessed in the same commit, and a puffer beside a puffer swaps while
+  every other puffer click still pops.
+
+#### Environment, for the stages that follow
+
+Two traps left by earlier runs, neither this task's to clean and both able to waste a stage's time:
+port 5178 is still held by a dead worktree while `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI` on that fixed port, so a default `npm run smoke` can silently
+test somebody else's checkout — prove the server's provenance before believing it. And the repo
+carries roughly eighteen orphaned worktrees, one of which holds a stale branch checked out; push with
+`HEAD:refs/heads/<branch>` rather than checking a branch out if one collides.
