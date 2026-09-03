@@ -4,6 +4,206 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — independent review of slice 5 (OPP-12), PR 8
+
+Four-lens review of the isometric renderer and the playable client. Two blocking findings went back
+to analysis as cycle 1: `client.restore` destroys the running game before validating the save, and
+the view turns every puffer click into `bilge.poke`, removing a swap the simulation allows. What
+follows is everything else — judged not worth stopping the pipeline for, with when it starts to
+matter.
+
+### The gate, and how far it reaches
+
+- **The gate never looks at `packages/app`, which is a violation by its own definition.**
+  `node tools/check-view-boundary.ts packages/app/src` exits 1 with
+  `main.ts reaches past the client facade to "@opp/sim"`. It passes in `npm run check` only because
+  `VIEW_ROOT` defaults to `packages/view/src`, and `packages/app/src` is scanned in neither
+  direction — even though `tools/check-view-boundary.ts:7` lists `@opp/app` among `VIEW_PACKAGES`
+  for the reverse rule. `balanceOf` in a composition root is a defensible exception, but nothing
+  records it as one. It starts to matter the first time anything else in the app shell reaches for
+  the sim: `import { Sim } from '@opp/sim'` in `main.ts` is exactly what the gate exists to prevent
+  and would go green. Either extend `VIEW_ROOT` to both packages, or record the exemption.
+- **Four shapes evade the facade rule.** None is used in this diff; all four were run against the
+  gate and exited 0. A nested directory named `client` anywhere under the view
+  (`insideFacade` at `tools/check-view-boundary.ts:26-28` tests every path segment, not the first,
+  so `scenes/client/anything.ts` is exempt). A relative deep import — `../../../sim/src/index.ts`
+  from a panel — which the `SPECIFIER` regex captures but the `=== '@opp/sim'` filter discards;
+  this resolves and bundles, since Vite sets no alias and ESLint has no `no-restricted-imports` for
+  the view, and it is the shape a developer reaches for once the package specifier is rejected. A
+  non-`.ts` extension, because `sourceFiles` keeps only `endsWith('.ts')`. And a template-literal
+  dynamic import, because the regex requires a straight quote. The cheapest hardening is to anchor
+  `insideFacade` to the first segment, resolve relative specifiers and reject anything landing in
+  `packages/sim/src`, widen the extension filter, and give each shape a negative fixture — decision
+  22's lesson applied one level up, since the present fixtures only prove the shapes the gate
+  already handles.
+- **`packages/app` imports `@opp/sim` without declaring it.** `packages/app/package.json` declares
+  only `@opp/view`; `packages/app/src/main.ts:1` imports `balanceOf`. It resolves through npm
+  workspace hoisting today and breaks the moment the app is built or installed outside the
+  workspace root. `packages/view` and `packages/harness` both declare their sim dependency.
+
+### Rules and constants that now live on both sides of the boundary
+
+The gate cannot see any of these, because none is an import.
+
+- **Three of the deck's seven station counts are invented in the view.**
+  `packages/view/src/scenes/deck.ts:39-47` maps `navigating` to a local
+  `NAVIGATION_STATIONS_PER_SHIP = 1`, `rigging` to `sailStations` and `patching` to `carpStations`.
+  `ShipClass` (`packages/sim/src/ship/classes.ts:20-46`) carries `sailStations`, `carpStations`,
+  `bilgeStations` and `gunStations` and nothing for navigation or patching. No behaviour differs
+  today, because `stationsOf` only tests `> 0` and every class has both values positive. It matters
+  when a hull is added whose navigation complement is not one. The analysis document's claim that
+  the deck reads "all seven stations from `ShipClass` rather than hardcoded" is false as written.
+- **The sim's swap geometry is re-derived three ways in `puzzle.ts`.** `isSwapOrigin` (`:649`)
+  correctly derives the partner from `swapPartnerOf(BILGE_RULES, …)`, but `:391`
+  (`clamp(cursorX + dx, 0, board.width - 2)`) and `:660` (`if (partner.x >= board.width) return`)
+  hardcode the horizontal axis, and `:137` restates the rule in prose. If `BILGE_RULES.swapAxis`
+  ever becomes vertical, two of the three are silently wrong while the third is right. A related
+  consequence: `:328` returns silently for a non-puffer last-column click instead of dispatching
+  and letting the sim answer, so `'swap-outside-board'` → "That swap falls off the board."
+  (`client/log.ts:20`) is dead for the pointer path. Same shape at `deck.ts:119-121`, where
+  `moored()` re-derives "in port" instead of using the facade's `atSea`.
+- **`FULL_METER = 1000` is declared three times** — `scenes/hud.ts:16`, `scenes/planner.ts:79`,
+  `scenes/puzzle.ts:103` — plus bare `1000` at `scenes/battle.ts:323,437`, while the sim exports
+  `PER_MILLE` and `client/rules.ts` does not re-export it. Alongside it, three subtly different
+  per-mille renderings: `puzzle.ts:703` does not clamp, `panels/dom.ts:101` clamps to 0–100, and
+  `hud.ts:158` clamps differently, so a per-mille value above 1000 renders differently depending on
+  which surface shows it, and nothing tests any of them. A Pixi-free `perMille.ts` in the view
+  would collapse all six and be testable.
+- **`DEFAULT_BOARD_WIDTH` / `DEFAULT_BOARD_HEIGHT` duplicate `balance.json`'s
+  `bilging.boardWidth` / `boardHeight`** — a tunable copied into a scene. This is the same class as
+  the sixteen-colour palette already recorded under the slice's development entry.
+- **`clamp` is byte-identical** at `scenes/puzzle.ts:707` and `scenes/planner.ts:340`, and
+  `playerShipOf` is reimplemented as `playerShip` at `panels/panels.ts:90` when
+  `scenes/isoScene.ts:72` already exports it. The cause of the second is visible — `isoScene.ts`
+  imports Pixi, so a DOM panel importing it would drag the renderer in. Moving the one-liner to
+  `client/client.ts` or `client/rules.ts` beats keeping two definitions of which ship is the
+  player's.
+
+### Input and scene defects
+
+- **The keyboard cursor cannot reach the board's last column.** `puzzle.ts:391` clamps `cursorX` to
+  `board.width - 2`, which is right for a swap (the partner is `x+1`) but also gates poking, since
+  both go through `performAt`. `tileUnder` (`:370`) accepts any in-board tile, so a puffer in the
+  last column is poppable with the mouse and unreachable from the keyboard. The two paths share the
+  dispatch function but not the reachable input set, which is narrower than the merge note's claim
+  that they "cannot diverge". Distinct from the blocking puffer finding, and it survives whatever
+  fix that one gets unless the clamp is made poke-aware.
+- **A deck scene constructed at sea has no gangplank, permanently.** `deck.ts:83,160` bakes the
+  portal tile into the grid at construction from `moored(state)`. On the ordinary pillage loop a
+  brigand spawn moves the scene to `battle` (`client.ts:137`), `app.ts:97-104` destroys the deck
+  scene, and the post-battle return builds a new one while `voyage !== null` — so no portal tile is
+  written. On arrival, `voyage.port` succeeds and the scene stays `deck`, leaving tile (0,4) plain
+  `plank` for the rest of the session. `arrive` re-checks live moored state at `:98`, which is what
+  makes the stowed case work, but only if the tile exists at all. Not blocking because the DOM
+  "Disembark" button (`panels/location.ts:125`) still works; it matters as soon as a player expects
+  the in-world gangplank.
+- **The market panel destroys the units field you are typing into.** `panels/market.ts:16` clears
+  and rebuilds the whole root on every notification, including the 30-tick quiet heartbeat
+  (`client.ts:17,85`) — at least every 0.5 s. Type `4`, pause, type `0`, and the input element has
+  been replaced in between: focus is gone, the keystroke is dropped, and the trade goes through as
+  4 units. `panels/ye.ts:82` shows the intended shape, clearing only `facts` and leaving its inputs
+  alive; the market panel is the outlier.
+- **A click during a walk step produces one diagonal hop.** `isoScene.ts:206-210` queues a new
+  trail without cancelling the in-flight step. `standing` is the tile being left, so the new trail's
+  first entry is adjacent to the *old* tile; by the time `advanceWalk` shifts it, `standing` has
+  advanced. Purely visual — the sim has no avatar — but it is a move the four-directional
+  pathfinder never produced.
+- **`say()` is the only mutator that does not `announce()`** (`client.ts:106-108`), so chat lines
+  and the walk refusal (`isoScene.ts:217`) wait for the next event or the heartbeat and lag the
+  click by up to ~0.5 s. `dispatch` (`:76`) and `enterScene` (`:95`) both announce.
+
+### Robustness
+
+- **Any throw inside a frame kills the render loop forever while `running` still reports `true`.**
+  `ticker.ts:21-22` re-arms after the callback, unguarded, so one throw from `client.advance`,
+  `stage.update` or `application.render` means `frame` is never scheduled again; `handle` keeps the
+  id of the frame that already fired, so `get running()` (`:26`) lies and `stop()` cancels a stale
+  id. This is what turns the blocking restore defect into a frozen canvas rather than a dropped
+  frame. Wrapping `step(...)` in try/finally, or re-arming first, contains any future scene bug to
+  one frame. The mirror case is latent: `stop()` called from inside a step callback is undone by
+  the unconditional re-arm, though the only caller today is `app.ts:151`, outside the callback.
+- **"New game" and "Load game" discard the running voyage on one unconfirmed click.**
+  `panels/ye.ts:76-79` and `:68` sit either side of "Save game" in the same `actionRow`, and
+  nothing persists — the only copy of a session is whatever text the player copied out of the
+  textarea first. A confirm step, or auto-populating the save textarea before resetting, closes it.
+- **The author's Windows username is committed.**
+  `.claude/skills/pp-render-smoke/SKILL.md:138` carries a literal
+  `C:\Users\Verpo\AppData\Local\ms-playwright\…` path in an example error. Sole hit for personal
+  paths across the diff; no keys, tokens or private material anywhere else, and the four new PNGs
+  carry no metadata chunks.
+
+### Test coverage
+
+- **The completeness test's guarantee stops at the block level.** `tests/sim/balance.test.ts:15-25`
+  iterates a hardcoded `BLOCK_NAMES`, and `:53` compares the parser's output blocks against that
+  same literal — never against the file's non-underscore top-level keys. Verified: adding
+  `"crew": { "sizeAtFullDuty": 4 }` to `balance.json` with no reader leaves all seven tests green.
+  The integration entry's claim that "a tuning key added to `balance.json` without a reader fails
+  the suite rather than being ignored" holds inside the nine known blocks and not for a tenth.
+  Deriving the list — `Object.keys(FILE).filter((key) => !key.startsWith('_'))` — is a two-line fix
+  that keeps both sides independent. The test is otherwise genuinely load-bearing: deleting
+  `spreadPerMille` from the parser fails it with an exact diff.
+- **The coverage claim is inaccurate.** The analysis document states `tests/view/` "covers every
+  module that does not import Pixi". Twenty of the thirty new view modules are Pixi-free; the tests
+  together import five. Untested and Pixi-free: all of `panels/` (908 lines), `client/log.ts`
+  (108), `scenes/deck.ts` (196), `scenes/port.ts` (153) and `ticker.ts` (41). Most of `panels/` is
+  thin DOM over sim helpers and is fair to leave, but `dom.ts:integerOf`, the deck hull geometry
+  and the log's text table are pure functions where a test is nearly free. A reviewer budgeting
+  follow-up work off that sentence will budget wrongly.
+- **`GameClient.reset` is untested and diverges from `create` while duplicating it.**
+  `client.ts:122-129` dispatches the opening straight at `this.sim`, bypassing `client.dispatch`,
+  so a rejected opening command is silently swallowed here and logged-then-cleared in `create`
+  (`:38`). It is wired to a live control (`panels/ye.ts:77`) and no test calls it, while the
+  `create` path has three. Routing both through one private `openOn(sim)`, or giving `reset` the
+  boot-parity assertion `boot.test.ts:14` already gives `create`, closes both halves.
+- **The 30-tick announce heartbeat has no test**, though `client.ts` is Pixi-free and already has
+  one. `client.ts:17,84-88` implements decision 97 and both `app.ts:64` and `panels.ts:87` depend
+  on it. Four lines — subscribe a counter, `advance(29)`, `advance(1)` — would pin it; nothing
+  currently notices if it regresses to every frame (a 60× DOM rebuild rate) or to never.
+- **`warpTargetOf`'s object branch is the one untested branch in a well-tested function.**
+  `scenes/walking.ts:65`. `walking.test.ts:110` covers the portal branch and `:116-117` the null
+  branches. That branch is the fix for one of the two defects the slice found by hand — a prop's
+  drawn body not being hit-tested — and is now the only part of that fix with no regression test.
+- **The deck's hull geometry and station placement are pure, Pixi-free and untested.**
+  `deck.ts:122,154,167,179` compute a superellipse hull with `HULL_BOW_SHARPNESS = 1.5` and then
+  drop seven hardcoded `STATION_FITTINGS` tiles onto it. All seven land inside the hull today;
+  nothing asserts it. Change `DECK_WIDTH`, `DECK_HEIGHT` or the sharpness and a station lands in
+  water — unclickable and only findable by opening a browser. One test over `stationsOf(sloop)`
+  pins the whole family.
+- **`client/log.ts:67-99` exercises 3 of its 16 text branches, and `default: return null` silently
+  drops 12 event types.** The sim declares 26 event types and `textOf` handles 14. Whether
+  `battle.fired`, `ship.damaged` or `puzzle.scored` is deliberately silent or an oversight is
+  written down nowhere, and no test would notice a new event type joining the silent set. The
+  `REFUSALS` table is fine — typed `Record<RejectionReason, string>`, so the compiler enforces
+  totality, which also makes the `?? 'That cannot be done.'` at `:53` unreachable.
+- **`cascadeStepsOf` cannot be unit tested at all.** `scenes/puzzle.ts:453` replays
+  `bilge.swapped` / `bilge.cleared` events into an animation timeline and maintains its own board
+  state, which is exactly the kind of derivation that goes subtly wrong and exactly what a
+  screenshot cannot catch. It is unexported and lives in a module that imports Pixi. Splitting the
+  ~60 lines into a Pixi-free `scenes/cascade.ts` would make it testable and take a third off a
+  709-line file. The weaker version of the same argument applies to `isoScene.ts` and `planner.ts`
+  at 342 lines each, whose logic is more genuinely bound to display objects.
+
+### Naming
+
+- **The depth stride is an unnamed `16`.** `iso/projection.ts:30` returns
+  `(tile.x + tile.y) * 16 + layer`. Decision 95 names the quantity and explains it; the code names
+  neither, and `TILE_HEIGHT` in the same file is 32, so `16` reads as half a tile height to anyone
+  who has not read the analysis document. `const DEPTH_STRIDE = 16` is what the repo's own naming
+  rule asks for.
+
+### Verified sound, recorded so the next review need not redo it
+
+The balance parser merge is clean: all 71 `(block, reader-type, key)` triples are identical between
+`22ec18e:packages/harness/src/balance.ts` and `packages/sim/src/balanceParse.ts`, with no
+transposition between property names and the keys they read. Decision 93's pin compares two
+genuinely independent producers and is sensitive to semantic drift (changing `HOME_ISLAND` fails
+three tests); a commutative reorder of two opening commands passes, which is correct, because the
+pin compares resulting world state. Decision 96's tick fix is right and has no siblings anywhere in
+the view. The boundary gate's own tests assert non-zero exit plus the specific message for both
+negative fixtures. `npm run check` (453 tests), `npm run build` and the four render smokes were all
+re-run from cold on the merged tree and are green.
+
 ## 2026-09-02 — development of slice 5 (OPP-12)
 
 The isometric renderer and the playable client. What follows is what the work turned up that was not

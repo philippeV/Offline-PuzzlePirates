@@ -2355,3 +2355,78 @@ the choice belongs to whoever integrates them.
 and view-boundary gates, five typecheck projects, lint and the suite. `npm run build` succeeds. The
 four render smoke tests pass against freshly built assets: the iso port scene, the ship deck, the
 bilging board and the battle grid.
+
+### 2026-09-03 — independent review of slice 5 (OPP-12), PR 8, cycle 0
+
+Four lenses, run separately against the merged tree. All three of the slice's verification claims
+were re-run from cold rather than taken from the PR: `npm run check` green at 453 tests,
+`npm run build` green, the four render smokes green. Two findings block; everything else is in
+`ISSUES.md` under the matching dated heading.
+
+**Two blocking findings, both confirmed by executing them.**
+
+The first is a data-loss path this slice opens. `GameClient.restore` assigns `this.sim = Sim.load(text)`
+before anything validates the loaded state, and `deserialise` casts straight through — `migrate`
+checks only that `schemaVersion` is present, numeric and not newer than `SCHEMA_VERSION`. A payload
+at the current version therefore reaches the client unchecked, and the `inBattle` getter's
+`battle !== null` guard passes on `undefined`. Loading `{"schemaVersion":5}` destroys the running
+voyage, throws a `TypeError`, is caught by the Ye panel and reported as "That save be spoiled" — as
+though nothing had happened — and the render loop then dies on the next frame. The unvalidated sink
+in `save.ts` is not this slice's work; it arrived with the `agent/develop` merge. The player-facing
+button in front of it is, which is what makes it blocking here.
+
+The second is decision 90's own claim. The integration entry above states that no game rule moved
+into the view because "which tiles are pokable is read from the board's own cell constants, and the
+sim decides every outcome." Reading the constant is indeed fine; the decision built on it is not.
+The sim models a puffer as swappable — `swapRejection` rejects crabs and out-of-board only, and
+`applyBilgeSwap` falls through to `swapCells` for a puffer beside an ordinary colour — and a
+dispatched `bilge.swap` on a puffer is accepted and moves it. The view can never send that command,
+because `performAt` turns every puffer click into `bilge.poke`. A puffer can therefore only be
+walked leftward, by clicking its left-hand neighbour. That is a rule living in the view, and the
+boundary gate cannot see it because it is not an import. Either the move is restored, or the
+input-mapping decision is recorded as a decision — with a rationale on the record this would not
+have blocked.
+
+**Three claims in this document are inaccurate as written, and are corrected here.**
+
+- The puffer claim above.
+- "The deck scene with all seven stations read from `ShipClass` rather than hardcoded" — three of
+  the seven counts are invented in the view: navigation is a local constant of one, rigging aliases
+  `sailStations`, patching aliases `carpStations`. `ShipClass` carries no navigation or patching
+  complement. No behaviour differs today.
+- "`tests/view/` covers every module that does not import Pixi" — twenty of the thirty new view
+  modules are Pixi-free and the tests import five of them. Roughly 1,400 Pixi-free lines have no
+  test, including all of `panels/`, `client/log.ts`, `scenes/deck.ts`, `scenes/port.ts` and
+  `ticker.ts`.
+
+A fourth is narrower than claimed rather than wrong: "a tuning key added to `balance.json` without
+a reader fails the suite rather than being ignored" holds inside the nine known blocks, because
+`BLOCK_NAMES` is a hardcoded literal. A whole tenth block with no reader passes all seven tests —
+verified. Deriving the list from the file's non-underscore top-level keys closes it and keeps both
+sides of the comparison independent.
+
+**What the review confirms, so no later stage needs to redo it.** The balance parser merge is
+clean: all 71 `(block, reader-type, key)` triples are identical across the merge, with no
+transposition between property names and the keys they read, checked by two independent methods.
+Decision 93's pin compares two genuinely independent producers — the view's `openingCommands` and
+the harness's scenario builders, with no dependency between the packages — and it is sensitive to
+semantic drift; a commutative reorder of two opening commands passes, which is correct, because the
+pin compares resulting world state rather than the command list. Decision 96's tick fix is right,
+and the integer-division shape it fixed appears nowhere else in the view. The boundary gate's own
+fixtures assert a non-zero exit and the specific message, so decision 91 is properly met.
+
+**Decision 90's gate is narrower than decision 90's sentence.** `packages/app/src` is scanned in
+neither direction, and pointing the gate at it exits 1 on `main.ts` reaching `@opp/sim` — so the
+app shell is a violation by the gate's own definition, exempt by accident rather than by decision.
+`balanceOf` in a composition root is defensible; the exemption should be recorded or the gate's
+roots widened. Four further evasion shapes were run against the gate and all passed: a nested
+directory named `client` anywhere under the view, a relative `../../../sim/src/index.ts`, a
+non-`.ts` extension, and a template-literal dynamic import. None is used in this diff. The relative
+deep import is the one to close first, because it is the shape a developer reaches for once the
+package specifier is rejected.
+
+**Decision numbering.** The review recommends that **slice 4b renumber its decisions to 101–107**
+and that slice 5 keep 90–100. PR 7 is `DIRTY` and must be reworked before it can merge, so the
+renumber rides along with work already queued; it carries seven decisions against slice 5's eleven,
+and slice 5's numbers are referenced across eight commits, 69 files, `ISSUES.md` and its PR body.
+This is a recommendation to whoever integrates them, not a finding against either branch.
