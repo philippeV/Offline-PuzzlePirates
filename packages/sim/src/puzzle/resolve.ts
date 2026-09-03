@@ -3,6 +3,7 @@ import { clearCells, refillBoard, type Board, type BoardCell, type BoardRules } 
 import { climbCrabs, crabsAboveWaterLine, spawnCritters } from './critters.ts';
 import { applyGravity, type CellFall } from './gravity.ts';
 import { cellsOfRuns, findRuns, type Run } from './runs.ts';
+import { clearShapePairs, spawnTokens } from './tokens.ts';
 
 export const MAXIMUM_RESOLVE_STEPS = 64;
 
@@ -22,6 +23,7 @@ export interface StepClear {
 
 export interface ResolveStep extends StepClear {
   crabCells: number[];
+  pairedCells: number[];
   settleTicks: number;
 }
 
@@ -31,8 +33,10 @@ export interface ResolveContext {
   starLevel: number;
   waterLineRow: number;
   bilgePerMille: number;
+  dutyOutputPerMille: number;
   drawColour: () => BoardCell;
   drawCritter: () => number;
+  drawToken: () => number;
 }
 
 export function resolveBoard(
@@ -65,7 +69,14 @@ function settleStep(board: Board, context: ResolveContext, clear: StepClear): Re
   refilled.push(...refillBoard(board, context.drawColour));
   refilled.sort((left, right) => left - right);
   spawnCritters(board, refilled, context, context.drawCritter);
-  return { ...clear, crabCells: crabs, settleTicks: settleTicksOf(falls, context) };
+  spawnTokens(board, refilled, context, context.drawToken);
+  const paired = clearShapePairs(board);
+  return {
+    ...clear,
+    crabCells: crabs,
+    pairedCells: paired,
+    settleTicks: settleTicksOf(falls, context),
+  };
 }
 
 function settleTicksOf(falls: CellFall[], context: ResolveContext): number {

@@ -7,6 +7,7 @@ import {
   flatIndexOf,
   isInsideBoard,
   rowOf,
+  shapeAt,
   type Board,
   type BoardCell,
 } from './board.ts';
@@ -53,8 +54,12 @@ export function climbCrabs(board: Board): void {
     if (board.cells[index] !== CRAB_CELL) continue;
     const above = index - board.width;
     if (board.cells[above] === CRAB_CELL) continue;
-    board.cells[index] = board.cells[above] ?? EMPTY_CELL;
+    const displaced = board.cells[above] ?? EMPTY_CELL;
+    const displacedShape = shapeAt(board, above);
     board.cells[above] = CRAB_CELL;
+    board.shapes[above] = shapeAt(board, index);
+    board.cells[index] = displaced;
+    board.shapes[index] = displacedShape;
   }
 }
 
