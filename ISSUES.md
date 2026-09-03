@@ -4,6 +4,28 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — development of UI sweep slice B, PR pending
+
+**`CHAT_FOOTPRINT` duplicates a CSS value into a Pixi constant, and the two can drift.**
+`scenes/battle.ts` now subtracts `CHAT_FOOTPRINT = 150` from the height `panelScaleOf` may use, so
+the battle panel stops laying itself out underneath the chat overlay. That 150 is derived by hand
+from `panels/panels.css` — `.pp-chat-history`'s `height: 84px`, `.pp-chat`'s padding, border and
+`gap`, the input row, and `.pp-overlay`'s bottom padding. Editing any of those silently
+desynchronises the two and the overlap returns, with no test and no type error to catch it. Not
+judged worth stopping for: it is the same class of cross-package coupling as `--pp-panel-column`,
+already filed, and building a plumbing mechanism was unrequested scope for this slice. It starts to
+matter the moment the chat's dimensions change; the Playwright `battle.png` baseline is the only
+thing that would notice, and only if someone reads the diff.
+
+**An orphaned dev server on port 5178 makes `npm run smoke` lie.** `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI` against a fixed port, and port 5178 has been held since
+2026-09-03 21:16 by a `vite` from the `opp-slice5` scratchpad worktree of a session that has long
+finished. A default `npm run smoke` in any other worktree therefore screenshots *that* server's code
+and reports the result as the current branch's. Slice B worked around it with a throwaway config on
+port 5191 and `reuseExistingServer: false`. Not this run's process to kill, but every smoke result
+taken on this machine without proving server provenance should be treated as unverified until it is
+cleared. The durable repair is either a per-worktree port or `reuseExistingServer: false` outright.
+
 ## 2026-09-04 — physical test of UI sweep slice A, PR 10
 
 One finding. It narrows the review's decision 153 rather than overturning it, and was judged not

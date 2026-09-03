@@ -46,7 +46,7 @@ export function movedPhasesOf(plan: BattlePhasePlan[]): number {
   return plan.filter((phase) => phase.move.kind === 'move').length;
 }
 
-function restsRequiredBy(movesPerTurn: number): number {
+export function restsRequiredBy(movesPerTurn: number): number {
   return PHASES_PER_TURN - movesPerTurn;
 }
 

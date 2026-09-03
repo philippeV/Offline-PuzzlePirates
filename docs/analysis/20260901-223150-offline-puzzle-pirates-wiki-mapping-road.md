@@ -5418,3 +5418,83 @@ observed `voyage.shipId 2` against brigand id 3, and `settleEncounter` is covere
 **156. A stage may stop a physical grind once the question it would answer is already decided, and
 must say so.** Driving six more planning windows would have confirmed an inference that source and
 live state had already settled from two directions. Recorded here rather than left as a silent gap.
+
+### 2026-09-04 — development, UI sweep slice B: the battle screen tells the truth, PR pending
+
+Task `20260903-235501-uisweep-b-battle-screen-truthfulness`, branch
+`agent/feature/20260903-235501-uisweep-b-battle-screen-truthfulness` from `agent/develop` at
+`0222630` — that is slice A merged, so the ordering the slice table requires held.
+
+#### What was built
+
+**Finding 2.** `affordable` is exported from `battle/dispatch.ts` and reaches the planner through the
+`client/rules.ts` facade, and `planner.ts` now mirrors the sim's composition exactly —
+`planRejectionOf(...) ?? affordable(ship.tokens, hull, draft)`, the same order and the same `??` as
+`dispatch.ts:63-66`. Both the submit button's enablement and the refusal text are driven by that one
+value, so a plan the sim would refuse is refused *before* the click rather than after it, and the
+planned turn is no longer lost. Decision 136 held: nothing was re-derived in the view. `affordable`
+kept its `hull: ShipState` parameter, because `rules.ts` already re-exports `ShipState` and
+`TokenPool`, so calling it cost the view no new import and `npm run boundary` stays green.
+
+**Finding 8.** `restsRequiredBy` is exported for the same reason, and Rest is hidden on a ship that
+can never rest, as decision 137 requires. The implementation detail worth recording: `placeButton`
+positions by index, so hiding an interior button would leave a hole and compacting the index would
+shift the arrows between a sloop and a fanchuan. Rest was therefore moved to the **last** index of
+`MOVE_OPTIONS`, where hiding it reads as trailing margin and `—`, `◄`, `▲`, `►` keep fixed x for
+every class. It is re-evaluated per `refresh()`, and the hidden button is also disabled and
+force-unselected so it cannot be activated or render as chosen.
+
+**Finding 4.** The `player-lost` log line no longer promises a sinking the sim never applies. It
+narrates the way the `disengaged` arm does, per decision 138, and the balance question is left
+standing and still open in `ISSUES.md`.
+
+#### Two deviations, both deliberate
+
+**157. The chat overlap is repaired in the battle panel's height budget, not by reordering the
+planner's constants.** The first attempt moved `REFUSAL_Y` and `NOTE_Y` above the action buttons.
+That rescued the two text lines and pushed the buttons from viewport y 560 to 612 — out of a
+marginal clip and *fully* inside the chat's band. `.pp-chat` carries `pointer-events: auto`, so that
+traded an unreadable message for a probably-unclickable "Set the turn", which is the worse bug. It
+was reverted. The repair is one constant, `CHAT_FOOTPRINT = 150`, subtracted from the height
+`panelScaleOf` may use — which is precisely the diagnosis `ISSUES.md` already records for the
+sibling symptom, "the scene lays its HUD out from the canvas height with no knowledge of the chat's
+footprint". It rescues every part of the panel rather than trading one for another, and because
+`downScale` is already inside `Math.min(1, …)` it bites only on short viewports: at 1280x720 the
+scale becomes 0.7685 and the panel's lowest pixel lands at 534 against a chat edge at 573, while at
+1920x1080 nothing changes at all.
+
+**158. Finding 4's repair covers the battle scene's veil as well as the log line.** The spec named
+only `log.ts`. But `scenes/battle.ts` had its own `OUTCOME_TEXTS` with `'player-lost': 'Yer ship be
+lost.'` — the same false promise, shown at the same moment, and the more prominent of the two. The
+slice's exit criterion is that *a lost battle's message* no longer promises a sinking that does not
+happen; fixing one of the two messages would have half-satisfied it while leaving the player reading
+the false one. It is now `'The brigand carries the day.'`. Recorded as an extension rather than
+taken silently.
+
+#### Verification
+
+`npm run check` from cold, **exit 0**, all six gates, **578 pass / 0 fail** — the baseline entering
+this slice was 568, so +10. `npm run build` clean, exit 0. `npm run smoke` green, 4 of 4, after one
+baseline was deliberately re-blessed.
+
+**`battle.png` was re-blessed and the other three baselines were untouched**, which is itself the
+evidence that decision 157's change is scoped to the battle scene: `deck`, `port` and `puzzle` all
+passed unmodified. The new `battle.png` was inspected before it was accepted rather than blessed
+blind — it shows the four phase rows carrying `—`, `◄`, `▲`, `►` and no Rest on the sloop, the
+break-off note and both action buttons sitting clear above the chat, and "Set the turn" still
+enabled for the legal all-idle plan.
+
+**159. A smoke run must prove which server it measured.** `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI` against the fixed port 5178, and that port was held by a
+4½-hour-old orphaned `vite` from the `opp-slice5` worktree of a finished session — so the default
+invocation would have silently screenshotted *slice 5's* code and reported it as this branch's. The
+smoke was instead run against a throwaway local config on port 5191 with `reuseExistingServer:
+false`; the config was deleted afterwards and the port released. The orphan was left alone: it is
+not this run's to kill, but it will keep poisoning smoke runs until someone clears it, and that is
+now filed.
+
+New tests: `tests/battle/plan.test.ts` pins `restsRequiredBy` and `affordable` directly (six tests,
+all proved red-before by mutation), and `tests/view/log.test.ts` pins the three `battle.ended` arms
+including that the lost line asserts no sinking. `OUTCOME_TEXTS` is module-private inside a
+pixi-dependent scene and was left to the physical stage rather than contorting the source to reach
+it.

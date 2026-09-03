@@ -77,7 +77,7 @@ function disengage(state: WorldState, command: DisengageCommand): CommandResult 
   return { status: 'accepted', events: concludeBattle(state, 'disengaged') };
 }
 
-function affordable(
+export function affordable(
   pool: TokenPool,
   hull: ShipState,
   plan: BattlePhasePlan[],

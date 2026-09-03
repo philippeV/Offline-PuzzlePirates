@@ -105,6 +105,6 @@ function endedTextOf(outcome: BattleOutcome, poe: number, cargoUnits: number): s
   if (outcome === 'player-won') {
     return `Victory! ${poe} PoE and ${cargoUnits} units into the booty chest.`;
   }
-  if (outcome === 'player-lost') return 'She be sunk. Ye wash ashore with nothing.';
+  if (outcome === 'player-lost') return 'Ye be bested. The brigand leaves ye in her wake.';
   return 'The brigand slips away.';
 }
