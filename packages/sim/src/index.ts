@@ -149,21 +149,29 @@ export {
   CRAB_CELL,
   EMPTY_CELL,
   JELLY_CELL,
+  NO_SHAPE,
   PUFFER_CELL,
+  SHAPE_COUNT,
+  SYMBOL_COUNT,
   cellAt,
   clearCells,
   flatIndexOf,
+  halfOf,
   isColourCell,
   isInsideBoard,
   refillBoard,
   rowOf,
+  shapeAt,
+  shapeOf,
   swapCells,
   swapPartnerOf,
+  symbolOf,
   type Board,
   type BoardAxis,
   type BoardCell,
   type BoardPosition,
   type BoardRules,
+  type BoardShape,
 } from './puzzle/board.ts';
 export {
   BILGE_CRITTER_STREAM,
@@ -186,6 +194,7 @@ export {
   currentIntervalOf,
   performanceOf,
   ratingOf,
+  ratingRankOf,
   recordMove,
   rotateFrame,
   type IntervalSample,
@@ -214,6 +223,15 @@ export {
 } from './puzzle/scoring.ts';
 export { startBilging, stepPuzzle, type PuzzleState } from './puzzle/session.ts';
 export { applyBilgeSwap } from './puzzle/swap.ts';
+export {
+  BILGE_TOKEN_STREAM,
+  MANEUVER_BAR_GOLD,
+  MANEUVER_BAR_SILVER,
+  SHAPES_PER_PAIR,
+  clearShapePairs,
+  spawnTokens,
+  type TokenRules,
+} from './puzzle/tokens.ts';
 export type { RngStream, RngStreamCursor, RngStreams } from './rng.ts';
 export { createRngStreams, rngStream } from './rng.ts';
 export {

@@ -5,9 +5,11 @@ import {
   CRAB_CELL,
   EMPTY_CELL,
   JELLY_CELL,
+  NO_SHAPE,
   PUFFER_CELL,
   flatIndexOf,
   type Board,
+  type BoardShape,
 } from '../../packages/view/src/client/rules.ts';
 import { gestureAt } from '../../packages/view/src/scenes/bilgeGesture.ts';
 
@@ -19,6 +21,7 @@ function bilge(): Board {
     width: BOARD_WIDTH,
     height: BOARD_HEIGHT,
     cells: new Array<number>(BOARD_WIDTH * BOARD_HEIGHT).fill(0),
+    shapes: new Array<BoardShape>(BOARD_WIDTH * BOARD_HEIGHT).fill(NO_SHAPE),
   };
 }
 

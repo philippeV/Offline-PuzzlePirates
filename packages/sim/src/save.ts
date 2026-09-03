@@ -1,4 +1,5 @@
 import { canonicalJson } from './hash.ts';
+import { NO_SHAPE, type BoardShape } from './puzzle/board.ts';
 import { SCHEMA_VERSION, type WorldState } from './state.ts';
 
 type RawSave = Record<string, unknown>;
@@ -17,6 +18,7 @@ const migrations: Record<number, Migration> = {
     markets: [],
     ships: shipsWithCargo(save['ships']),
   }),
+  5: (save) => ({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) }),
 };
 
 const FIELD_KINDS: Record<keyof WorldState, FieldKind> = {
@@ -68,6 +70,17 @@ function migrate(save: RawSave): RawSave {
   }
 
   return current;
+}
+
+function shapedPuzzleOf(puzzle: unknown): unknown {
+  if (puzzle === null || typeof puzzle !== 'object') return puzzle;
+  const board = (puzzle as RawSave)['board'] as RawSave;
+  const cells = board['cells'] as unknown[];
+  return {
+    ...puzzle,
+    board: { ...board, shapes: new Array<BoardShape>(cells.length).fill(NO_SHAPE) },
+    maneuverBar: 0,
+  };
 }
 
 function schemaVersionOf(save: RawSave): number {

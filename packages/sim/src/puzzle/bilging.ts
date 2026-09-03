@@ -1,5 +1,13 @@
 import type { BilgingBalance } from './balance.ts';
-import { EMPTY_CELL, cellAt, type Board, type BoardCell, type BoardRules } from './board.ts';
+import {
+  EMPTY_CELL,
+  NO_SHAPE,
+  cellAt,
+  type Board,
+  type BoardCell,
+  type BoardRules,
+  type BoardShape,
+} from './board.ts';
 import { PER_MILLE } from './scoring.ts';
 
 export const BILGE_FILL_STREAM = 'bilge.fill';
@@ -32,7 +40,8 @@ export function createBilgeBoard(
   const width = Math.max(balance.boardWidth, MINIMUM_RUN_LENGTH);
   const height = Math.max(balance.boardHeight, MINIMUM_WATER_ROWS + MINIMUM_DRY_ROWS);
   const cells = new Array<BoardCell>(width * height).fill(EMPTY_CELL);
-  const board: Board = { width, height, cells };
+  const shapes = new Array<BoardShape>(width * height).fill(NO_SHAPE);
+  const board: Board = { width, height, cells, shapes };
   for (let index = 0; index < board.cells.length; index += 1) {
     board.cells[index] = settledColourAt(board, index, colourCount, draw);
   }

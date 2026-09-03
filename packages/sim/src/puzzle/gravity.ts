@@ -1,4 +1,13 @@
-import { CRAB_CELL, EMPTY_CELL, flatIndexOf, type Board, type BoardCell } from './board.ts';
+import {
+  CRAB_CELL,
+  EMPTY_CELL,
+  NO_SHAPE,
+  flatIndexOf,
+  shapeAt,
+  type Board,
+  type BoardCell,
+  type BoardShape,
+} from './board.ts';
 
 export interface CellFall {
   row: number;
@@ -7,6 +16,7 @@ export interface CellFall {
 
 interface Survivor {
   cell: BoardCell;
+  shape: BoardShape;
   row: number;
 }
 
@@ -36,7 +46,9 @@ function compactSegment(
   const vacated = end - top - survivors.length;
   for (let y = top; y < end; y += 1) {
     const survivor = survivors[y - top - vacated];
-    board.cells[flatIndexOf(board, x, y)] = survivor?.cell ?? EMPTY_CELL;
+    const index = flatIndexOf(board, x, y);
+    board.cells[index] = survivor?.cell ?? EMPTY_CELL;
+    board.shapes[index] = survivor?.shape ?? NO_SHAPE;
     if (survivor === undefined || survivor.row === y) continue;
     falls.push({ row: y, distance: y - survivor.row });
   }
@@ -45,8 +57,11 @@ function compactSegment(
 function survivorsOf(board: Board, x: number, top: number, end: number): Survivor[] {
   const survivors: Survivor[] = [];
   for (let y = top; y < end; y += 1) {
-    const cell = board.cells[flatIndexOf(board, x, y)];
-    if (cell !== undefined && cell !== EMPTY_CELL) survivors.push({ cell, row: y });
+    const index = flatIndexOf(board, x, y);
+    const cell = board.cells[index];
+    if (cell !== undefined && cell !== EMPTY_CELL) {
+      survivors.push({ cell, shape: shapeAt(board, index), row: y });
+    }
   }
   return survivors;
 }

@@ -2,6 +2,7 @@ import { BALANCE } from '../../packages/harness/src/index.ts';
 import {
   BILGE_RULES,
   MINIMUM_RUN_LENGTH,
+  NO_SHAPE,
   PER_MILLE,
   Sim,
   findRuns,
@@ -9,6 +10,7 @@ import {
   type Board,
   type BoardCell,
   type BoardPosition,
+  type BoardShape,
   type PuzzleState,
   type ResolveContext,
 } from '../../packages/sim/src/index.ts';
@@ -19,6 +21,7 @@ export const QUIET_COLOURS = 4;
 
 const UNIQUE_COLOUR_BASE = 100;
 const NO_CRITTER_DRAW = PER_MILLE - 1;
+const NO_TOKEN_DRAW = PER_MILLE - 1;
 
 export function bilgingSim(seed: number): Sim {
   const sim = Sim.create({ seed, balance: BALANCE });
@@ -36,7 +39,12 @@ export function puzzleOf(sim: Sim): PuzzleState {
 export function clearingSwapOf(board: Board): BoardPosition {
   for (let y = 0; y < board.height; y += 1) {
     for (let x = 0; x < board.width - 1; x += 1) {
-      const probe: Board = { width: board.width, height: board.height, cells: [...board.cells] };
+      const probe: Board = {
+        width: board.width,
+        height: board.height,
+        cells: [...board.cells],
+        shapes: [...board.shapes],
+      };
       swapCells(probe, x, y, BILGE_RULES);
       if (findRuns(probe, MINIMUM_RUN_LENGTH).length > 0) return { x, y };
     }
@@ -55,7 +63,12 @@ export function paintQuietBoard(board: Board): void {
 }
 
 export function quietBoard(width: number, height: number): Board {
-  const board: Board = { width, height, cells: new Array<BoardCell>(width * height).fill(0) };
+  const board: Board = {
+    width,
+    height,
+    cells: new Array<BoardCell>(width * height).fill(0),
+    shapes: new Array<BoardShape>(width * height).fill(NO_SHAPE),
+  };
   paintQuietBoard(board);
   return board;
 }
@@ -75,8 +88,10 @@ export function resolveContext(overrides: Partial<ResolveContext> = {}): Resolve
     starLevel: BALANCE.bilging.maxStarLevel,
     waterLineRow: 9,
     bilgePerMille: 0,
+    dutyOutputPerMille: 0,
     drawColour: uniqueColours(),
     drawCritter: () => NO_CRITTER_DRAW,
+    drawToken: () => NO_TOKEN_DRAW,
     ...overrides,
   };
 }

@@ -70,6 +70,7 @@ function bilgingBalanceOf(read: BlockReader): BilgingBalance {
     pufferSpawnPerMille: read.integer('pufferSpawnPerMille'),
     crabSpawnPerMille: read.integer('crabSpawnPerMille'),
     jellySpawnPerMille: read.integer('jellySpawnPerMille'),
+    tokenSpawnPerMille: read.integer('tokenSpawnPerMille'),
     crabPointsAtFullWater: read.integer('crabPointsAtFullWater'),
     pufferPointsPerCell: read.integer('pufferPointsPerCell'),
     jellyPointsPerCell: read.integer('jellyPointsPerCell'),

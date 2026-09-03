@@ -58,3 +58,7 @@ export function ratingOf(efficiencyPerMille: number, balance: BilgingBalance): D
   const rank = Math.min(reached, RATINGS_WORST_FIRST.length - 1);
   return RATINGS_WORST_FIRST[rank] ?? 'booched';
 }
+
+export function ratingRankOf(rating: DutyRating): number {
+  return RATINGS_WORST_FIRST.indexOf(rating);
+}
