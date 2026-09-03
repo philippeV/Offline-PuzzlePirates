@@ -37,7 +37,7 @@ function stationOf(state: WorldState, allegiance: string): BattleShip {
   return ship;
 }
 
-function agentPlanOf(state: WorldState, streams: RngStreams): BattlePhasePlan[] {
+export function agentPlanOf(state: WorldState, streams: RngStreams): BattlePhasePlan[] {
   const me = stationOf(state, 'player');
   const foe = stationOf(state, 'brigand');
   const hull = shipOf(state, 'player');

@@ -46,6 +46,8 @@ const REFUSALS: Record<RejectionReason, string> = {
   'insufficient-stock': 'The market be out of that.',
   'insufficient-cargo': 'Ye carry none of that.',
   'market-stock-full': 'The market will take no more.',
+  'wrong-cannon-ball-size': 'Her guns take no ball of that size.',
+  'negative-units': 'Ye cannot trade less than nothing.',
   'hold-full': 'The hold be full.',
   'no-booty': 'There be nothing to divide.',
 };

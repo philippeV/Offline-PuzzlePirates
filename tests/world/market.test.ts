@@ -3,8 +3,10 @@ import { test } from 'node:test';
 
 import { BALANCE } from '../../packages/harness/src/balance.ts';
 import { FIRST_ENTITY_ID } from '../../packages/sim/src/ids.ts';
-import { holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
+import { freeHoldOf, holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
+import type { ShipClassId } from '../../packages/sim/src/ship/classes.ts';
 import { createShip, type ShipState } from '../../packages/sim/src/ship/state.ts';
+import { stowLot } from '../../packages/sim/src/world/cargo.ts';
 import { COMMODITY_IDS, type CommodityId } from '../../packages/sim/src/world/commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from '../../packages/sim/src/world/islands.ts';
 import {
@@ -26,8 +28,15 @@ const SPAWNING_ISLAND: IslandId = 'doyle';
 const SCARCE_ISLAND: IslandId = 'alkaid';
 const SPAWNED_COMMODITY: CommodityId = 'hemp';
 const OTHER_COMMODITY: CommodityId = 'stone';
+const FITTING_BALL: CommodityId = 'small-cannon-ball';
+const OVERSIZED_BALL: CommodityId = 'large-cannon-ball';
+const RUM: CommodityId = 'swill';
+const OTHER_RUM: CommodityId = 'grog';
+const RUMS: CommodityId[] = [RUM, OTHER_RUM];
+const LARGE_GUNNED_CLASS: ShipClassId = 'war-galleon';
 
 const A_FEW_UNITS = 10;
+const A_FEW_BALLS_MASS_KG = 71;
 const AMPLE_POE = 100000;
 
 function dockAt(markets: IslandMarket[], islandId: IslandId): IslandMarket {
@@ -42,11 +51,15 @@ function stockAt(market: IslandMarket, commodityId: CommodityId): MarketStock {
   return stock;
 }
 
-function sloop(cargoUnits = 0): ShipState {
+function shipOfClass(shipClass: ShipClassId, cargoUnits = 0): ShipState {
   return createShip(
     { nextEntityId: FIRST_ENTITY_ID },
-    { shipClass: 'sloop', allegiance: 'player', cargoUnits },
+    { shipClass, allegiance: 'player', cargoUnits },
   );
+}
+
+function sloop(cargoUnits = 0): ShipState {
+  return shipOfClass('sloop', cargoUnits);
 }
 
 function pirateAt(islandId: IslandId, poe = AMPLE_POE): PirateState {
@@ -54,7 +67,7 @@ function pirateAt(islandId: IslandId, poe = AMPLE_POE): PirateState {
 }
 
 function snapshotOf(market: IslandMarket, ship: ShipState, pirate: PirateState): string {
-  return JSON.stringify([market, ship.cargo, pirate]);
+  return JSON.stringify([market, ship, pirate]);
 }
 
 test('only colonized islands open a dock, in archipelago order', () => {
@@ -204,6 +217,201 @@ test('selling part of a lot leaves the remainder aboard', () => {
   assert.deepEqual(ship.cargo, [{ commodityId: SPAWNED_COMMODITY, units: 1 }]);
 });
 
+test('a bought cannon ball goes to the magazine and not the hold', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  const outcome = buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.cannonballs, A_FEW_UNITS);
+  assert.deepEqual(ship.cargo, []);
+});
+
+test('bought rum goes to the rum store and not the hold', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  for (const rum of RUMS) assert.ok(buyCommodity(dock, ship, pirate, rum, A_FEW_UNITS).ok);
+
+  assert.equal(ship.rum, A_FEW_UNITS * RUMS.length);
+  assert.deepEqual(ship.cargo, []);
+});
+
+test('a ship cannot buy a ball its cannons cannot fire', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const outcome = buyCommodity(dock, ship, pirate, OVERSIZED_BALL, A_FEW_UNITS);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'wrong-cannon-ball-size' });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('a large gunned ship buys the very ball the sloop was refused', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const galleon = shipOfClass(LARGE_GUNNED_CLASS);
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  const outcome = buyCommodity(dock, galleon, pirate, OVERSIZED_BALL, A_FEW_UNITS);
+
+  assert.ok(outcome.ok);
+  assert.equal(galleon.cannonballs, A_FEW_UNITS);
+});
+
+test('a sold cannon ball comes out of the magazine', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+  const outcome = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS - 1, MARKET);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.cannonballs, 1);
+  assert.deepEqual(ship.cargo, []);
+});
+
+test('a magazine cannot sell more balls than it holds', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const outcome = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS + 1, MARKET);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'insufficient-cargo' });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('a ship cannot sell a ball its cannons cannot fire', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const outcome = sellCommodity(dock, ship, pirate, OVERSIZED_BALL, A_FEW_UNITS, MARKET);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'wrong-cannon-ball-size' });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('sold rum comes out of the rum store and not the hold', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS - 1, MARKET);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.rum, 1);
+  assert.deepEqual(ship.cargo, []);
+});
+
+test('a rum sale pays the pirate and restocks the dock', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const stock = stockAt(dock, RUM);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const remaining = pirate.poe;
+  const stocked = stock.units;
+
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS, MARKET);
+
+  assert.deepEqual(outcome, {
+    ok: true,
+    poe: A_FEW_UNITS * stock.buyPricePoe,
+    units: A_FEW_UNITS,
+  });
+  assert.equal(pirate.poe, remaining + A_FEW_UNITS * stock.buyPricePoe);
+  assert.equal(stock.units, stocked + A_FEW_UNITS);
+});
+
+test('a rum store cannot sell more rum than it holds', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS + 1, MARKET);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'insufficient-cargo' });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('swill and grog draw on one shared rum store', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const outcome = sellCommodity(dock, ship, pirate, OTHER_RUM, A_FEW_UNITS, MARKET);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.rum, 0);
+});
+
+test('a supply lot in the hold is invisible to the sell path', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+  stowLot(ship.cargo, FITTING_BALL, A_FEW_UNITS);
+
+  const overdrawn = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS + 1, MARKET);
+  const sold = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS, MARKET);
+
+  assert.deepEqual(overdrawn, { ok: false, reason: 'insufficient-cargo' });
+  assert.ok(sold.ok);
+  assert.equal(ship.cannonballs, 0);
+  assert.deepEqual(ship.cargo, [{ commodityId: FITTING_BALL, units: A_FEW_UNITS }]);
+});
+
+test('a stocked magazine takes its own mass out of the free hold', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+
+  assert.equal(freeHoldOf(ship), holdCapacityOf(ship) - A_FEW_BALLS_MASS_KG);
+});
+
+test('a magazine heavier than the free hold is refused', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const laden = sloop(holdCapacityOf(sloop()) - A_FEW_BALLS_MASS_KG);
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  const before = snapshotOf(dock, laden, pirate);
+
+  const outcome = buyCommodity(dock, laden, pirate, FITTING_BALL, A_FEW_UNITS + 1);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'hold-full' });
+  assert.equal(snapshotOf(dock, laden, pirate), before);
+  assert.ok(buyCommodity(dock, laden, pirate, FITTING_BALL, A_FEW_UNITS).ok);
+});
+
 test('a zero unit purchase is a no-op success', () => {
   const markets = createMarkets(MARKET);
   const dock = dockAt(markets, SPAWNING_ISLAND);
@@ -227,6 +435,21 @@ test('a zero unit sale is a no-op success even with an empty hold', () => {
   const outcome = sellCommodity(dock, ship, pirate, SPAWNED_COMMODITY, 0, MARKET);
 
   assert.deepEqual(outcome, { ok: true, poe: 0, units: 0 });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('a negative unit count is refused on both sides of the counter', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const bought = buyCommodity(dock, ship, pirate, SPAWNED_COMMODITY, -1);
+  const sold = sellCommodity(dock, ship, pirate, SPAWNED_COMMODITY, -1, MARKET);
+
+  assert.deepEqual(bought, { ok: false, reason: 'negative-units' });
+  assert.deepEqual(sold, { ok: false, reason: 'negative-units' });
   assert.equal(snapshotOf(dock, ship, pirate), before);
 });
 
