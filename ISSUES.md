@@ -4,6 +4,37 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — physical test of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Both repairs pass in a real browser, including the keyboard path the suite cannot reach. Two things
+found that are not worth stopping for.
+
+### Clicking a duty station you are already standing on refuses to walk
+
+Loading a save taken while the bilging duty was held puts the avatar back on the station tile. A
+click on that tile then answers *"Avast! I can't find a way to walk there."* instead of opening the
+radial menu; a click one tile away and then back on the station opens it normally. The pathfinder is
+being asked for a route from a tile to itself and has nothing to return, and the station's own
+interaction never gets a chance. Pre-existing walking behaviour, nothing to do with these repairs,
+and invisible until a save restores you onto a station. A zero-length path answering *"you are
+already there"* — or the station check running before the walk — would close it.
+
+### The panel copy is wider than the rule, confirmed by hand
+
+Recorded under the review heading below as a reading of the code; now observed. Clicking a crab
+answers *"The crab will not be shoved about."* and counts no move, so *"Click any other tile to swap
+it with the tile on its right"* is false for crabs as well as for the last column. The refusal
+reaches the player, which is what removing the pre-refusal bought, so the sentence is optimistic
+rather than misleading.
+
+### A puffer in a chosen cell is only reachable by editing a save
+
+There is no way to put the bilging board into a known state from the client, so testing a puffer in
+the last column meant saving, editing `puzzle.board.cells` by hand, and loading it back. That worked
+and exercised the load path as a side effect, but it means every board-shape test at this stage
+depends on hand-edited saves. A seeded-board or scenario entry point on the client — the harness
+already has `createScenarioSim` — would make this kind of check repeatable rather than artisanal.
+
 ## 2026-09-03 — independent review of the slice 5 repairs (OPP-12), PR 8, cycle 1
 
 Four-lens review of `358196e`. **No blocking findings** — all seven decisions (111-117) are

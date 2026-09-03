@@ -2786,3 +2786,107 @@ by fetching the module and finding the new copy and none of the old. The test st
 
 This review takes no decision numbers. 111-120 stand as written, with the two corrections the
 development entry already recorded, plus the interval correction above.
+
+### 2026-09-03 — physical test of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Driven by hand in a real Chrome against a dev server on a private port, from this branch's own
+worktree at `59ad59e`. **Both repairs pass, including the keyboard path nobody had been able to
+exercise.** The PR is not merged: `agent/develop` moved to schema 6 while this branch was in review,
+and PR 8 is now `CONFLICTING`. An integration development task carries it the rest of the way.
+
+#### Provenance first, because the smoke cannot be trusted without it
+
+Port 5178 was occupied throughout by a vite process serving the `opp-slice5` worktree at `a14e78c` —
+the branch as it stood *before* these repairs. Fetching the puzzle module from it returns the old
+copy. So the server for this test was started on port 5201 from this worktree, and its provenance was
+proved before anything was clicked: the module it serves contains *"Click a puffer to pop it"* and
+`board.width - 1`, and zero occurrences of *"The last column cannot start a swap"*.
+
+#### The keyboard path — the thing only this stage could establish
+
+Key events reach the app through Chrome, which is what the development environment's browser pane
+could not do. Every claim below was read off the running client.
+
+- **Arrow keys reach the last column and the cursor is visible there.** Eleven `ArrowRight` presses
+  from `x = 0` put the cursor on `x = 11` of a twelve-wide board, outlined, with no partner outline
+  drawn off the board. This is exactly what `drawCursor`'s reorder exists to guarantee, and it is
+  the claim the suite cannot make — reintroducing `board.width - 2` still leaves all 463 green.
+- **A puffer in the last column pops from the keyboard.** Space on `(11, 0)` popped it: score 0 → 4,
+  moves 1 → 2, star level 0 → 1, *"The bilge rises: star level 1."* in the chat.
+- **A puffer in the last column pops from the pointer**, on the same cell class: moves 2 → 3,
+  score 4 → 23.
+- **A plain tile in the last column refuses out loud, on both paths.** Space on a colour tile at
+  `x = 11` and a click on the same cell each produced *"That swap falls off the board."* in the chat,
+  and neither counted a move. Before this task that path returned silently.
+- **A plain tile swaps rightward on click**, moves incrementing, with the hover pair drawn.
+- **Escape leaves the duty**, landing in the battle that had begun while the duty was held.
+
+The panel copy renders and wraps inside the panel, both paragraphs, exactly as written.
+
+To reach a puffer in the last column deliberately rather than waiting for one to spawn, the running
+save was edited — the whole of column 11 set to `PUFFER_CELL`, one crab placed — and loaded back
+through the client's own Load button. That is worth recording twice over: it exercised the load path
+under test as a side effect, and it is the cheapest way to put this board in a known state by hand.
+
+#### The save guard — refused, and the voyage survived intact
+
+With a pillage voyage running and the leg advancing, `{"schemaVersion":5}` was pasted into the Ye
+panel and loaded. It was refused with **`That save be spoiled: save.seed must hold a number`** —
+the message naming the first bad field that "what done means" promised and that no test asserts. The
+running voyage was completely untouched: still at sea, same scene, purse unchanged, and the leg
+counter kept climbing straight through the refusal (247 → 494 of 5040). Loading the good save back
+restored it and announced *"Yer voyage be restored."*
+
+That is the blocking finding of cycle 0 closed, observed rather than inferred.
+
+#### Confirmations of things the review recorded as non-blocking
+
+- **The panel copy does overstate a swap.** Clicking a crab produced *"The crab will not be shoved
+  about."* and counted no move, so *"Click any other tile to swap it with the tile on its right"* is
+  false for two of the board's cell kinds. Discoverable rather than silent, which is the point of
+  removing the pre-refusal, but the sentence is wider than the rule.
+- **A throwing frame could not be provoked by hand**, so decision 114 rests on its three unit tests,
+  each of which fails against `a14e78c` for a different reason. The loop was observed to keep
+  stepping through a refused load, which is adjacent evidence and not the same claim.
+
+#### Something new, small, and not this slice's
+
+Clicking a duty station the avatar is already standing on answers *"Avast! I can't find a way to walk
+there."* rather than opening the radial menu; moving the pointer one tile and clicking the station
+again opens it. Pre-existing walking behaviour, unrelated to these repairs, recorded in `ISSUES.md`.
+
+#### Suite at the merge head
+
+`npm run check` at `59ad59e`: **463 of 463, exit 0**, from a cold `npm ci` worktree. The
+`tests/gates/purity.test.ts` flake the review hit on its cold run did not recur.
+
+#### Why this does not merge yet, and what has to happen
+
+`agent/develop` is at `80c7785` — slice 2c landed PR 6 while this branch was in review, taking
+`SCHEMA_VERSION` to **6** and adding migration 5. PR 8 reports `CONFLICTING`, and a trial merge gives
+three conflicts:
+
+- `packages/harness/src/balance.ts` — the only real code conflict. `agent/develop` still carries the
+  full parser body in the harness because slice 2c branched before decision 92 moved it into
+  `packages/sim`; this branch carries the five-line wrapper. Decision 92 already settles which side
+  wins, and `tests/sim/balance.test.ts` asserts key-set equality mechanically, so a tuning key
+  dropped in the resolution turns the suite red rather than passing silently.
+- `ISSUES.md` and this document — both document unions.
+
+**The part that could have been nasty is not.** `packages/sim/src/save.ts` auto-merges, and the
+result is sound rather than merely textual: `WorldState` has the same thirteen fields on
+`agent/develop` as here, so `Record<keyof WorldState, FieldKind>` still typechecks; `migrate` keeps
+returning `RawSave` and `deserialise` still wraps it in `worldStateOf`; and develop's migration 5,
+which nulls `balance` and shapes `puzzle`, composes with the guard because `balance` is typed
+`'an object or null'`. `{"schemaVersion":5}` on the merged tree runs migration 5 and is then refused
+by the guard exactly as it is here. Nothing about the guard's design has to change to land on schema
+6.
+
+The integration also has to settle the decision-number collision the PR description flags: slice 4b
+numbered 90-96 on its own branch while slice 5 numbered 90-100, and the cycle 0 review recommended
+slice 4b take 104-110. Slice 4b's PR 7 was still in the test stage when this was written, so whoever
+merges second owns the renumber.
+
+This goes to development rather than to analysis, and `cycle` stays 1: nothing here is an open design
+question. Decision 92 settles the parser, the guard needs no change, and the renumber is already
+recommended. The slice itself passed.
