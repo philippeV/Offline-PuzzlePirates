@@ -27,6 +27,10 @@ const SEED = 20260902;
 const SPEEDS_PER_MILLE = [0, 250, 500, 750, 1000];
 const HORIZONTAL_NUMERATOR = 7;
 const HORIZONTAL_DENOMINATOR = 5;
+const HORIZONTAL_LEG_TICKS = 5040;
+const DIAGONAL_LEG_TICKS = 3600;
+const DIAGONAL_ROUTE_ISLAND: IslandId = 'marlowe';
+const MIXED_ROUTE_ISLAND: IslandId = 'doyle';
 const PAUSED_TICKS = 100;
 const LEG_TICK_BUDGET = 60000;
 const DETERMINISM_TICKS = 60000;
@@ -66,6 +70,24 @@ function ticksToFirstLeg(speedPerMille: number): number {
     if (stepVoyage(state).length > 0) return tick;
   }
   return -1;
+}
+
+function legTicksSailedOf(toIslandId: IslandId): number[] {
+  const state = seaState(SEED);
+  const ship = crewedSloop(state, 1000);
+  const voyage = chartedOf(state, ship, toIslandId, 'evade');
+  state.voyage = voyage;
+  const sailed: number[] = [];
+  let legTicks = 0;
+  for (let tick = 1; tick <= LEG_TICK_BUDGET; tick += 1) {
+    state.tick = tick;
+    legTicks += 1;
+    if (stepVoyage(state).length === 0) continue;
+    sailed.push(legTicks);
+    legTicks = 0;
+    if (voyage.legIndex >= voyage.route.length - 1) return sailed;
+  }
+  return sailed;
 }
 
 function sailedEventsOf(seed: number, ticks: number): SimEvent[] {
@@ -131,6 +153,17 @@ test('a faster ship reaches the next league point in fewer ticks', () => {
   assert.ok(slow > 0 && quick > 0 && fast > 0, `${slow}/${quick}/${fast}`);
   assert.ok(slow > quick, `${slow} > ${quick}`);
   assert.ok(quick > fast, `${quick} > ${fast}`);
+});
+
+test('a sailed leg is charged the cost of its own orientation', () => {
+  assert.deepEqual(legTicksSailedOf(MIXED_ROUTE_ISLAND), [
+    HORIZONTAL_LEG_TICKS,
+    DIAGONAL_LEG_TICKS,
+  ]);
+  assert.deepEqual(legTicksSailedOf(DIAGONAL_ROUTE_ISLAND), [
+    DIAGONAL_LEG_TICKS,
+    DIAGONAL_LEG_TICKS,
+  ]);
 });
 
 test('a charted voyage opens on the first leg of a route out of the pirate island', () => {

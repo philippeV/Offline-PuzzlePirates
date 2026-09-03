@@ -3524,6 +3524,121 @@ leave: this document is oldest-first, and the union resolution appended develop'
 test section *after* the two 2026-09-03 slice-4b sections, so the file now ends on an out-of-date
 entry. Ordering only; nothing lost.
 
+### 2026-09-02 — development, slice 4c: the settlement guard and the division budget (OPP-11)
+
+The review and the physical test of PR 5 queued three defects against slice 4's world, every one of
+them leaving something wrong in *hashed* state. All three are closed here. The dispatcher, rounding
+and orientation coverage the same review asked for is a separate piece of work on its own branch.
+
+**These decisions are numbered from 101.** The document's last recorded decision is 89, but slices 4b
+and 5 have each taken 90 to 100 on branches that are not merged yet, so continuing from 90 would mint
+three collisions. The numbers here start above everything any open branch has claimed.
+
+| #   | Decision                                                                               | Rationale                                                                                                                                                                                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 101 | `voyage.port` settles a concluded battle the voyage owns rather than refusing the port | Refusing would only send the pirate back to a tick they have to step anyway, and it leaves the same stale battle in hashed state until they do. Porting is the voyage's end, and the encounter it met ends with it; the settlement's events lead the `voyage.ported` event, and it runs after the last refusal so the command still writes nothing it might refuse |
+| 102 | A voyage owns a battle its own ship is standing in                                     | Decision 83's words are ownership, and a battle none of whose berths is the voyaging ship is one nobody sailed into. Provenance — marking the battle the encounter spawned — reads the words the same way, but it would strand a hand-started mid-voyage battle in hashed state for good, which is the defect decision 101 exists to close                         |
+| 103 | The chest and the hold share one budget counted in grams, floored once                 | A capacity check could only refuse the division, and a refused division strands the chest for good: goods leave it by no other door, and `market.sell` sells from the hold. Flooring the two arrays' grams together makes division mass-neutral in fact, which is what decision 88 asserted without it being so                                                    |
+
+**A concluded battle no longer outlives the voyage that met it.** `port()` refused only a *running*
+battle and `stepWorld` returned early once `voyage === null`, so `battle.disengage` followed by
+`voyage.port` — ordinary play, no hand-started battle needed — left `/battle` reading
+`{outcome: "disengaged"}` with `/voyage` null, `battle.start` refused `battle-already-running`, and no
+number of ticks in port clearing either. Porting now settles the battle on its way in, which also
+means a pillage won on the last leg pays its plunder into the chest at the dock instead of on the next
+voyage's first tick.
+
+**Decision 88's justification was wrong, and it is corrected here rather than by editing its row,
+per the append-don't-rewrite convention.** The claim was that a shared budget makes division
+mass-neutral and so needs no capacity check. Mass was floored per lot array, so merging the chest
+into the hold re-floored the combined sum and could gain a kilogram — `small-cannon-ball` at 7100 g
+being the only commodity with a gram remainder to lose, and both buyable and plunderable. Decision
+103 counts that budget in grams and floors it once, so division is mass-neutral in fact: the premise
+survives and the conclusion does too, but neither was true as stated until decision 103 made it so.
+
+**The kilogram was never really invented at the division, and that is worth knowing before the market
+is touched.** With the budget in grams, the review's own reproduction — 3 cannon balls and 13429 kg of
+filler in the hold, 7 cannon balls in the chest — measures 13501 kg both before and after the
+division, in a 13500 kg hold. The state is over capacity when it arrives, because `buyCommodity`
+still measures a purchase with `massKgOf`, which floors that purchase's grams on its own: three cannon
+balls cost the hold 21 kg of budget against 21.3 kg of iron. `freeHoldOf` clamps at zero so nothing
+breaks, and the accounting no longer *moves* under the ship — a `market.buy` gets the same answer
+either side of a division, which is the property the physical test found broken. The remaining leak is
+the dock's, not the division's, and it is recorded in `ISSUES.md` rather than fixed under a task
+scoped to division.
+
+**The predicate the review offered does not close the probe the review reached it from.** The probe was
+the pillage-loop scenario: chart an `evade` voyage, hand-start a battle, disengage. Driven, that
+scenario carries exactly one player ship — the voyage's own — and `battle.start` picks the first player
+ship and the first brigand, so the battle's berths are the voyaging ship and the commissioned brigand
+and `battle.ships.some((s) => s.shipId === voyage.shipId)` is true. The world settles it under the new
+guard as it did under the old. What the guard now leaves alone is the case its words actually name: a
+concluded battle the voyaging ship is not standing in — a second player ship's fight, or slice 3's
+direct `battle.start` with no voyage at all. Decision 102 records why that is the right reading and not
+a weaker one.
+
+**The test that was supposed to defend the headline rule now reaches it.** `tests/world/division.test.ts`
+asserted only that selling undivided plunder was `rejected`, over a fixture with `state.markets = []`,
+so `trade()` bailed at `island-has-no-market` and `sellCommodity` was never called. The fixture has a
+real market now and the test names `insufficient-cargo`. Verified by mutation: making `sellCommodity`
+fall back to `ship.bootyCargo` — what decisions 86 to 89 forbid — used to pass the whole suite and now
+fails exactly that test and nothing else. The two settlement tests and the two mass tests were each
+proved against the code they replace in the same way.
+
+### 2026-09-02 — development, slice 4c: pinning the world dispatcher (items 5 to 7)
+
+The half of slice 4c that changes no production code. Slice 4's review injected thirty faults and
+sixteen died; every survivor is closed here, and each was re-injected against this suite to confirm
+it now fails. The point of the task was never the tests themselves — it was that slice 5 copies
+whatever pattern it finds, and an untested dispatcher is the pattern that would spread.
+
+**What the surviving faults had in common.** Not missing tests — the dispatcher had tests. They
+asserted the wrong altitude. A command's result was checked for `accepted` or `rejected` without
+asking which, an event was checked for existing without asking what it carried, and a rounding test
+recomputed its expectation with production's own formula so that changing the formula changed both
+sides of the assertion together. Each of those reads as coverage and defends nothing.
+
+**The events.** `world.started`, `voyage.charted`, `voyage.ported`, `market.traded` and
+`booty.divided` are now pinned field by field in `tests/world/dispatch.test.ts`. The traded side
+cannot invert, the leg count cannot zero, the ported island cannot hard-code itself to the island the
+voyage left, and `crewCutPoe` cannot swap with `pirateSharePoe`.
+
+**A ninth unasserted rejection reason, found rather than listed.** The task named eight; diffing the
+rejection union against what the suite asserted turned up `not-at-island`. It appeared in the tests
+only as `chartVoyage`'s string return, so `port()`'s own guard was never reached and renaming both of
+its returns passed 412 of 412. It is now pinned by charting to Doyle and porting from the open-water
+league point between the two islands.
+
+**Two more survivors, closed after they were found.** The dispatcher's own `unknown-island` (in
+`startWorld` and `charter`) and `unknown-commodity` (in `trade`) were pinned only at `chartVoyage`
+and `buyCommodity`, so renaming them at the dispatcher passed the whole suite. Same shape as the
+ninth: a name asserted somewhere, and therefore assumed to be asserted everywhere.
+
+**Rounding was a fixture problem, not a coverage problem.** The crew-cut test divided numbers that
+divide exactly, so `floor` and `ceil` agreed. It now divides 1003 PoE against literal expected values
+of 250 and 301 rather than production's formula, which kills both `floor`-to-`ceil` mutants and the
+swapped-field mutant in one assertion. `small-cannon-ball` — the only commodity whose mass is not a
+whole kilogram, and the commodity the whole of items 1 to 4 turns on — was never bought or sold in any
+test; it is now traded at the free-hold boundary. And plundered units are asserted to be integers, so
+a fractional lot cannot reach the hash unnoticed.
+
+**`orientationCostOf` was tested by being handed its own answer.** Decision 76's entire point is which
+of the two league costs a leg pays, and the 40 % ratio was checked only by passing the constant
+directly to `legTicksRequiredOf`. Nothing measured a voyage's duration, so returning the diagonal cost
+unconditionally passed everything — across island pairs the routes use 52 horizontal legs against 88
+diagonal ones. A test now sails and measures.
+
+**One judgement call worth knowing about.** `tests/harness/world-commands.test.ts` opens on the
+default `marker-field` scenario, which has no balance and no ships, so its six well-shaped commands
+genuinely resolve to `balance-missing` and `world-not-started`. Those exact outcomes are what is
+pinned, rather than switching the session to `pillage-loop` so the commands would succeed. The
+smaller change kills the mutant that mattered — refusing every world command unconditionally passed
+17 of 17 — and it leaves the file's malformed-input half and its batch-atomicity test, which were
+already load-bearing, untouched. Switching scenarios would be a stronger test and a larger reshaping;
+it is not done here.
+
+`npm run check` green from cold at 435 tests, up from 412 at the `agent/develop` tip.
+
 ### 2026-09-03 — analysis of review findings, slice 2c (cycle 1)
 
 Re-analysis of the one blocking finding from the PR 6 review, plus the schema collision the review
@@ -3830,6 +3945,275 @@ the deviation recorded for PR 3 and PR 4 and for a reason that is now stronger: 
 branches have already merged `agent/develop` into themselves, and squashing would detach exactly the
 history they will merge back against. It stays raised for the human in `ISSUES.md` rather than
 settled quietly.
+
+### 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 0
+
+Four lenses run separately against the branch. `npm run check` was re-run from cold rather than
+taken from the PR: green at 435 tests. One finding blocks; fourteen are in `ISSUES.md` under the
+matching dated heading.
+
+**Blocking: decision 102 removes the only path that ever cleared a concluded battle.**
+`settleEncounter` at `packages/sim/src/world/session.ts:41` is the sole writer of
+`state.battle = null` in the whole of `packages/` — the field has exactly three writers, the other
+two being the two places a battle starts. Decision 102 gates that single clear behind
+`ownedEncounterOf`, so a concluded battle whose berths do not include `voyage.shipId` is cleared by
+nothing: not `stepWorld`, not `voyage.port`, not any later voyage.
+
+It is reachable through public commands. Commission two player sloops and a brigand, chart on the
+second player ship, then `battle.start` — which picks the *first* player ship
+(`packages/sim/src/battle/dispatch.ts:41`) — and conclude it. The berths no longer contain the
+voyaging ship. Run one tick on that state and, on this branch, the battle is still standing (the
+same object, still `player-won`); on `22ec18e` it is `null`, because the old guard settled any
+concluded battle while a voyage ran, and settled it onto the correct hull, since `settleEncounter`
+resolves the player from the battle's own berths rather than from the voyage.
+
+The consequence is that the pillage loop dies silently. `packages/sim/src/world/encounter.ts:38`
+suppresses spawning on *any* non-null battle, concluded or not — measured at the same league point,
+base spawns two events where this branch spawns none — and `packages/sim/src/battle/dispatch.ts:40`
+refuses `battle.start` with `battle-already-running` for the rest of the session. The orphaned
+brigand hull is never struck off, and the stale battle rides in the canonical hash and every save.
+It is bounded in size, so a wedge rather than unbounded growth.
+
+Decision 102's recorded rationale rejects provenance because it "would strand a hand-started
+mid-voyage battle in hashed state for good". The predicate that shipped strands exactly that class
+whenever the hand-started battle's player berth is not the voyaging ship, so the rationale asserts
+a property the code does not have. `tests/world/encounter.test.ts:253` builds precisely this state
+and pins `stepWorld` returning `[]` — a good test of the intended narrowing that nonetheless locks
+in the permanent strand, because it asserts nothing about the battle ever clearing.
+
+This returns to analysis rather than straight to development because the repair is a decision:
+something has to clear an unowned concluded battle, and the options differ in what they pay out.
+Settling it onto its own berthed player — which `settleEncounter` already does correctly — honours
+both decision 101's goal and decision 83's words. Clearing it without paying plunder is also
+defensible. Either way the escape has to exist, be recorded, and be tested; and decision 102's
+rationale sentence needs correcting whichever is chosen.
+
+**What the review confirms, so no later stage need redo it.** The three defects slice 4 queued are
+genuinely closed, and none by a test that pins the old behaviour. Decision 101's write order is
+correct: all five refusals in `port()` return before `settleOwnedEncounter`. Double settlement is
+impossible — `settleEncounter` nulls the battle, `port` nulls the voyage, and commands never run
+inside a tick. Decision 103's arithmetic errs in the safe direction, since
+`floor((h+c)/1000) >= floor(h/1000) + floor(c/1000)` always: the new count is stricter by at most a
+kilogram and no caller can be pushed over a hold's stated limit. Event order is safe for replay,
+because `hash()` and `save()` serialise state and state holds no event log. Decision 102 is a
+legitimate reading of decision 83 — the fault is in its rationale and its missing escape, not in
+the reinterpretation — and settling from inside a command matches precedent set by
+`battle.disengage`.
+
+**Two gaps confirmed by mutation, both recorded as non-blocking.** Hoisting `settleOwnedEncounter`
+above every guard in `port()` passes 435 of 435, so decision 101's write-order guarantee — the
+property the decision turns on — is defended by no test. And renaming every
+`refused('unknown-ship')` in `world/dispatch.ts` passes 435 of 435, so the rejection-union sweep
+this slice performed missed a reason at all three of its world-dispatcher sites.
+
+**A note on this document's own conventions.** Decision 88's rationale was edited in place. The
+document states the append-don't-rewrite rule twice, at lines 996 and 1783, and has followed it
+every previous time a decision's reasoning was found wanting — decisions 31 and 39 both kept their
+original rows with the correction appended. Two live citations now quote text that no longer exists
+in row 88. The blocking repair will reopen this branch anyway, so restoring row 88 and letting the
+correction plus decision 103 carry the fix costs nothing extra and keeps the record readable
+backwards.
+
+**Ownership is now a concept in one place and not the other three.**
+`packages/sim/src/world/dispatch.ts:76`, `world/voyage.ts:57` and `world/encounter.ts:38` still read
+raw `state.battle`, so an unrelated ship's *running* battle still freezes a voyage and refuses its
+port. Not a regression — those predicates are unchanged — but decision 102 introduces the ownership
+rule and these three contradict it. They sit next to the blocking repair and should be decided with
+it rather than by omission.
+
+### 2026-09-03 — analysis of the review finding, slice 4c (OPP-16), PR 9, cycle 1
+
+One finding blocked: decision 102 removed the only path that ever cleared a concluded battle. This
+entry decides the repair, withdraws decision 102, and corrects two premises — one of decision 102's
+own, and one the review carried into its non-blocking notes. The fourteen non-blocking findings stay
+in `ISSUES.md`.
+
+#### The wedge, measured rather than argued
+
+Reproduced through public commands only: `world.start`, commission two player sloops and a brigand,
+`voyage.chart` on the **second** player ship, `battle.start` — which picks the *first*
+(`battle/dispatch.ts:41-42`, `state.ships.find(ship => ship.allegiance === 'player')`, with no
+reference to the voyage anywhere in that file) — then fight it out.
+
+On `3f834a3`, across seeds 1 to 30, the battle concluded 14 times `player-won` and 16 times
+`player-lost` and was cleared **zero** times. On seed 2:
+
+| after the battle concludes                   | `3f834a3`                                                    |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| `state.battle` after one tick                | non-null, still `player-won`, berths `[2, 4]`                |
+| `rollEncounter` at league point 16           | `[]`                                                          |
+| sailing the remaining 144000 ticks, legs 0→8 | `voyage.encounters` stays 0, brigand hull never struck off    |
+| `battle.start`                               | refused `battle-already-running`, permanently                 |
+| `voyage.port`                                | accepted, events `['voyage.ported']` only                     |
+
+**And it gets worse after porting.** `port()` refuses only a *running* battle
+(`world/dispatch.ts:76`), so a concluded unowned battle passes it, `settleOwnedEncounter` returns
+`[]`, and `state.voyage = null` at `:86`. From then on `ownedEncounterOf` returns null on its first
+line because `voyage === null`, and `stepWorld` returns before even calling it. **Nothing in
+`packages/` can clear `state.battle` again for the rest of the session**, and the stale battle rides
+in the canonical hash and every save. Verified end to end.
+
+#### What the review's own premise got wrong, and it changes the answer
+
+The review recorded, as a non-blocking note, that "ownership is now a concept in one place and not
+the other three" — that `world/dispatch.ts:76`, `world/voyage.ts:57` and `world/encounter.ts:38`
+read raw `state.battle`, so an unrelated ship's *running* battle freezes a voyage, refuses its port
+and suppresses its spawns, contradicting decision 102's ownership rule.
+
+**`WorldState` has one battle slot.** `battle: BattleState | null`, one `stepBattle` over
+`state.battle`, and both writers assign that single field. There is no set of concurrent battles for
+a predicate to select from. So a *running* battle genuinely occupies the whole world, and a guard
+that freezes the voyage or suppresses a spawn while one is running is not contradicting an ownership
+rule — it is stating the single-slot fact correctly. Making those three "ownership-aware" would mean
+letting a voyage sail, port, and spawn a second encounter while a battle is already running, into a
+slot that cannot hold it.
+
+What is genuinely wrong at two of those sites is not ownership but **outcome-blindness**:
+`world/encounter.ts:38` and `battle/dispatch.ts:40` test `state.battle !== null` and so treat a
+*concluded* battle — which is residue, not an occupant — exactly like a running one. That is the
+mechanism that turns "not cleared" into "the loop is dead". Under the repair below a concluded battle
+survives at most one tick while a voyage runs, so the encounter site's blindness stops mattering; the
+`battle.start` site is decision 129.
+
+#### The decision
+
+**126. Any concluded battle settles while a voyage runs. Decision 102's `sailed` test is
+withdrawn.** `ownedEncounterOf` loses the two lines requiring the battle's berths to contain
+`voyage.shipId`; the predicate becomes "there is a voyage and the battle is concluded", which is
+byte-for-byte the predicate on base `22ec18e`. Two lines removed, one added.
+
+Both candidates were built and measured on the wedged state. Both clear the battle in the tick it
+concludes, strike the brigand hull off, let the voyage continue, and resume the pillage loop — a
+fresh encounter opens at tick 25200 berthing the *voyaging* ship, `encounters` 0→1. Both fail
+exactly one existing test and no other. They differ only in what is paid.
+
+The deciding fact is that **the poe half of the booty is already paid to the berthed hull, today, on
+this branch.** `concludeBattle` → `claimBooty` → `awardBooty` (`battle/session.ts:57,152`;
+`battle/booty.ts:29-42`) credits `winner.poe`, `winner.bootyPoe` and `winner.bootyCargoUnits` at
+conclusion, long before settlement is considered. On seed 2 that is 372 poe, 373 bootyPoe and 40
+bootyCargoUnits, all on hull 2 — the ship that never sailed. Only the 40 cargo units wait for
+`materialisePlunder`.
+
+So *clearing without paying* — the alternative — does not withhold a windfall from the wrong hull.
+It pays that hull the money, destroys its cargo, and leaves the two halves of one booty disagreeing.
+It also costs more code (8 lines added, 3 removed, and a second predicate) than the option that
+removes code.
+
+And the payout is not a phantom the player can never reach. `divide` (`world/dispatch.ts:135-160`)
+gates on the pirate being in port and the ship existing — there is no check against `voyage.shipId`,
+and `ShipState` carries no island or position field at all — and the same is true of `trade`.
+Measured end to end under this decision: port, `booty.divide {shipId: 2}` accepted (pirate
+2000 → 2112), then `market.sell {shipId: 2, grog, 40}` accepted for **1680 poe**, pirate
+2112 → 3792. The plunder is fully realisable.
+
+Decision 102's stated rationale rejected provenance because it "would strand a hand-started
+mid-voyage battle in hashed state for good". **That sentence is false of the predicate that
+shipped**, which strands exactly that class whenever the hand-started battle's player berth is not
+the voyaging ship. Corrected here rather than edited in row 102, per this document's own
+append-don't-rewrite rule — and per decision 131, which restores the row that broke it.
+
+**127. The predicate is renamed to say what it now tests.** `ownedEncounterOf` no longer tests
+ownership and `settleOwnedEncounter` no longer settles by it. They become `concludedEncounterOf` and
+`settleConcludedEncounter`. Leaving the old names would leave the next reader looking for a rule the
+code stopped having, which is the same failure mode as decision 102's rationale.
+
+**128. The three raw `state.battle` reads stay exactly as they are.** Per the single-slot argument
+above, they are correct as written and the review's note is withdrawn. Recorded as a decision rather
+than left as an omission, so the next reviewer does not re-raise it.
+
+**129. A concluded battle with no voyage at all stays uncleared, and that is not repaired here.**
+`stepWorld` returns on its first line when `voyage === null`, so the sea-battle scenario —
+`battle.start` with no voyage, fought to a conclusion — leaves a concluded battle standing and
+`battle.start` refused for the rest of the session. This is **not a regression**: base `22ec18e`
+behaved identically, and `tests/harness/battle.test.ts:126` positively depends on it, reading
+`brigand.cargoUnits` and `player.bootyCargoUnits` after the win, which a tick-time settle would
+strike off and zero.
+
+Repairing it means either relaxing the no-voyage guard, which breaks that scenario's contract, or
+making `battle/dispatch.ts:40` refuse only a *running* battle, which lets a new battle overwrite an
+unsettled concluded one and silently drop its brigand hull and its cargo units. Both are real
+designs, neither is a two-line change, and the blocking repair needs neither. It goes to `ISSUES.md`
+under this cycle with both options written down.
+
+**130. The escape gets a test, and `tests/world/encounter.test.ts:253` is rewritten rather than
+deleted.** That test — *"a concluded battle the voyage never sailed into is left where it stands"* —
+is the one test both candidates fail, and it is the test that locked the strand in: it asserted
+`stepWorld` returns `[]`, the battle still `player-won`, the brigand still listed and the plunder
+un-materialised. It becomes the assertion of the opposite property, keeping its state construction:
+a concluded battle the voyage never sailed into is settled onto its own berthed hull, the brigand is
+struck off, and `state.battle` is null. The name changes with it.
+
+That the suite went green on a permanent wedge is why this test is named specifically rather than
+left to the developer's judgement.
+
+**131. Three things are folded in, because the branch is open and each is one commit.**
+
+- Decision 88's rationale was edited in place, against the append-don't-rewrite rule this document
+  states at lines 996 and 1783 and followed for decisions 31 and 39. Two live citations quote text
+  that no longer exists in row 88. Restore the original row and let the correction stand as its own
+  paragraph.
+- Two guarantees the suite does not defend, both confirmed by mutation at review time: hoisting
+  `settleConcludedEncounter` above every guard in `port()` passes 435 of 435, and renaming every
+  `refused('unknown-ship')` in `world/dispatch.ts` passes 435 of 435. One test each.
+- `ISSUES.md` line 11 still claims 417 tests. One character.
+
+#### Numbering
+
+126 to 131. Slice 4c's own 101-103 stand. 104-110 are reserved for the slice 4b renumber the PR 8
+review recommends, slice 5 holds 111-120 on its branch, and slice 4b's cycle 1 took 120-125 on
+another — 120 already collides across those two, which is not this branch's to fix. 126 is the first
+number free on every open branch.
+
+#### What done means
+
+One development slice, against the existing branch and PR 9. It is done when a concluded battle
+cannot survive a voyage by more than the tick it concluded in, that property is asserted by the test
+that used to assert its opposite, the predicate's name matches what it tests, and the three
+folded-in items are closed. `npm run check` green from cold.
+
+### 2026-09-03 — development, slice 4c repair: letting a concluded battle clear (OPP-16), PR 9, cycle 1
+
+Decisions 126 to 131, on the existing branch and PR 9. Two lines left `concludedEncounterOf` and one
+took their place, and the predicate is again byte-for-byte the one on base `22ec18e`: there is a
+voyage and the battle is concluded. `settleConcludedEncounter` and its call from `port()` are new in
+this slice and stay — they simply became unowned-tolerant with the predicate. Both names now say what
+they test, per decision 127, and both are reached by direct module import, so the rename touched
+`world/dispatch.ts` and nothing else.
+
+**The repair was measured, not asserted.** Restoring decision 102's `sailed` lines fails exactly one
+test — the rewritten one — and no other. `tests/world/encounter.test.ts` now asserts the property the
+wedge test denied: a concluded battle the voyage never sailed into is settled onto its own berthed
+hull, the brigand is struck off, `state.battle` is null, the plunder materialises onto that hull, and
+the voyage sails on the next tick. Its name changed with it.
+
+**The two undefended guarantees are defended, and were confirmed the same way.** Hoisting
+`settleConcludedEncounter` above every guard in `port()` now fails one test, and renaming
+`refused('unknown-ship')` at all three of its sites fails one test. The write-order test refuses a
+porting from the open-water league index with an owned concluded battle standing, and asserts both
+the `not-at-island` reason and that the battle and the brigand hull survived the command that failed
+— a settle that ran before the guard would clear both. The reason test dispatches all three commands
+that can reach the guard, charting, trading and dividing, against a ship id the fleet does not hold.
+
+**Decision 88's row is back as it was written, and its correction had to be reworded, which decision
+131 did not literally ask for.** The correction paragraph already sat where decisions 31 and 39 put
+theirs — in the prose of the entry that found the error — but its lead sentence announced the
+in-place edit itself, so restoring the row would have left the document asserting an edit that no
+longer exists. It now states the correction on its own terms and hands the fix to decision 103. The
+two live citations resolve against row 88's text again.
+
+**`ISSUES.md`'s headline count is 435, not 417.** The 2026-09-02 slice 4c entry's own prose still
+describes `stepWorld` settling only a battle the voyaging ship stands in. That is what was true when
+it was written and it is left as written, per this document's append-don't-rewrite rule; this entry
+is where that behaviour is withdrawn.
+
+**PR 9 no longer merged cleanly, and this is documentation only.** PR 6 landed on `agent/develop`
+after the review ran, and both `ISSUES.md` and this document take their entries at the top, so both
+conflicted. `agent/develop` was merged into the feature branch and the two files resolved by keeping
+both sides' sections in date order; no production file was involved. PR 7 and PR 8 are still moving
+against the same two files, so the test stage should expect to do this again.
+
+`npm run check` green from cold at 437 tests, up from 435 — the two new tests, the rewrite replacing
+one in place.
 
 ### 2026-09-03 — physical test of the slice 4b repair (PR 7, cycle 1)
 
@@ -4248,3 +4632,268 @@ straight after a click and it will be stale; take a screenshot first.
 
 Suite, build, provenance-proved smoke, the duty and both halves of the save guard all hold. Nothing
 blocking. PR 8 merged into `agent/develop`.
+
+
+### 2026-09-03 — development, slice 4c integration: taking PR 8's tree into the repair (OPP-16), PR 9
+
+The repair itself was implemented and pushed at `957f44f` by an earlier run, which then merged
+`agent/develop` at `80c7785` as `b49a4a8` and died before recording a check result. Its claim was
+reaped on an expired lease. This run entered with `recovery: clean`, so it re-derived the state from
+the branch and the PR rather than trusting anything left behind, and audited `957f44f` against the
+task's four items before touching it: the predicate withdrawn and renamed, the `port()` call kept,
+the wedge test inverted, decision 88's row restored byte-for-byte with the correction standing as
+its own paragraph, both undefended-guarantee tests added, and the `ISSUES.md` count corrected.
+Nothing was missing, so nothing was re-implemented.
+
+PR 8 landed at 17:28 and moved `agent/develop` from `09fac60` to `391b93e`, which is what made PR 9
+`CONFLICTING`. Merging it in produced four conflicts.
+
+#### The two document unions
+
+`ISSUES.md` and this document, resolved the way every integration before this one resolved them:
+nothing rewritten, each side's internal order preserved, `ISSUES.md` newest-first (so PR 8's
+sections sit above slice 4c's) and this document chronological (so slice 4c's entries, which are
+older, sit above PR 8's). Completeness was checked by arithmetic against merge-base `80c7785`
+rather than by eye — 25 `##` sections at the base, 28 on the branch, 36 on `agent/develop`, 39
+merged; and 42 / 47 / 63 / 68 for this document's `###` headings. Both are exactly base plus both
+sides, so no section was dropped or duplicated.
+
+#### The real conflict: two slices changed the same hold budget
+
+`freeHoldOf` in `packages/sim/src/battle/booty.ts` was edited by both slices for different reasons.
+Slice 4c (decision 120) replaced two separately-floored lot masses with one `stowedMassKgOf` call
+that floors hold and chest **once**, so moving a lot between them cannot gain a kilogram. Slice 4b
+subtracted `magazineMassKgOf(ship)`, so ship supplies stop counting as free hold.
+
+Both intents are wanted and they compose, so the resolution keeps both:
+
+```ts
+holdCapacityOf(ship) - ship.cargoUnits - ship.bootyCargoUnits -
+  stowedMassKgOf(ship.cargo, ship.bootyCargo) - magazineMassKgOf(ship)
+```
+
+Flooring the magazine separately is deliberate and costs nothing: division moves lots between the
+hold and the chest, never into the magazine, so the single-floor guarantee decision 120 bought is
+untouched by a second floor over a quantity division cannot move.
+
+#### The integration defect the merge exposed
+
+`npm run check` came back 534 of 535 with one failure —
+`tests/world/market.test.ts`, *the one commodity that is not whole kilograms is weighed down to the
+kilogram*, expecting 21 and getting 0.
+
+Not a mis-merge. Slice 4c chose `small-cannon-ball` as its part-kilogram commodity because at 7100
+grams a unit it is one of the three commodities that are not whole kilograms. Slice 4b then made
+cannonballs ship supplies: `buyCommodity` sends a ball that **fits** the ship's cannon into
+`ship.cannonballs` (`market.ts:97`) and refuses one that does not with `wrong-cannon-ball-size`
+(`market.ts:49`). A sloop fires small balls, so the purchase now stocks the magazine and `ship.cargo`
+stays empty. **After slice 4b no cannonball can reach a hold through the market at all**, and since
+every other commodity weighs exactly 1000 grams a unit, the market can no longer put a
+part-kilogram lot in a hold. The test was asserting a path that slice 4b deliberately closed.
+
+The rounding rule itself is untouched and still worth defending, so the test keeps its property and
+loses the market: it stows the lot directly with `stowLot` and asserts the same two things, that
+three balls weigh 21 kilograms rather than 21.3, and that they exactly fill the hold. The market
+buy/sell half is dropped rather than rewritten, because slice 4b's own tests already cover both
+sides of the fitting/oversized rule and re-testing it here would duplicate them.
+
+Recorded as a limitation rather than fixed here: `stowedMassKgOf`'s actual single-floor guarantee —
+that hold and chest are floored together — is still defended by nothing. The market test never
+defended it either (it only ever exercised `cargoLotsMassKgOf` over one array), so this is a gap
+decision 120 shipped with, not one this merge created. Filed to `ISSUES.md`.
+
+#### Verification
+
+`npm run check` green from cold, exit 0, **535 of 535**, all six gates clean. `npm run build` clean.
+Worked in a private worktree; the main working tree was never touched.
+
+### 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 1
+
+Four lenses over the repair at `957f44f` and the integration at `7a58bfd`, by a run with no hand in
+either. **Approved, no blocking finding.** `cycle` stays 1. The fourteen non-blocking findings and
+the two corrections are in `ISSUES.md` under this cycle's heading. What follows is only what the
+review learned about the design.
+
+#### The verification was redone, not inherited
+
+`npm run check` was run from cold in the review's own worktree: exit 0, **535 of 535**, all six
+gates. Both GitHub checks green on `7a58bfd`, `MERGEABLE` / `CLEAN`. The two claims the task offered
+as already-established were spot-checked rather than trusted, and both hold.
+
+#### What PR 9 actually changes against the branch it merges into
+
+The most useful thing this review found, and it should shape what the test stage exercises.
+`git show 391b93e:packages/sim/src/world/session.ts` is **byte-identical to base `22ec18e`**:
+decision 102's `sailed` predicate never reached `agent/develop`. It lived only on this branch,
+between `9960292` and `957f44f`.
+
+So the wedge measured in the cycle 1 analysis — battle non-null forever, `rollEncounter` empty, the
+pillage loop dead — **did not exist on the merge target**. It was a branch-local regression that the
+repair removes, which is exactly what a repair should do; but it means landing PR 9 changes only
+three things in `packages/`:
+
+1. `world/dispatch.ts:84` — `port()` now settles a concluded battle before `state.voyage = null`
+2. `battle/booty.ts:53` — one floor over hold and chest instead of two
+3. `world/cargo.ts` — the `cargoLotsMassGramsOf` extraction, behaviour-identical
+
+Item 1 is the only user-visible behaviour change, and it fixes a strand that **is** reachable on
+`391b93e` with public commands: chart a pillage, meet a brigand, `battle.disengage` (which concludes
+without a tick), then `voyage.port` with no tick in between. On the target, `port()` passes its
+running-battle guard, nulls the voyage, and `stepWorld` returns on `voyage === null` forever after —
+the concluded battle and the orphan brigand hull ride in `state.ships`, the canonical hash and every
+save, and `battle.start` is refused `battle-already-running` for the rest of the session. That is the
+scenario worth playing physically.
+
+#### The separate magazine floor is not merely safe, it is inert
+
+The integration argued the second floor costs nothing because division never moves anything into the
+magazine. Traced against every writer of `ship.cannonballs` and `ship.rum` — `ship/state.ts`,
+`ship/meters.ts` (decrement only) and `world/market.ts` — the argument holds.
+
+It is stronger than it was stated. No public path can put a part-kilogram lot into `cargo` or
+`bootyCargo` at all: the market routes a fitting cannon ball to the magazine and refuses a
+non-fitting one, and plunder excludes ship supplies. Every commodity that can reach a hold weighs
+exactly 1000 grams a unit, so `cargoLotsMassGramsOf` is always a multiple of 1000 and
+`floor(stowed) + floor(magazine)` equals `floor(stowed + magazine)` identically on every reachable
+state. The two forms cannot diverge today; decision 120's guarantee is a claim about states only
+direct construction can build.
+
+Which is why the guarantee's test had to construct one, and does — see the `ISSUES.md` correction.
+
+#### The market is where the two floors do diverge, and it pre-dates this slice
+
+`buyCommodity` charges `massKgOf(commodityId, units)`, flooring the purchase, while
+`magazineMassKgOf` floors the running total. Buying supplies one at a time under-charges the hold by
+the remainder: a sloop laden to 13493 kg with 7 kg free accepts one more small cannon ball, charged
+7 kg, and ends at 13501 kg against a 13500 kg hull. Reproduced end to end.
+
+`world/market.ts`, `massKgOf` and `magazineMassKgOf` are untouched by `391b93e..7a58bfd`, so this is
+slice 4b's and not a reason to hold PR 9. Recorded here because it is the concrete answer to the
+question the integration asked about the two floors, and because the soak invariant that would catch
+it is itself one kilogram loose for the same reason.
+
+#### Two claims in this document overstate what the code does
+
+Both are corrections to the record, neither changes the design.
+
+**Decision 126's "byte-for-byte the predicate on base `22ec18e`"** is literally false, and is
+asserted twice. Base has no predicate function; the condition is two statements inside `stepWorld`
+reading `state.voyage`. The predicate is semantically identical on every reachable state and
+decision 126's other claim — two lines removed and one added against `9960292` — is exact. The
+predicate also now runs from a second call site, `port()`, which base did not have.
+
+**This document is no longer chronological.** The integration's rationale claims both
+order-preservation and chronological order; at this merge they were incompatible, and the resolution
+took order-preservation. Two `2026-09-02` slice 4c entries now sit below five `2026-09-03` PR 8
+entries. Both parents were date-monotonic, so the inversion is the merge's. Worth deciding
+deliberately next time a union of two long-lived document sides is resolved: preserving both sides'
+internal order and keeping the whole file sorted by date are not the same instruction, and no
+resolution can honour both once each side has interleaved dates.
+
+#### What the review confirmed, so the next stage need not
+
+Decisions 126, 127, 129, 130, 131a, 131b and 131c all conform, each checked against the code rather
+than the commit messages. Decision 131b's two mutation tests were traced against the mutations they
+name and both genuinely catch them, including partial hoists of the `port()` settle. Decision 88's
+row was restored byte-for-byte, verified by comparing against the commit that introduced it. Both
+document unions are strict supersets of both parents with **zero** deleted content lines, and the
+section arithmetic was recomputed independently: `ISSUES.md` 25 / 28 / 36 / 39 and this document
+42 / 47 / 63 / 68, exactly base plus both sides.
+
+The rewritten market test drops no coverage: the fitting and oversized ball rules, magazine stocking,
+the whole-kilogram sell round trip and the supply-lot-in-hold boundary are each covered by slice 4b's
+own tests, and the part-kilogram market round trip the old test asserted is now an unreachable state
+rather than an untested one.
+
+### 2026-09-03 — physical test of the slice 4c repair and the PR 8 integration (OPP-16), PR 9, cycle 1
+
+PR 9 at `c5da403` against `agent/develop` `391b93e`. Review passed with no blocking finding. This
+stage found **no blocking failure** and merged.
+
+#### The wedge was reproduced on the merge target and is gone on the head
+
+The one user-visible change — `port()` settling a concluded battle before nulling the voyage — was
+tested with a control, not just an assertion. The same fifteen-line JSON-RPC script was piped into
+`packages/harness/bin/pp-harness.ts` in two detached worktrees, one at `c5da403` and one at
+`391b93e`, and the two runs diverge exactly where the repair sits.
+
+Seed `6`, scenario `pillage-loop`, `voyage.chart` to `doyle` as a `pillage`. The encounter falls on
+the **final** leg — `voyage.legReached` point 8, `encounter.spawned` ship 3, `battle.started` — at
+tick 34560, which is what makes `voyage.port` reachable at all; a mid-route encounter is refused
+`not-at-island`. Twenty-one thousand ticks later `disengageCounter` is 0 on both berths and the
+battle is still `running`. Then `battle.disengage`, then `voyage.port`, with **no tick between them**.
+
+| after `voyage.port` | `391b93e` (control) | `c5da403` (head) |
+| ------------------- | ------------------- | ---------------- |
+| `/battle`           | present, `disengaged` | `null`         |
+| `/ships`            | 2 items (orphan brigand 3 rides) | 1 item |
+| `battle.start`      | rejected `battle-already-running` | rejected `unknown-ship` |
+| state hash          | `61faf4fc81df6201`  | `5917c70be70baaa0` |
+
+Both runs are identical up to the port: hash `8c0e7ebc0ef4255b` after the disengage on each. The
+control is the wedge as the cycle 1 analysis described it — the session is dead from that point on.
+The head clears it.
+
+#### Played in the real client, not only in the harness
+
+A Vite dev server on port **5191** — deliberately not the squatted 5178 — served the same worktree;
+provenance was proved before trusting anything by reading the served module graph, which resolves to
+`/@fs/.../wt-t4c/packages/...`. Seed 6 in the browser reached the same encounter on leg 2 of 2 and
+rendered the sea battle with *Break off* ready.
+
+Because the client's ticker is `requestAnimationFrame`-driven and there is no pause control, the
+zero-tick requirement was met by issuing both commands inside **one synchronous block**:
+`client.tick` reads 57021 before the disengage and 57021 after the port. The battle cleared, brigand
+3 was struck off, the pirate stood at Doyle, and `battle.start` was rejected `unknown-ship` — which
+the UI surfaced in the message log as *"No such ship."* beneath *"The brigand slips away."* and
+*"Ported at Doyle Island."*
+
+Then, by real clicks on the chart panel — Alkaid, then *pillage* — a fresh voyage was charted and the
+ship put to sea. That is the practical value of the repair: the pillage loop survives a disengage at
+the destination.
+
+#### The two cheap passes the task asked for
+
+**A concluded battle clearing at tick time, mid-voyage.** Seed 2, driven by the repository's own
+brigand planner. `battle.ended` `player-won` at tick 98700; in that same tick `state.battle` is
+`null`, the brigand hull is off `state.ships`, and the plunder has landed in the chest —
+`bootyPoe` 373 and `bootyCargo` `wood ×40`. The voyage is still running at `legIndex` 1 and still
+running 600 ticks later. This is decision 126's path, and it is the one that pays plunder; the
+`port()` path settles a `disengaged` battle, which by construction pays none.
+
+**Save round trips across the settle.** The post-disengage save reloads byte-identical at hash
+`8c0e7ebc0ef4255b`. A stale save carrying that concluded battle settles on the **first tick** after
+loading — battle `null`, brigand struck, voyage still running. And the two routes converge: loading
+that save and porting, versus loading it, ticking once, then porting, produce an **identical** state
+facet across `battle`, every ship's `poe` / `bootyPoe` / `bootyCargo` / `cargo`, `pirate` and
+`voyage`. No double credit on either route.
+
+**Regression nearest the change.** `voyage.port` while a battle is genuinely `running` is still
+refused `battle-running`, and the state hash is unchanged by the refusal — decision 101's ordering
+holds and the command still writes nothing it might refuse.
+
+#### `npm run check` from cold, and a flake worth knowing about
+
+Run 2, in a fresh worktree with nothing else on the machine: **exit 0, 535 of 535, all six gates.**
+
+Run 1 of the same command on the same tree failed, exit 1, 534 of 536 — both failures in
+`tests/harness/restocking.test.ts`, both `Error: spawn UNKNOWN` (errno `-4094`) raised by
+`child_process.spawn` in `tests/harness/client.ts:31`, not by any assertion. Run 1 shared the machine
+with a concurrent `npm ci` and with 76 stray `node` processes left by earlier sessions.
+`node --test "tests/harness/**/*.test.ts"` immediately afterwards passed 105 of 105. Environmental,
+not the change — but the harness suite starts one child process per test, so it is the first thing to
+fail on a loaded Windows box. Filed in `ISSUES.md`.
+
+#### Not chased, deliberately
+
+Decision 129's non-goal was left alone: a concluded battle with **no voyage at all** stays uncleared,
+because `stepWorld` returns on `voyage === null`. It is documented as out of scope for this cycle and
+was not tested as a defect. The known non-blocking items already in `ISSUES.md` — the market's
+one-kilogram hull over-fill, `booty.overflowPolicy`, the misnamed tests — were not re-raised.
+
+#### One decision taken on the task's behalf
+
+The `queue-test` skill prescribes `gh pr merge --squash`. The task file instead prescribes a merge
+commit, because PRs 1 to 8 all used one and the ancestry matters to what follows. The task file wins:
+PR 9 was merged with `--merge`. A squash here would have flattened the PR 8 integration merge that
+this branch carries and made the next slice's merge base incoherent.

@@ -14,6 +14,7 @@ import {
   isShipSupply,
   type CommodityId,
 } from '../../packages/sim/src/world/commodities.ts';
+import { applyWorldCommand } from '../../packages/sim/src/world/dispatch.ts';
 import {
   encounterChanceOf,
   materialisePlunder,
@@ -150,6 +151,7 @@ test('plunder becomes a booty chest lot of the same mass to within the floor', (
     assert.equal(plundered.shipId, ship.id);
     assert.equal(ship.bootyCargoUnits, 0);
     assert.ok(COMMODITY_IDS.includes(plundered.commodityId));
+    assert.ok(Number.isSafeInteger(plundered.units), String(seed));
     drawn.add(plundered.commodityId);
 
     const massGramsPerUnit = commodityOf(plundered.commodityId).massGramsPerUnit;
@@ -263,6 +265,97 @@ test('a lost battle pays no cargo but still strikes the brigand off', () => {
     state.ships.map((ship) => ship.id),
     [player.id],
   );
+  assert.deepEqual(player.cargo, []);
+});
+
+test('a concluded battle the voyage never sailed into is settled onto its own berthed hull', () => {
+  const state = sailingState(SEED, 'evade');
+  const sailing = state.ships[0];
+  assert.ok(sailing !== undefined);
+  const moored = createShip(state, { shipClass: 'sloop', allegiance: 'player' });
+  const brigand = createShip(state, { shipClass: 'sloop', allegiance: 'brigand' });
+  state.ships.push(moored, brigand);
+  moored.bootyCargoUnits = BOOTY_CARGO_UNITS;
+  state.battle = createBattle(
+    [
+      { shipId: moored.id, x: 1, y: 1, facing: 'north' },
+      { shipId: brigand.id, x: 1, y: 20, facing: 'south' },
+    ],
+    false,
+  );
+  state.battle.outcome = 'player-won';
+
+  const events = stepWorld(state);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, 'cargo.plundered');
+  assert.equal(state.battle, null);
+  assert.deepEqual(
+    state.ships.map((ship) => ship.id),
+    [sailing.id, moored.id],
+  );
+  assert.equal(moored.bootyCargoUnits, 0);
+  assert.equal(moored.bootyCargo.length, 1);
+
+  stepWorld(state);
+  assert.equal(state.voyage?.legTicks, 1);
+});
+
+test('porting settles the battle the voyage disengaged from rather than sailing on without it', () => {
+  const state = sailingState(SEED, 'pillage');
+  const player = state.ships[0];
+  assert.ok(player !== undefined);
+  const brigand = createShip(state, { shipClass: 'sloop', allegiance: 'brigand' });
+  state.ships.push(brigand);
+  state.battle = createBattle(
+    [
+      { shipId: player.id, x: 1, y: 1, facing: 'north' },
+      { shipId: brigand.id, x: 1, y: 20, facing: 'south' },
+    ],
+    false,
+  );
+  state.battle.outcome = 'disengaged';
+
+  const ported = applyWorldCommand(state, { op: 'voyage.port' });
+
+  assert.equal(ported.status, 'accepted');
+  assert.deepEqual(
+    ported.status === 'accepted' ? ported.events.map((event) => event.type) : [],
+    ['voyage.ported'],
+  );
+  assert.equal(state.battle, null);
+  assert.deepEqual(
+    state.ships.map((ship) => ship.id),
+    [player.id],
+  );
+  assert.equal(state.voyage, null);
+  assert.equal(state.pirate?.atIslandId, 'alkaid');
+});
+
+test('porting off a won battle takes the plunder into the chest on the way in', () => {
+  const state = sailingState(SEED, 'pillage');
+  const player = state.ships[0];
+  assert.ok(player !== undefined);
+  const brigand = createShip(state, { shipClass: 'sloop', allegiance: 'brigand' });
+  state.ships.push(brigand);
+  player.bootyCargoUnits = BOOTY_CARGO_UNITS;
+  state.battle = createBattle(
+    [
+      { shipId: player.id, x: 1, y: 1, facing: 'north' },
+      { shipId: brigand.id, x: 1, y: 20, facing: 'south' },
+    ],
+    false,
+  );
+  state.battle.outcome = 'player-won';
+
+  const ported = applyWorldCommand(state, { op: 'voyage.port' });
+
+  assert.deepEqual(
+    ported.status === 'accepted' ? ported.events.map((event) => event.type) : [],
+    ['cargo.plundered', 'voyage.ported'],
+  );
+  assert.equal(player.bootyCargoUnits, 0);
+  assert.equal(player.bootyCargo.length, 1);
   assert.deepEqual(player.cargo, []);
 });
 

@@ -7,6 +7,7 @@ import { divideBooty } from './division.ts';
 import { ISLAND_IDS, type IslandId } from './islands.ts';
 import { leaguePointOf } from './leaguePoints.ts';
 import { buyCommodity, createMarkets, marketOf, sellCommodity } from './market.ts';
+import { settleConcludedEncounter } from './session.ts';
 import { isVoyageType } from './state.ts';
 import { chartVoyage } from './voyage.ts';
 
@@ -80,10 +81,11 @@ function port(state: WorldState): CommandResult {
   const islandId = leaguePointOf(pointId).islandId;
   if (islandId === null) return refused('not-at-island');
 
+  const settled = settleConcludedEncounter(state);
   pirate.atIslandId = islandId;
   state.voyage = null;
 
-  return accepted([{ type: 'voyage.ported', tick: state.tick, islandId }]);
+  return accepted([...settled, { type: 'voyage.ported', tick: state.tick, islandId }]);
 }
 
 function trade(

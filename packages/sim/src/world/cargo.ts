@@ -15,11 +15,11 @@ export function massKgOf(commodityId: CommodityId, units: number): number {
 }
 
 export function cargoLotsMassKgOf(cargo: CargoLot[]): number {
-  let grams = 0;
-  for (const lot of cargo) {
-    grams += lot.units * commodityOf(lot.commodityId).massGramsPerUnit;
-  }
-  return Math.floor(grams / GRAMS_PER_KG);
+  return Math.floor(cargoLotsMassGramsOf(cargo) / GRAMS_PER_KG);
+}
+
+export function stowedMassKgOf(hold: CargoLot[], chest: CargoLot[]): number {
+  return Math.floor((cargoLotsMassGramsOf(hold) + cargoLotsMassGramsOf(chest)) / GRAMS_PER_KG);
 }
 
 export function magazineMassKgOf(ship: ShipState): number {
@@ -57,4 +57,12 @@ export function transferLots(from: CargoLot[], to: CargoLot[]): number {
   }
   from.length = 0;
   return moved;
+}
+
+function cargoLotsMassGramsOf(cargo: CargoLot[]): number {
+  let grams = 0;
+  for (const lot of cargo) {
+    grams += lot.units * commodityOf(lot.commodityId).massGramsPerUnit;
+  }
+  return grams;
 }

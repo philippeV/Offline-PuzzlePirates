@@ -6,15 +6,17 @@ import type { Command } from '../../packages/sim/src/index.ts';
 import { reasonOf, resultOf, startHarness, type Harness } from './client.ts';
 
 const SESSION_SEED = 0x0cea;
-const COMMAND_STATUSES = ['accepted', 'rejected'];
 
-const WELL_SHAPED: Command[] = [
-  { op: 'world.start', islandId: 'alkaid' },
-  { op: 'voyage.chart', shipId: 1, toIslandId: 'doyle', voyageType: 'trade' },
-  { op: 'voyage.port' },
-  { op: 'market.buy', shipId: 1, commodityId: 'wood', units: 3 },
-  { op: 'market.sell', shipId: 1, commodityId: 'wood', units: 0 },
-  { op: 'booty.divide', shipId: 1 },
+const WELL_SHAPED: [Command, string][] = [
+  [{ op: 'world.start', islandId: 'alkaid' }, 'balance-missing'],
+  [
+    { op: 'voyage.chart', shipId: 1, toIslandId: 'doyle', voyageType: 'trade' },
+    'world-not-started',
+  ],
+  [{ op: 'voyage.port' }, 'world-not-started'],
+  [{ op: 'market.buy', shipId: 1, commodityId: 'wood', units: 3 }, 'world-not-started'],
+  [{ op: 'market.sell', shipId: 1, commodityId: 'wood', units: 0 }, 'world-not-started'],
+  [{ op: 'booty.divide', shipId: 1 }, 'world-not-started'],
 ];
 
 const MALFORMED: Record<string, unknown>[] = [
@@ -47,13 +49,13 @@ after(async () => {
   await harness.stop();
 });
 
-for (const command of WELL_SHAPED) {
+for (const [command, reason] of WELL_SHAPED) {
   test(`${command.op} reaches the simulation as a parsed command`, async () => {
     const dispatched = await dispatch(command);
 
     const results = dispatched['results'] as { status: string; reason?: string }[];
     assert.equal(results.length, 1);
-    assert.ok(COMMAND_STATUSES.includes(results[0]?.status ?? ''), JSON.stringify(results[0]));
+    assert.deepEqual(results[0], { status: 'rejected', reason });
   });
 }
 

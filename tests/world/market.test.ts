@@ -6,7 +6,7 @@ import { FIRST_ENTITY_ID } from '../../packages/sim/src/ids.ts';
 import { freeHoldOf, holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
 import type { ShipClassId } from '../../packages/sim/src/ship/classes.ts';
 import { createShip, type ShipState } from '../../packages/sim/src/ship/state.ts';
-import { stowLot } from '../../packages/sim/src/world/cargo.ts';
+import { cargoLotsMassKgOf, stowLot } from '../../packages/sim/src/world/cargo.ts';
 import { COMMODITY_IDS, type CommodityId } from '../../packages/sim/src/world/commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from '../../packages/sim/src/world/islands.ts';
 import {
@@ -28,6 +28,9 @@ const SPAWNING_ISLAND: IslandId = 'doyle';
 const SCARCE_ISLAND: IslandId = 'alkaid';
 const SPAWNED_COMMODITY: CommodityId = 'hemp';
 const OTHER_COMMODITY: CommodityId = 'stone';
+const PART_KILOGRAM_COMMODITY: CommodityId = 'small-cannon-ball';
+const PART_KILOGRAM_UNITS = 3;
+const PART_KILOGRAM_MASS_KG = 21;
 const FITTING_BALL: CommodityId = 'small-cannon-ball';
 const OVERSIZED_BALL: CommodityId = 'large-cannon-ball';
 const RUM: CommodityId = 'swill';
@@ -523,6 +526,15 @@ test('a purchase that exactly fills the free hold is allowed', () => {
 
   assert.ok(outcome.ok);
   assert.deepEqual(laden.cargo, [{ commodityId: SPAWNED_COMMODITY, units: A_FEW_UNITS }]);
+});
+
+test('a lot that is not whole kilograms is weighed down to the kilogram', () => {
+  const ship = sloop(holdCapacityOf(sloop()) - PART_KILOGRAM_MASS_KG);
+
+  stowLot(ship.cargo, PART_KILOGRAM_COMMODITY, PART_KILOGRAM_UNITS);
+
+  assert.equal(cargoLotsMassKgOf(ship.cargo), PART_KILOGRAM_MASS_KG);
+  assert.equal(freeHoldOf(ship), 0);
 });
 
 test('a pirate cannot sell cargo the ship does not carry', () => {
