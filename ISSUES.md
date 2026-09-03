@@ -4,6 +4,54 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — analysis of the slice 4c review finding (OPP-16), PR 9, cycle 1
+
+Raised while deciding the blocking repair. Decisions 126 to 131 are in the analysis document.
+
+### A concluded battle with no voyage at all is still cleared by nothing
+
+`stepWorld` (`packages/sim/src/world/session.ts:10`) returns on its first line when
+`state.voyage === null`, so the repair in decision 126 — which settles any concluded battle *while a
+voyage runs* — does not reach the sea-battle case. `battle.start` with no voyage, fought to a
+conclusion, leaves the battle standing, and `battle/dispatch.ts:40` then refuses every later
+`battle.start` with `battle-already-running` for the rest of the session. The brigand hull is never
+struck off and the stale battle rides in the canonical hash and every save.
+
+**This is not a regression.** Base `22ec18e` behaved identically — its predicate also began with the
+`voyage === null` return — so nothing slice 4c did caused it, and decision 126 restores base
+behaviour exactly rather than extending it. It is recorded here because the blocking finding made
+the whole class visible, and because the class is now one guard narrower than it looks.
+
+`tests/harness/battle.test.ts:126` **positively depends on the current behaviour**: the sea-battle
+scenario has no voyage, and the test reads `brigand.cargoUnits` and `player.bootyCargoUnits` after
+the win, both of which a tick-time settle would strike off and zero. So this is not a free fix.
+
+Two designs, neither a two-line change:
+
+- **Relax the no-voyage guard**, letting `stepWorld` settle a concluded battle with no voyage. This
+  changes the sea-battle scenario's contract and needs that harness test rewritten to read the hulls
+  before the settle rather than after.
+- **Make `battle/dispatch.ts:40` refuse only a *running* battle.** Cheaper and more local, but a new
+  `battle.start` would then overwrite an unsettled concluded battle, silently dropping its brigand
+  hull and its un-materialised `bootyCargoUnits`. It needs a settle-before-start step to be safe,
+  which is the first design wearing a different coat.
+
+It starts to matter when a scenario or a player session starts a battle outside a voyage and expects
+to start another one afterwards. Nothing in the current scenarios does.
+
+### `battle.start` and `rollEncounter` treat a concluded battle as an occupant
+
+`world/encounter.ts:38` and `battle/dispatch.ts:40` both test `state.battle !== null` and ignore
+`outcome`, so residue blocks as hard as a running battle. Under decision 126 a concluded battle
+survives at most one tick while a voyage runs, so the encounter site's blindness stops being
+reachable in the voyage case — but both sites remain outcome-blind, and it is that blindness, not
+the failure to clear, that converts "uncleared" into "the loop is dead". Worth an outcome test at
+both sites once the entry above is decided; not worth changing one without the other.
+
+Distinct from decision 128, which withdrew the review's *ownership* note about these sites: with a
+single `state.battle` slot, a running battle genuinely occupies the world and those guards are right
+to say so. Only the concluded case is wrong.
+
 ## 2026-09-03 — independent review of slice 4c (OPP-16), PR 9
 
 Four-lens review of the settlement guard, the division budget and the dispatcher's tests. One

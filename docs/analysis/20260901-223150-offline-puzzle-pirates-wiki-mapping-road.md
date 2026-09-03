@@ -2439,3 +2439,153 @@ raw `state.battle`, so an unrelated ship's *running* battle still freezes a voya
 port. Not a regression — those predicates are unchanged — but decision 102 introduces the ownership
 rule and these three contradict it. They sit next to the blocking repair and should be decided with
 it rather than by omission.
+
+### 2026-09-03 — analysis of the review finding, slice 4c (OPP-16), PR 9, cycle 1
+
+One finding blocked: decision 102 removed the only path that ever cleared a concluded battle. This
+entry decides the repair, withdraws decision 102, and corrects two premises — one of decision 102's
+own, and one the review carried into its non-blocking notes. The fourteen non-blocking findings stay
+in `ISSUES.md`.
+
+#### The wedge, measured rather than argued
+
+Reproduced through public commands only: `world.start`, commission two player sloops and a brigand,
+`voyage.chart` on the **second** player ship, `battle.start` — which picks the *first*
+(`battle/dispatch.ts:41-42`, `state.ships.find(ship => ship.allegiance === 'player')`, with no
+reference to the voyage anywhere in that file) — then fight it out.
+
+On `3f834a3`, across seeds 1 to 30, the battle concluded 14 times `player-won` and 16 times
+`player-lost` and was cleared **zero** times. On seed 2:
+
+| after the battle concludes                   | `3f834a3`                                                    |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| `state.battle` after one tick                | non-null, still `player-won`, berths `[2, 4]`                |
+| `rollEncounter` at league point 16           | `[]`                                                          |
+| sailing the remaining 144000 ticks, legs 0→8 | `voyage.encounters` stays 0, brigand hull never struck off    |
+| `battle.start`                               | refused `battle-already-running`, permanently                 |
+| `voyage.port`                                | accepted, events `['voyage.ported']` only                     |
+
+**And it gets worse after porting.** `port()` refuses only a *running* battle
+(`world/dispatch.ts:76`), so a concluded unowned battle passes it, `settleOwnedEncounter` returns
+`[]`, and `state.voyage = null` at `:86`. From then on `ownedEncounterOf` returns null on its first
+line because `voyage === null`, and `stepWorld` returns before even calling it. **Nothing in
+`packages/` can clear `state.battle` again for the rest of the session**, and the stale battle rides
+in the canonical hash and every save. Verified end to end.
+
+#### What the review's own premise got wrong, and it changes the answer
+
+The review recorded, as a non-blocking note, that "ownership is now a concept in one place and not
+the other three" — that `world/dispatch.ts:76`, `world/voyage.ts:57` and `world/encounter.ts:38`
+read raw `state.battle`, so an unrelated ship's *running* battle freezes a voyage, refuses its port
+and suppresses its spawns, contradicting decision 102's ownership rule.
+
+**`WorldState` has one battle slot.** `battle: BattleState | null`, one `stepBattle` over
+`state.battle`, and both writers assign that single field. There is no set of concurrent battles for
+a predicate to select from. So a *running* battle genuinely occupies the whole world, and a guard
+that freezes the voyage or suppresses a spawn while one is running is not contradicting an ownership
+rule — it is stating the single-slot fact correctly. Making those three "ownership-aware" would mean
+letting a voyage sail, port, and spawn a second encounter while a battle is already running, into a
+slot that cannot hold it.
+
+What is genuinely wrong at two of those sites is not ownership but **outcome-blindness**:
+`world/encounter.ts:38` and `battle/dispatch.ts:40` test `state.battle !== null` and so treat a
+*concluded* battle — which is residue, not an occupant — exactly like a running one. That is the
+mechanism that turns "not cleared" into "the loop is dead". Under the repair below a concluded battle
+survives at most one tick while a voyage runs, so the encounter site's blindness stops mattering; the
+`battle.start` site is decision 129.
+
+#### The decision
+
+**126. Any concluded battle settles while a voyage runs. Decision 102's `sailed` test is
+withdrawn.** `ownedEncounterOf` loses the two lines requiring the battle's berths to contain
+`voyage.shipId`; the predicate becomes "there is a voyage and the battle is concluded", which is
+byte-for-byte the predicate on base `22ec18e`. Two lines removed, one added.
+
+Both candidates were built and measured on the wedged state. Both clear the battle in the tick it
+concludes, strike the brigand hull off, let the voyage continue, and resume the pillage loop — a
+fresh encounter opens at tick 25200 berthing the *voyaging* ship, `encounters` 0→1. Both fail
+exactly one existing test and no other. They differ only in what is paid.
+
+The deciding fact is that **the poe half of the booty is already paid to the berthed hull, today, on
+this branch.** `concludeBattle` → `claimBooty` → `awardBooty` (`battle/session.ts:57,152`;
+`battle/booty.ts:29-42`) credits `winner.poe`, `winner.bootyPoe` and `winner.bootyCargoUnits` at
+conclusion, long before settlement is considered. On seed 2 that is 372 poe, 373 bootyPoe and 40
+bootyCargoUnits, all on hull 2 — the ship that never sailed. Only the 40 cargo units wait for
+`materialisePlunder`.
+
+So *clearing without paying* — the alternative — does not withhold a windfall from the wrong hull.
+It pays that hull the money, destroys its cargo, and leaves the two halves of one booty disagreeing.
+It also costs more code (8 lines added, 3 removed, and a second predicate) than the option that
+removes code.
+
+And the payout is not a phantom the player can never reach. `divide` (`world/dispatch.ts:135-160`)
+gates on the pirate being in port and the ship existing — there is no check against `voyage.shipId`,
+and `ShipState` carries no island or position field at all — and the same is true of `trade`.
+Measured end to end under this decision: port, `booty.divide {shipId: 2}` accepted (pirate
+2000 → 2112), then `market.sell {shipId: 2, grog, 40}` accepted for **1680 poe**, pirate
+2112 → 3792. The plunder is fully realisable.
+
+Decision 102's stated rationale rejected provenance because it "would strand a hand-started
+mid-voyage battle in hashed state for good". **That sentence is false of the predicate that
+shipped**, which strands exactly that class whenever the hand-started battle's player berth is not
+the voyaging ship. Corrected here rather than edited in row 102, per this document's own
+append-don't-rewrite rule — and per decision 131, which restores the row that broke it.
+
+**127. The predicate is renamed to say what it now tests.** `ownedEncounterOf` no longer tests
+ownership and `settleOwnedEncounter` no longer settles by it. They become `concludedEncounterOf` and
+`settleConcludedEncounter`. Leaving the old names would leave the next reader looking for a rule the
+code stopped having, which is the same failure mode as decision 102's rationale.
+
+**128. The three raw `state.battle` reads stay exactly as they are.** Per the single-slot argument
+above, they are correct as written and the review's note is withdrawn. Recorded as a decision rather
+than left as an omission, so the next reviewer does not re-raise it.
+
+**129. A concluded battle with no voyage at all stays uncleared, and that is not repaired here.**
+`stepWorld` returns on its first line when `voyage === null`, so the sea-battle scenario —
+`battle.start` with no voyage, fought to a conclusion — leaves a concluded battle standing and
+`battle.start` refused for the rest of the session. This is **not a regression**: base `22ec18e`
+behaved identically, and `tests/harness/battle.test.ts:126` positively depends on it, reading
+`brigand.cargoUnits` and `player.bootyCargoUnits` after the win, which a tick-time settle would
+strike off and zero.
+
+Repairing it means either relaxing the no-voyage guard, which breaks that scenario's contract, or
+making `battle/dispatch.ts:40` refuse only a *running* battle, which lets a new battle overwrite an
+unsettled concluded one and silently drop its brigand hull and its cargo units. Both are real
+designs, neither is a two-line change, and the blocking repair needs neither. It goes to `ISSUES.md`
+under this cycle with both options written down.
+
+**130. The escape gets a test, and `tests/world/encounter.test.ts:253` is rewritten rather than
+deleted.** That test — *"a concluded battle the voyage never sailed into is left where it stands"* —
+is the one test both candidates fail, and it is the test that locked the strand in: it asserted
+`stepWorld` returns `[]`, the battle still `player-won`, the brigand still listed and the plunder
+un-materialised. It becomes the assertion of the opposite property, keeping its state construction:
+a concluded battle the voyage never sailed into is settled onto its own berthed hull, the brigand is
+struck off, and `state.battle` is null. The name changes with it.
+
+That the suite went green on a permanent wedge is why this test is named specifically rather than
+left to the developer's judgement.
+
+**131. Three things are folded in, because the branch is open and each is one commit.**
+
+- Decision 88's rationale was edited in place, against the append-don't-rewrite rule this document
+  states at lines 996 and 1783 and followed for decisions 31 and 39. Two live citations quote text
+  that no longer exists in row 88. Restore the original row and let the correction stand as its own
+  paragraph.
+- Two guarantees the suite does not defend, both confirmed by mutation at review time: hoisting
+  `settleConcludedEncounter` above every guard in `port()` passes 435 of 435, and renaming every
+  `refused('unknown-ship')` in `world/dispatch.ts` passes 435 of 435. One test each.
+- `ISSUES.md` line 11 still claims 417 tests. One character.
+
+#### Numbering
+
+126 to 131. Slice 4c's own 101-103 stand. 104-110 are reserved for the slice 4b renumber the PR 8
+review recommends, slice 5 holds 111-120 on its branch, and slice 4b's cycle 1 took 120-125 on
+another — 120 already collides across those two, which is not this branch's to fix. 126 is the first
+number free on every open branch.
+
+#### What done means
+
+One development slice, against the existing branch and PR 9. It is done when a concluded battle
+cannot survive a voyage by more than the tick it concluded in, that property is asserted by the test
+that used to assert its opposite, the predicate's name matches what it tests, and the three
+folded-in items are closed. `npm run check` green from cold.
