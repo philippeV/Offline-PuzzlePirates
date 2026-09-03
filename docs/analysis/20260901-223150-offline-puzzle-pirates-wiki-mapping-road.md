@@ -5244,3 +5244,103 @@ process per test, and this machine is carrying 76 stray `node` processes from ea
 Nothing in `tests/view` imports `save.ts` or the restore path, and those files pass 39 of 39 both in
 isolation and by directory. The killed run orphaned three of its own `node` children; they were
 identified by command line and killed, leaving the machine at the 76 it started with.
+
+
+### 2026-09-04 — independent review, UI sweep slice A (PR 10)
+
+Four lenses plus a verification arm, run against `60e60b1` in a worktree of its own. **No blocking
+finding. Forwarded to the test stage.** Twelve non-blocking findings are in `ISSUES.md` under
+today's heading. What follows is only what the review changed about the record.
+
+#### The development entry's test caveat does not reproduce, and its reasoning was wrong
+
+Slice A recorded that the suite "had to be run per directory", that a combined `npm run check`
+aborted four `tests/view` files at file level reporting 546 of 550, and that a second combined
+`npm test` hung and was killed at ten minutes. It attributed both to the known child-process flake.
+
+Re-run from cold in a clean worktree — `npm ci`, then the combined commands — none of it reproduced.
+`npm run check` ran fully green in one pass, exit 0, **568 pass / 0 fail**. The combined `npm test`
+finished in **42 seconds**, exit 0, run twice. The baseline was measured independently by reverting
+`save.ts`, `sim.ts` and `save.test.ts` to `82e019c`: **535 pass / 0 fail**, so the +33 delta is
+exactly right and the headline count is confirmed.
+
+The supporting reasoning is, however, **false and must not be carried forward**: the entry states
+that "nothing in `tests/view` imports `save.ts` or the restore path". It does. `tests/view/boot.test.ts:10`
+imports `packages/view/src/client/client.ts`, which imports `Sim` from `@opp/sim`, whose
+`index.ts:262` re-exports `deserialise` from `save.ts`; and the test calls the path at runtime —
+`boot.test.ts:72` `reloaded.restore(save)`, `:82` and `:100` `assert.throws(... client.restore(...))`,
+reaching `Sim.load` → `deserialise` → `refuseSpoiltState`. Those four files were not innocent
+bystanders. The conclusion happened to be survivable because the failure does not reproduce at all,
+but the argument offered for it was not sound, and a future stage that reuses it would be reasoning
+from a false premise. Whatever happened in that run remains unexplained and environmental.
+
+**150. A green per-directory run is not evidence of a green suite, and neither is a green suite on
+one machine.** Where a combined run cannot be made to pass, the stage says so and the next stage
+re-runs it from cold rather than inheriting the judgement. That is what happened here and it is why
+the caveat was worth the space slice A gave it, even though the conclusion drawn from it was wrong.
+
+#### The second door is a decision, and is hereby numbered
+
+`refuseSpoiltState(snapshot)` in `Sim.restore` (`sim.ts:95`) widens decision 111's "one sink serves
+the client, `session.load` and the tools" to two sinks, and required exporting the guard out of
+`save.ts`. Slice A describes this in prose but took no numbered decision for it, and the change is
+exactly the kind that needs one: `Sim.restore` can now throw `TypeError` on a structurally bad
+snapshot where previously it could not throw at all.
+
+**151. The sim has two validation doors, `Sim.load` and `Sim.restore`, and the guard is exported
+package-internally to serve both — but stays out of the barrel.** `index.ts` exports `deserialise`
+and `serialise` only. Making `refuseSpoiltState` public would hand the view, the harness and the
+tools a way to validate a state without going through `Sim`, which is the fragmentation decision 111
+exists to prevent. Two doors is the number the sim actually has; the barrel exposes zero.
+
+#### Decision 135's seventh check is narrower than decision 135 says
+
+`safeIntegerOf` reaches only `board.width` and `board.height`. Slice A justifies that by pointing at
+`canonicalJson`, which does reject non-safe integers and which `cloneWorldState` runs — but that
+argument covers `Sim.restore` only. `Sim.load` is `new Sim(deserialise(text))` with no clone and no
+`canonicalJson` anywhere on the path, and `holds` accepts any `typeof value === 'number'`. A save
+carrying `"tick": 1.5` loads clean and surfaces later at `sim.hash()` or `client.save()`, outside the
+load-time try — the very shape this slice exists to close.
+
+**152. Decision 135's "every number a safe integer" stands as written, and the implementation is
+what is short.** The repair is one line — `holds`'s number arm requires `Number.isSafeInteger` — and
+is safe by construction, because every save the sim writes already passed through `canonicalJson`.
+Left to a later slice rather than fixed in review, because this stage reports and does not
+implement. Filed in `ISSUES.md`.
+
+#### The guard exposed a pre-existing sim bug, and the review chose not to stop for it
+
+A voyage can reference a ship the sim itself removed. `CommissionShipCommand` carries a
+caller-supplied `allegiance` (`commands.ts:41-44`) that `applyCommissionCommand` never validates;
+`voyage.chart` accepts any ship in `state.ships` with no allegiance check; and `settleEncounter`
+filters the brigand hull out of `state.ships` while leaving `state.voyage` standing. Chart a voyage
+with a brigand-allegiance ship, fight the battle out, and `voyage.shipId` dangles. Before PR 10 that
+state saved and loaded; after it, `sim.save()` succeeds and `Sim.load` throws — the sim can write a
+save it cannot read back. Two lenses reached opposite conclusions on this and the disagreement was
+settled against the source: the state is reachable through `sim.dispatch`, not through any shipped-UI
+flow.
+
+**153. The guard is right to refuse a dangling `voyage.shipId`; the defect is upstream and is not
+this slice's to fix.** Repairing it here would mean either weakening a correct check or reaching into
+`world/dispatch.ts` and `world/session.ts`, which is unrequested scope for a save-guard slice. The
+upstream repair — reject a non-player allegiance in `voyage.chart`, or clear `state.voyage` when its
+ship is removed — is filed in `ISSUES.md`. It becomes urgent if the UI ever exposes ship
+commissioning or anything begins autosaving.
+
+**154. `atomically()` is no longer sound in the presence of a throwing `restore`, and the rollback
+primitive should preserve the original error.** `harness/methods/sim.ts:72-79` rolls back and
+rethrows; a throwing `restore` skips the rollback and replaces the original `RpcError` with a
+`TypeError` carrying no `cause`. Latent today because `before` is always a clone of a state the sim
+was already running, so it is gated behind decision 153's state. Filed rather than fixed, for the
+same scope reason.
+
+#### What the review verified rather than inherited
+
+Every claim slice A made about its own verification was re-run. Red-before was re-proved by
+mutation rather than by revert: seven individual checks were mutated one at a time and **all seven
+were killed**, each by a named test — including the `Sim.restore` call site, whose removal fails
+fourteen tests. `Record<keyof Balance, true>` genuinely fails compilation on a new block
+(`TS2741`, reproduced). Decision 134 holds — eleven added functions, no assignment, spread, default
+or rebuild anywhere, and `recordOf` returns the same reference rather than a copy — though it is
+pinned only for *unconditional* normalisation; defaulting a *missing* balance block leaves both
+tests that claim to pin 134 green. Decision 133 holds: zero files under `packages/view/` in the diff.
