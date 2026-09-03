@@ -2696,3 +2696,93 @@ The smoke needed a second run to mean anything. `playwright.config.ts` sets
 reported run above is from a dev server started on a private port against this tree. That trap is
 now in `ISSUES.md`; anyone running the smoke while another checkout is up should assume the same
 until it is closed.
+
+### 2026-09-03 — independent review of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Four lenses over `358196e`, plus an independent reproduction of the claimed verification. **Approved
+with no blocking findings.** `cycle` stays 1 and the work goes to the test stage. Twenty-one
+non-blocking findings are in `ISSUES.md` under this date. What the review established that the
+design should carry forward is below.
+
+#### The three recorded deviations all survive scrutiny
+
+**Decision 113's argument is true of the code, and the shape delivered is stronger than the letter.**
+`Sim.load(text)` is `new Sim(deserialise(text))`, so the right-hand side of `this.sim = Sim.load(text)`
+is fully evaluated before the assignment — the literal build-into-a-local reordering would indeed have
+changed nothing, exactly as the developer argued. The harness shape the decision pointed at,
+`methods/session.ts`, has nothing after its assignment that can throw and therefore needs no rollback;
+`restore` does, and now has one, pinned by a throwing-subscriber test that goes red without it. The
+deviation is not a shortcut; it is the only shape that delivers the decision's stated purpose.
+
+**The thirteenth field is real and nothing else in the repo rests on twelve.** `WorldState` declares
+twelve and inherits `nextEntityId` from `EntityIdCounter`. Grepping the repository for every other
+enumeration of the type — validators, fixture writers, tests, docs — found none. `Record<keyof
+WorldState, FieldKind>` is genuinely closed: neither interface carries an index signature or an
+optional member, so a field added or removed breaks the typecheck rather than rotting the guard. That
+property is confirmed, not assumed.
+
+**The screenshot-headroom argument holds under independent arithmetic.** `MAX_DIFF_PIXEL_RATIO = 0.01`
+on a 1280×720 shot is 9,216 pixels. The panel *is* inside the capture — it is a full-page screenshot
+and at 1280 wide the panel gets its full `PANEL_INNER_WIDTH` at scale 1 — and the copy did change, so
+the question was real. Estimating the ink: the hint went from three wrapped lines to two, which also
+relocates the whole `keys` paragraph upward by a line, so both its old and new positions count —
+roughly 4,800 pixels, plus the scene's own 1,400-3,300 pixels of animation, against a 9,216 budget.
+Under it. The baselines are untouched by this commit and Playwright correctly rewrote nothing, because
+`--update-snapshots` defaults to `changed` and nothing failed. The consequence stands and is recorded:
+`puzzle.png` now depicts copy the app no longer shows, and the smoke provably cannot see
+player-facing text.
+
+#### What the review adds to the design record
+
+**The containment added to `restore` is narrower than the purpose it was added for, and that gap is
+now measured rather than suspected.** Deleting a single nested key from a real save — `puzzle.frame`,
+`puzzle.board`, or any of four `balance` blocks — produces a save that passes all thirteen top-level
+checks, loads, and returns from `restore` without throwing at all, because `syncScene` and `announce`
+between them read only shallow fields. The player is told the voyage was restored; the failure lands
+one frame later inside `sim.step` and repeats every frame after. This is not a regression — the
+behaviour is identical at `a14e78c` — and decision 112's scoping reasons still hold. But it means the
+try block covers precisely the two call sites where a shape failure will not land. Stepping a clone of
+the restored sim one tick inside that same try, before the swap, would move the realistic failure back
+inside the containment that already exists, for one tick of work and no new validation surface. That
+is the shape the next cycle should consider, and it is recorded here rather than acted on because it
+is out of this task's scope.
+
+**Decision 113's recorded cost is imprecise in one detail.** The development entry says a listener
+that saw the rolled-back state self-heals "on the next frame, because the ticker's step calls
+`announce` again". `advance` announces only when there are events or `quietTicks` reaches 30 against
+60 ticks per second. The scene listener does heal every frame — `stage.follow` is called
+unconditionally by the step as well as being a subscriber — but the DOM panel deck has only the
+subscription, so on a quiet board it waits up to half a second. The dependency on decision 114 is real
+and the heal is bounded; the interval is longer than recorded. An `announce()` on the rollback path
+would close it and remove the mutual dependency between the two repairs entirely.
+
+**The guard the whole of decision 111 was argued for is tested only through the harness.** The
+argument for putting it in `deserialise` rather than in the client was that one sink serves every
+caller. The tests added do not follow that argument down: one harness case asserts a reason code, and
+`tests/sim/` gained nothing. `balanceParse.ts`, which the guard is explicitly modelled on, has five
+message-asserting tests. The design is right; the coverage was placed at the wrong layer.
+
+#### Verification, independently reproduced, and what it changed
+
+The developer's `npm run build` claim holds outright. The other two do not hold as stated, though
+neither is a defect in this change:
+
+- `npm run check` **failed on the cold run** — 462 of 463, `tests/gates/purity.test.ts` failing
+  because a spawned gate exited non-zero with empty stdout and stderr under load. It passed on the
+  second run and passes 5 of 5 in isolation. A load-dependent flake in a file this commit does not
+  touch, but it failed the exact command the development entry claims green from cold.
+- `npm run smoke` is **4 of 4 only on a warm server**. Four full runs gave 3/4, 3/4, 4/4, 4/4, with
+  two different failures: a cold-start `render:ready` timeout on the first spec, and a `battle grid`
+  screenshot diff of 630,386 pixels — ratio 0.69, most of the frame — that did not reproduce in six
+  consecutive re-runs.
+
+**The port trap is not merely live, it is occupied.** Port 5178 is held right now by a vite process
+serving the `opp-slice5` worktree at `a14e78c`; fetching the puzzle module from it returns the *old*
+panel copy. Any default `npm run smoke` on this machine silently tests the pre-repair tree and reports
+four green. This review's smoke was run against a server on a private port whose provenance was proved
+by fetching the module and finding the new copy and none of the old. The test stage must do the same.
+
+#### No decisions taken
+
+This review takes no decision numbers. 111-120 stand as written, with the two corrections the
+development entry already recorded, plus the interval correction above.

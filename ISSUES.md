@@ -4,6 +4,161 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — independent review of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Four-lens review of `358196e`. **No blocking findings** — all seven decisions (111-117) are
+delivered, the three deviations the development entry records are each sound on their merits, and an
+independent estimate confirms the screenshot-headroom argument. What follows is everything else.
+
+### A spoiled save one level down still costs the running voyage
+
+The guard is shallow by decision 112 and the client's containment is narrower than decision 113's
+stated purpose, so between them there is a gap neither closes. Demonstrated rather than reasoned:
+take a real save from a 3000-tick client and delete exactly one nested key. `puzzle.frame`,
+`puzzle.board`, `balance.battle`, `balance.bilging`, `balance.npc` and `balance.ship` each produce a
+save that passes all thirteen top-level checks, loads, and returns from `restore` **without
+throwing** — because `syncScene` only reads `battle?.outcome` and `voyage !== null` and `announce`
+only touches shallow fields. No rollback fires, the good `Sim` is discarded, and the Ye panel prints
+*"Yer voyage be restored."* The failure lands one frame later inside `client.advance` → `sim.step`
+(`TypeError: Cannot read properties of undefined (reading 'intervals')` for `puzzle.frame`,
+`RangeError: no ship class named "undefined"` for a malformed `ships`), and repeats every frame
+after that.
+
+Not blocking: the behaviour is identical before and after this commit, and decision 112 scopes the
+guard to the top level for stated reasons that still hold. But `restore`'s try block covers
+`syncScene` and `announce`, which are the two shallowest reads in the client and therefore precisely
+where a shape failure will *not* land. The cheap closure is to step a clone of the restored sim one
+tick inside that same try before swapping — one tick of work, and it moves the failure back inside
+the containment that already exists. It starts to matter the first time a player loads a save
+written by a different build.
+
+### The rollback does not re-announce, and the record understates how long that lasts
+
+`restore` restores `sim`, `lines` and `current` and rethrows, but does not `announce()` afterwards,
+so a listener that ran before a later one threw keeps showing the rejected state. The development
+entry records this and says it self-heals *"on the next frame, because the ticker's step calls
+`announce` again"*. The step does not call `announce` every frame: `advance` only announces when
+`events.length > 0` or `quietTicks >= TICKS_BETWEEN_QUIET_ANNOUNCEMENTS`, which is 30 against
+`TICKS_PER_SECOND = 60`. The scene listener does heal every frame, because `stage.follow` is called
+unconditionally by the step as well as being a subscriber — but the **DOM panel deck** has no second
+path and waits up to half a second on a quiet board. The heal is real and bounded, and it does
+depend on decision 114 keeping the loop alive; the recorded cost is imprecise, not false. An
+`announce()` on the rollback path would remove the question.
+
+`quietTicks` is also absent from the snapshot. Harmless today, since `restore` never writes it.
+
+### `tick` and `nextEntityId` are accepted as any number
+
+The guard's kind for both is `'a number'`. Verified: `nextEntityId: 0` alongside `markers` holding
+an entity with `id: 1` loads and steps 600 ticks clean, after which `takeEntityId` mints a colliding
+id 1. `tick: -5` and `tick: 1e308` also load and step. The id collision is real; downstream
+corruption from it is inferred, not demonstrated. `Number.isSafeInteger` and a non-negative check
+would cost nothing and would match `coordinateRejection`'s existing shape in `puzzle/dispatch.ts`.
+
+### The guard the whole of decision 111 argued for has no test in `tests/sim/`
+
+Decision 111 put the guard in the shared sink precisely so it is not the client's. The only test
+added anywhere is one harness case — `'{"schemaVersion":5}'` in `UNLOADABLE_SAVES` — and it asserts
+only `reasonOf(...) === 'invalid-params'`, never a message. `tests/sim/save.test.ts` is untouched.
+Contrast `balanceParse.ts`, which the guard is explicitly modelled on and which has five
+message-asserting tests. "What done means" promises *"a message naming the first bad field"*; that
+message, the thirteen-entry kind table, and the `'an array'` / `'an object'` / `'an object or null'`
+rejection arms are asserted nowhere. A regression that dropped twelve of the thirteen checks would
+stay green. The *ordering* — guard after migration — is covered incidentally by the ten
+`tests/sim/migration.test.ts` cases, which all route through `deserialise`.
+
+### One of the two new boot tests is green against the parent commit
+
+`tests/view/boot.test.ts:77-87` loads `'{"schemaVersion":6}'`, which is caught by the pre-existing
+`newer than` check inside `Sim.load` — i.e. inside the right-hand side of the old
+`this.sim = Sim.load(text)`, so the old `restore` never mutated either. The test passes unchanged at
+`a14e78c` and pins neither the new guard nor the new rollback, while its name reads as though it
+covers the blocking repair. Changing the literal from `6` to `5` costs one character and makes it
+pin the new code. The second new boot test, with the throwing subscriber, is genuine and does go red
+without the rollback.
+
+`tests/view/bilgeGesture.test.ts:51` has the same shape of problem in its name — *"the cell the
+cursor clamp used to hide"* — when `gestureAt` knows nothing about the cursor and the test passes
+with `board.width - 2` restored. The clamp gap is already recorded below; the name should not
+suggest otherwise.
+
+### The last column's new refusal line is unpinned
+
+Removing the pre-refusal means a plain last-column click or keypress now dispatches `bilge.swap`,
+the sim rejects it, and the player gets *"That swap falls off the board."* in the chat. That is new
+player-visible behaviour and nothing asserts it. It is reachable without Pixi — `boot.test.ts`
+already drives `GameClient` directly — so a test that takes the bilge duty, dispatches at
+`x = board.width - 1` and asserts `client.log.at(-1)` would pin it in about six lines. Cheapest
+missing test in the commit.
+
+### `npm run check` failed once from cold on a gate this commit does not touch
+
+Reproduced independently after `npm ci`: run 1 exited 1 with 462 of 463, failing
+`tests/gates/purity.test.ts:63` — *"the import gate rejects a bare specifier"* — because the spawned
+gate exited non-zero with **empty stdout and stderr**. The identical `spawnSync` in the test
+directly above it passed in the same run; the file passes 5 of 5 in isolation; run 2 of the full
+`check` was 463 of 463, exit 0. So it is a load-dependent flake in a test harness that shells out,
+not a defect in this change and not in a file this change touches — but it did fail the exact
+command the development entry claims green from cold, on the first try, and it will fail CI the same
+way. Capturing the child's exit code and streams into the assertion message would at least make the
+next failure diagnosable.
+
+### The render smoke is flaky beyond the port trap
+
+Four full runs against a dev server proven to be serving this tree: 3/4, 3/4, 4/4, 4/4. The two
+failures were different — once `iso port scene` never signalled `render:ready` inside the 20s
+`MOUNT_TIMEOUT_MS` on a cold Vite server (29.1s total; later tests took 1.9-4.4s once warm), and
+once the `battle grid` screenshot differed by **630,386 pixels, a ratio of 0.69**. That is most of
+the frame, not an anti-aliasing nudge, and it did not reproduce in six consecutive re-runs of that
+test alone. Neither scene is touched by this commit, so this is pre-existing, but "4 of 4" is a
+warm-server result rather than a reliable one. A first-run warm-up navigation, or a longer mount
+budget on the first spec, would remove the cold-start half.
+
+### Port 5178 is held right now by a worktree at the pre-repair commit
+
+The trap recorded below is not merely live, it is occupied. Port 5178 is held by a vite process
+serving the `opp-slice5` worktree at `a14e78c` — confirmed by fetching the puzzle module from it and
+finding the **old** panel copy, *"The last column cannot start a swap"*, and none of the new. Any
+`npm run smoke` run on this machine right now silently tests the pre-repair tree and reports four
+green. The test stage must start its own server on a private port and prove provenance before
+believing any smoke result.
+
+### Smaller things, each cheap and none urgent
+
+- **`holds()` falls through to an unnamed arm.** Three `if`s then a bare
+  `return value === null || isRecord(value)`, so a fifth `FieldKind` compiles silently into the
+  permissive branch. The failure would be loud rather than silent — a new permissive kind would
+  refuse every legitimate save and go red in `migration.test.ts` — so the cost is a confusing
+  failure, not a false pass. A final named `if` plus an exhaustiveness `return false` reads better.
+- **`gestureAt` re-implements a bounds-safe read that already exists.** `puzzle/board.ts` exports
+  `cellAt(board, x, y)` doing exactly the same thing *with* an `isInsideBoard` check, but it is not
+  re-exported through `client/rules.ts`, so the view cannot reach it. As written an off-board
+  position answers `'swap'` rather than being refused; both callers bounds-check first, so it is
+  latent. Adding `cellAt` to the facade removes the duplication and the latency together.
+- **`swapAtCursor` now pops or swaps.** Stale name against the repo's own naming rule.
+- **The panel copy overstates a swap.** *"Click any other tile to swap it with the tile on its
+  right"* — the sim also refuses a crab, either side, with `'crab-not-swappable'`, and the last
+  column with `'swap-outside-board'`. The player now gets a chat refusal in both cases, so it is
+  discoverable rather than silent, but the sentence asserts a capability the game refuses for two of
+  the board's cell kinds. The other three claims in the two paragraphs are exact.
+- **The hover pair is drawn over a puffer too.** `drawPair` and `drawCursor` draw a two-cell swap
+  pair even when the cell under the pointer is a puffer, where the gesture is a poke. Same redesign
+  as the last-column entry below, and the same reason it was left.
+- **`declare global` in `ticker.test.ts` is load-bearing for a source file's typecheck.** The root
+  `tsconfig.json` has no DOM lib, and because the test imports `ticker.ts` that source file is
+  pulled into the root program — so the only thing making `tsc -p tsconfig.json` pass on `ticker.ts`
+  is a block in a test file. Delete or rename that test and the root typecheck breaks somewhere
+  confusing. A `tests/globals.d.ts`, or `"DOM"` in the root `lib`, says it once.
+- **The boundary-gate sentence claims a check that does not exist.** The development entry says
+  *"`npm run boundary` sees it now"*; `tools/check-view-boundary.ts` only matches import specifiers
+  against `@opp/sim`, has no notion of a rule, and would have passed `puzzle.ts` before and after.
+  The extraction is right for the reason given two sentences earlier — it is now testable.
+- **Three entries below were deleted, not struck, and one was edited inside a dated heading.** The
+  entry below says "struck"; there is no strikethrough in the file, and the duplication bullet under
+  the cycle 0 review heading was rewritten in place — which is what decision 118 says not to do.
+  Defensible, since `ISSUES.md` is a live worklist rather than a historical record, but the
+  asymmetry with the document's own stated principle is unremarked.
+
 ## 2026-09-03 — development of the slice 5 review repairs (OPP-12), PR 8, cycle 1
 
 Found while building decisions 111-117. Three entries under the review heading below were struck
