@@ -2436,3 +2436,157 @@ referenced across eight commits, 69 files, `ISSUES.md` and its PR body. Slice 4c
 because it is the one branch that numbered defensively.
 
 This is a recommendation to whoever integrates them, not a finding against any branch.
+
+### 2026-09-03 — analysis of review findings, slice 5 (OPP-12), PR 8, cycle 1
+
+Two findings blocked. Neither is a defect in what slice 5 set out to draw; both are about what the
+client does when something goes wrong, and about a rule the view was deciding without saying so.
+The twenty non-blocking findings stay in `ISSUES.md` and are not touched here, except where a repair
+below happens to pass through one, which is noted each time.
+
+#### Loading a spoiled save destroys the running game (blocking 1)
+
+**The cast is the defect, and it is one line.** `deserialise` ends at `save.ts:53` with
+`return current as unknown as WorldState`, and the `while` loop above it never runs for a save
+already at `SCHEMA_VERSION`. `{"schemaVersion":5}` therefore arrives as a `WorldState` whose other
+eleven fields are all `undefined`. Everything downstream is a consequence: `GameClient.restore`
+assigns it over the live `Sim`, `syncScene` reads `inBattle`, `battle !== null` passes on
+`undefined`, and the `TypeError` lands in the Ye panel's catch, which reports "That save be spoiled"
+— a sentence whose plain reading is that nothing happened, while the voyage is already gone.
+
+**The repair reaches to the sink, not to the button.** Validating inside `deserialise` fixes the
+defect for every caller at once: the client's Load button, the harness's `session.load`, the tools,
+and any future caller. Probing a locally-built `Sim` in the client would fix only the client, and
+would leave the harness accepting a save it should refuse — `session.load` on `{"schemaVersion":5}`
+currently succeeds and fails later at a hash or a step, which is the same defect wearing a different
+coat. So the guard goes in `save.ts`, and the client changes as well, for a different reason given
+below.
+
+**The validator stays shallow, deliberately.** `WorldState` has twelve top-level fields; two of them
+are expensive to check properly. `balance` is the 17KB tuning file that `balanceOf` already parses
+across 71 triples, and `rngStreams` is an open index signature whose keys are created on demand and
+cannot be enumerated. A validator that checks the twelve fields for presence and primitive kind —
+twelve tests, no recursion, constant in the size of the save — catches `{"schemaVersion":5}` and
+every truncated save, which is the depth at which the failure actually occurs. Full recursive
+validation is a much larger job for a much smaller marginal catch, and it would duplicate
+`balanceOf`. If a save is ever spoiled *below* the top level, the golden and replay fixtures are the
+instruments for it, not the loader.
+
+**No library, and none was considered for long.** `packages/sim` has an empty `dependencies` and a
+gate that keeps it that way, so a hand-written guard was the only option consistent with the repo.
+It follows `balanceParse.ts`: `isRecord`, `TypeError`, a dotted path in the message. `save.ts` today
+throws plain `Error` for its three existing checks; those are left alone rather than churned.
+
+**The client changes anyway, because validation and containment are different properties.**
+`restore` assigns `this.sim = Sim.load(text)` and only then does work that can throw, so the good
+`Sim` is unreachable before anything has judged the new one. The harness already has the right shape
+at `methods/session.ts:39-46` — build into a local, attach only on success — and the client should
+mirror it. With the validator in place this ordering catches nothing today; it is what stops the
+next unvalidated failure inside `syncScene` or `announce` from costing a voyage.
+
+**The ticker is folded in, because it is what turns a bad frame into a hang.** `ticker.ts:21-22`
+calls `step` and re-arms afterwards, unguarded, so one throw inside a frame ends the loop for good
+while `running` keeps reporting `true` off a handle that has already fired. Re-arming *before* the
+callback rather than wrapping it in `try/finally` is the smaller change and fixes more: the loop
+survives a throwing frame, `running` stops lying, and the latent mirror bug — a `stop()` called from
+inside a callback being undone by the unconditional re-arm — goes away with it, because `stop()`
+then cancels a handle that is genuinely pending. This is `ISSUES.md`'s Robustness entry, repaired
+here rather than left, because the blocking finding is only recoverable if the loop is still alive
+to show the player the refusal.
+
+#### The view removes no legal move — the original never offered it (blocking 2)
+
+**The wiki does not answer the question directly, and the reading it forces is the one already in
+the code.** `docs/wiki-map/01-duty-puzzles.md:95` gives Bilging *a two-cell horizontal cursor*,
+moved by the mouse or the arrow keys, where a left click swaps the two selected pieces; line 100
+gives the puffer *click to expand*. Nothing in `docs/` says whether a puffer may be swapped with an
+ordinary colour — the map names only the crab as immovable, and it affirms that swapping two puffers
+just swaps them. The two control sentences are in tension, and the only reading that makes both true
+at once is that the pointer sits over one cell of the selected pair and which cell it sits over
+decides the gesture: a puffer under the pointer pops, a puffer beside it is swapped and moves. That
+is exactly `performAt`, and under it a puffer moves leftward only.
+
+That reading is an inference, not a quotation, so it is taken as decision 115 rather than presented
+as a published rule. Its cost is stated plainly: the puffer-on-puffer swap the wiki does mention is
+unreachable from the pointer, because either cell of that pair pops. The alternative readings are
+worse. A modifier-click adds a gesture no version of the original had and which line 95 excludes by
+listing the whole control set. Making the puffer swap on click and pop on some other input
+contradicts line 100 outright. Both would be inventions dressed as restorations.
+
+The sim keeps the complete rule table, and that is not a contradiction: `swapRejection` refusing only
+the crab matches the wiki, and a `bilge.swap` onto a puffer stays reachable from the harness, which
+is how the puffer-on-puffer and puffer-on-colour rules remain exercised and tested. The rule table
+says what a swap does when one happens. The input scheme says which swaps a player can ask for. The
+sim is right to hold both, and the view is right to offer fewer.
+
+**What was actually wrong is the record, and the fact that the rule was anonymous.** The integration
+entry claims no game rule moved into the view. One did: the pointer-identity mapping is a rule, it
+lives at `puzzle.ts:327`, and the boundary gate cannot see it because it is not an import. The
+mapping is right; it was never written down and never tested. So it is recorded as decision 115
+below, and it is given a name and a test rather than staying a conditional buried inside a
+Pixi-importing closure. Extracting it as an exported function in a Pixi-free module is the only way
+this repo can test it at all — there is no jsdom and no DOM harness, and `tests/view/` reaches
+`grid.ts` and `walking.ts` precisely because they import no Pixi.
+
+**The keyboard clamp is repaired here, not left.** `puzzle.ts:391` clamps the cursor to
+`board.width - 2`, which is the swap partner's constraint applied to both gestures, so a puffer in
+the last column is poppable with the mouse and unreachable from the keyboard. That is the divergence
+the same entry denies. Clamping to `board.width - 1` and letting the mapping decide makes both paths
+reach the same set, which is what the claim needs in order to become true. It is listed in
+`ISSUES.md` as non-blocking and would have stayed there, but the blocking repair touches the same
+lines and leaving it would leave the corrected claim false again.
+
+**One more view-side rule goes with it.** `puzzle.ts:328` returns silently when a non-puffer click
+cannot start a swap, which is the view pre-judging a refusal the sim owns, and it is why
+`'swap-outside-board'` — "That swap falls off the board." — is dead on the pointer path. Dispatching
+and letting the sim answer removes the third re-derivation of the swap axis from the input path and
+gives the player the message that already exists. The two remaining re-derivations at `:660` and
+`:137` are cosmetic and stay in `ISSUES.md`.
+
+**The player-facing text has to move with the code**, since `puzzle.ts:137` states the defect as
+though it were intended and `:143` says Space swaps when it may pop. Both are inside the puzzle
+panel, so the committed Playwright baseline diffs and is re-blessed under `pp-render-smoke` — a text
+reflow, not a render regression.
+
+#### Two claims in the integration entry are corrected, not edited
+
+The entry of 2026-09-02 says *"Keyboard and pointer go through the same `performAt`, so the two
+input paths cannot diverge"* and *"No game rule moved into the view"*. The first is false because of
+the clamp; the second is false because the mapping is a rule. Both are corrected here and left
+standing there, which is how this document has handled its own errors before — the review entry
+above corrects three earlier claims the same way. Editing a dated entry after the fact would make
+the record less trustworthy than the errors do. Once the development task lands, both sentences
+become true of the code, and this paragraph is the bridge between the two states.
+
+#### Slicing
+
+One development task, not two. The findings are independent but both are repairs to the same open
+PR on the same branch, and splitting them would put two agents on one branch or two round trips
+where one does. The branch is
+`agent/feature/20260902-000500-opp-slice-5-renderer-and-playable-client` and the PR is 8; no second
+branch is opened.
+
+#### Decisions taken without a human, continuing the series above
+
+Numbering starts at 111. Slice 4c holds 101-103 on its own branch, and the review above recommends
+slice 4b take 104-110, so 111 is the first number free on every branch.
+
+| #   | Decision                                                                                                   | Rationale                                                                                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 111 | The structural guard goes in `deserialise`, not in `GameClient.restore`                                     | One sink serves the client, `session.load` and the tools; the harness accepts `{"schemaVersion":5}` today and is fixed by the same line                                                                 |
+| 112 | The guard checks the twelve top-level fields for presence and kind, and does not recurse                    | It catches the failure at the depth it occurs, is constant in save size, and does not duplicate `balanceOf` or try to enumerate `rngStreams`' open key set                                              |
+| 113 | `restore` builds the `Sim` into a local and assigns only on success, even with the guard in place           | Validation and containment are different properties; the harness already has this shape, and it is what stops the next unvalidated throw from costing a voyage                                          |
+| 114 | The ticker re-arms before the step callback rather than wrapping it in `try/finally`                        | Smaller change, and it also stops `running` reporting `true` off a spent handle and removes the latent `stop()`-inside-callback bug                                                                     |
+| 115 | Pointer identity decides poke from swap, and that mapping is the recorded input rule                        | The only reading that makes the wiki's two-cell cursor and its *click to expand* both true at once; the cost is that a puffer-on-puffer swap is unreachable from the pointer, and a modifier-click would add a gesture line 95 excludes |
+| 116 | The mapping is extracted as an exported function in a Pixi-free module and tested from `tests/view/`         | A rule the boundary gate cannot see needs a name and a test instead; with no jsdom this is the only shape this repo can cover                                                                           |
+| 117 | The cursor clamp becomes `board.width - 1` and the view stops pre-refusing an off-board swap                | Both input paths then reach the same set, which is what makes the corrected claim true, and the sim's existing refusal reaches the player instead of a silent return                                    |
+| 118 | The two false claims are corrected in this entry rather than edited where they stand                        | The review entry above corrected three claims the same way; rewriting dated entries would cost the record more trust than the errors do                                                                 |
+| 119 | One development task against the existing branch and PR 8, not two                                          | Both repairs are to one open PR; two tasks would put two agents on one branch or spend two round trips on one merge                                                                                     |
+| 120 | Slice 5's repair decisions are numbered from 111                                                            | 101-103 are slice 4c's and 104-110 are reserved for the slice 4b renumber the review recommends, so 111 collides with nothing on any open branch                                                        |
+
+**What done means.** `{"schemaVersion":5}` is refused by `deserialise` with a message naming the
+first bad field; the running voyage survives a refused load and the client keeps stepping; a throwing
+frame costs one frame and not the loop; a puffer in the last column is reachable from the keyboard;
+the poke-or-swap mapping is an exported function with tests; the panel text matches what the code
+does; `npm run check`, `npm run build` and the four render smokes are green with the baseline
+re-blessed.
