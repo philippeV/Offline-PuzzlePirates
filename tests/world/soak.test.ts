@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   cargoLotsMassKgOf,
+  isShipSupply,
   magazineMassKgOf,
   shipClassOf,
   type ShipState,
@@ -36,6 +37,7 @@ interface SoakRun {
   portedAt: string | null;
   battleRunning: boolean;
   breaches: string[];
+  supplyLots: string[];
 }
 
 let soaked: SoakRun[] | null = null;
@@ -93,6 +95,7 @@ function runVoyage(seed: number): SoakRun {
       portedAt: null,
       battleRunning: stateOf(sim).battle?.outcome === 'running',
       breaches: breachesOf(stateOf(sim), ship),
+      supplyLots: supplyLotsOf(stateOf(sim)),
     };
   }
 
@@ -122,6 +125,7 @@ function runVoyage(seed: number): SoakRun {
     portedAt: stateOf(sim).pirate?.atIslandId ?? null,
     battleRunning: stateOf(sim).battle?.outcome === 'running',
     breaches: breachesOf(stateOf(sim), ship),
+    supplyLots: supplyLotsOf(stateOf(sim)),
   };
 }
 
@@ -160,6 +164,16 @@ function breachesOf(state: WorldState, ship: ShipState): string[] {
   const capacity = shipClassOf(ship.shipClass).holdMassKg;
   if (laden > capacity) breaches.push(`hold ${laden}kg over ${capacity}kg`);
   return breaches;
+}
+
+function supplyLotsOf(state: WorldState): string[] {
+  const stowed: string[] = [];
+  for (const ship of state.ships) {
+    for (const lot of [...ship.cargo, ...ship.bootyCargo]) {
+      if (isShipSupply(lot.commodityId)) stowed.push(`${ship.id} ${lot.commodityId}`);
+    }
+  }
+  return stowed;
 }
 
 function ladenKgOf(ship: ShipState): number {
@@ -227,5 +241,17 @@ test('no soak run ends with negative poe, negative stock, negative cargo or an o
     broken.map((run) => `${run.seed}: ${run.breaches.join(', ')}`),
     [],
     `invariants broken across ${runs.length} seeds`,
+  );
+});
+
+test('no soak run ends with a ship supply stowed as a cargo lot on any ship', () => {
+  const runs = soak();
+
+  const stowed = runs.filter((run) => run.supplyLots.length > 0);
+
+  assert.deepEqual(
+    stowed.map((run) => `${run.seed}: ${run.supplyLots.join(', ')}`),
+    [],
+    `ship supplies reached a hold or a chest across ${runs.length} seeds`,
   );
 });

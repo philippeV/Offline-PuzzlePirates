@@ -4,9 +4,11 @@ import { test } from 'node:test';
 import {
   COMMODITIES,
   COMMODITY_IDS,
+  PLUNDERABLE_COMMODITY_IDS,
   RUM_MASS_GRAMS_PER_UNIT,
   SMALL_CANNON_BALL_MASS_GRAMS_PER_UNIT,
   commodityOf,
+  isShipSupply,
   type CommodityId,
 } from '../../packages/sim/src/world/commodities.ts';
 
@@ -25,6 +27,14 @@ const RAW_IDS: CommodityId[] = [
 ];
 
 const REFINED_IDS: CommodityId[] = [
+  'small-cannon-ball',
+  'medium-cannon-ball',
+  'large-cannon-ball',
+  'swill',
+  'grog',
+];
+
+const SHIP_SUPPLY_IDS: CommodityId[] = [
   'small-cannon-ball',
   'medium-cannon-ball',
   'large-cannon-ball',
@@ -78,4 +88,23 @@ test('every commodity is keyed by its own id and carries a name', () => {
 
 test('asking for an unknown commodity throws a range error', () => {
   assert.throws(() => commodityOf('fine-rum' as CommodityId), RangeError);
+});
+
+test('a ship supply is a cannon ball or a rum, and nothing else in the catalogue is', () => {
+  for (const id of COMMODITY_IDS) assert.equal(isShipSupply(id), SHIP_SUPPLY_IDS.includes(id), id);
+});
+
+test('the plunderable commodities are the catalogue minus the ship supplies, in catalogue order', () => {
+  assert.deepEqual(
+    PLUNDERABLE_COMMODITY_IDS,
+    COMMODITY_IDS.filter((id) => !SHIP_SUPPLY_IDS.includes(id)),
+  );
+});
+
+test('ship supply and refined class pick the same five ids today only by coincidence', () => {
+  assert.deepEqual(
+    COMMODITY_IDS.filter((id) => isShipSupply(id)),
+    COMMODITY_IDS.filter((id) => commodityOf(id).class === 'refined'),
+    'stowage and pricing have diverged; stow by isShipSupply, price by class',
+  );
 });

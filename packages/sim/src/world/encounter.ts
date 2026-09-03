@@ -6,7 +6,7 @@ import { rngStream } from '../rng.ts';
 import { createShip, findShip, type ShipState } from '../ship/state.ts';
 import type { WorldState } from '../state.ts';
 import { stowLot } from './cargo.ts';
-import { COMMODITY_IDS, commodityOf } from './commodities.ts';
+import { commodityOf, PLUNDERABLE_COMMODITY_IDS } from './commodities.ts';
 import { leaguePointOf, type LeaguePointId } from './leaguePoints.ts';
 import type { VoyageType } from './state.ts';
 
@@ -73,7 +73,8 @@ export function materialisePlunder(state: WorldState, ship: ShipState): SimEvent
   const bootyCargoUnits = ship.bootyCargoUnits;
   if (bootyCargoUnits === 0) return [];
   const stream = rngStream(state.seed, state.rngStreams, PLUNDER_STREAM);
-  const commodityId = COMMODITY_IDS[stream.nextIntInRange(0, COMMODITY_IDS.length)];
+  const commodityId =
+    PLUNDERABLE_COMMODITY_IDS[stream.nextIntInRange(0, PLUNDERABLE_COMMODITY_IDS.length)];
   if (commodityId === undefined) return [];
 
   const units = Math.floor(

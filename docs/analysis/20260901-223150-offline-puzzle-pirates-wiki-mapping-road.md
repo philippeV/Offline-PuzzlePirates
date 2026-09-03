@@ -2296,3 +2296,55 @@ and whether or not slice 2c renumbers at all.
 One development slice, against the existing branch and PR 7. It is done when a ship-supply id can no
 longer reach `ship.cargo` or `ship.bootyCargo` by any route, the invariant is asserted rather than
 assumed, and the rum sell path — which two independent mutations survived — is covered.
+
+## 2026-09-03 — slice 4b built the repair, cycle 1
+
+Decisions 120 to 124 are implemented on this branch, against PR 7. Nothing in the design changed
+while building it.
+
+### What was built
+
+`isShipSupply` joins `isCannonBall` and `isRum` in `packages/sim/src/world/commodities.ts`, and
+`PLUNDERABLE_COMMODITY_IDS` beside it is `COMMODITY_IDS` minus that set — the eleven raw ids, in
+catalogue order (decision 121). The three sites in `market.ts` — `depositUnits`, `heldUnitsOf`,
+`withdrawUnits` — now ask `isShipSupply` the membership question and keep their two-way branch for
+the routing, so the counter choice stays where it was and only the set is named once.
+`materialisePlunder` draws from `PLUNDERABLE_COMMODITY_IDS` with a single `nextIntInRange`
+(decisions 120 and 122). `openingStockOf`'s `class === 'refined'` is untouched.
+
+The invariant of decision 124 is asserted in two places, at two altitudes. In
+`tests/world/encounter.test.ts` the plunder draw over 60 seeds stows no ship-supply lot and covers
+every plunderable id. In `tests/world/soak.test.ts` a new run field records any ship-supply lot in
+`cargo` or `bootyCargo` on **any** ship in the final state, so the property is checked end to end
+across the soak seeds rather than only at the draw.
+
+The two coverage holes the review named are closed in `tests/world/market.test.ts`: the rum sell
+path — payment, counter withdrawal, the `insufficient-cargo` refusal, and swill and grog sharing one
+store — and a ship holding both a stocked magazine and an orphan lot of the same id, which pins that
+the sell path reads the counter only.
+
+Ten tests added; `npm run check` is green from cold at 407.
+
+### Two things worth knowing for the next stage
+
+**The pinned hashes did not move.** Decision 122 predicted that narrowing the draw would shift
+`world.plunder` consumption and with it the replay and snapshot hashes. It did not: no test pins a
+plunder-derived hash as a literal, so `tests/sim/determinism.test.ts` and
+`tests/sim/snapshot.test.ts` passed unchanged, as did the encounter and pillage-loop tests the task
+flagged as coupled. The reward distribution still shifted exactly as decision 122 described — that
+consequence is real and unretuned — but nothing had to be re-blessed, and no fixture was touched.
+
+**Every new test was checked against the defect it exists to catch.** Reverting
+`materialisePlunder` to the sixteen-id draw fails the encounter invariant, and independently fails
+the soak invariant on 4 of the 12 soak seeds. Making `withdrawUnits`' rum branch a no-op fails two
+of the new rum tests; making `heldUnitsOf`' rum branch return a large constant fails a third. The
+suite that let this defect through would have caught it in either place.
+
+### One decision taken while building
+
+**125. The branch absorbs `agent/develop` so PR 7 can merge.** PR 7 conflicted with
+`agent/develop` in `ISSUES.md` and in this document — both append-only conflicts, both resolved by
+keeping both sides. `agent/develop` had moved on by the slice-2b and slice-4 merges (PR 4 and PR 5)
+since this branch was cut. The alternative was to hand the review and test stages a PR that cannot
+merge, and the repo has done this before at the same point in the cycle. `npm run check` was rerun
+from cold on the merged tree, not only on the repair.

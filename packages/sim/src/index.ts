@@ -216,10 +216,12 @@ export { Sim, type SimOptions, type Snapshot } from './sim.ts';
 export {
   COMMODITIES,
   COMMODITY_IDS,
+  PLUNDERABLE_COMMODITY_IDS,
   cannonBallOf,
   commodityOf,
   isCannonBall,
   isRum,
+  isShipSupply,
   type Commodity,
   type CommodityClass,
   type CommodityId,

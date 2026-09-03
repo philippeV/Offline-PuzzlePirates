@@ -10,7 +10,7 @@ import {
   COMMODITY_IDS,
   commodityOf,
   isCannonBall,
-  isRum,
+  isShipSupply,
   type CommodityId,
 } from './commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from './islands.ts';
@@ -93,30 +93,23 @@ function firesCannonBall(ship: ShipState, commodityId: CommodityId): boolean {
 }
 
 function depositUnits(ship: ShipState, commodityId: CommodityId, units: number): void {
-  if (isCannonBall(commodityId)) {
-    ship.cannonballs += units;
-    return;
-  }
-  if (isRum(commodityId)) {
-    ship.rum += units;
+  if (isShipSupply(commodityId)) {
+    if (isCannonBall(commodityId)) ship.cannonballs += units;
+    else ship.rum += units;
     return;
   }
   stowLot(ship.cargo, commodityId, units);
 }
 
 function heldUnitsOf(ship: ShipState, commodityId: CommodityId): number {
-  if (isCannonBall(commodityId)) return ship.cannonballs;
-  if (isRum(commodityId)) return ship.rum;
+  if (isShipSupply(commodityId)) return isCannonBall(commodityId) ? ship.cannonballs : ship.rum;
   return lotOf(ship.cargo, commodityId)?.units ?? 0;
 }
 
 function withdrawUnits(ship: ShipState, commodityId: CommodityId, units: number): void {
-  if (isCannonBall(commodityId)) {
-    ship.cannonballs -= units;
-    return;
-  }
-  if (isRum(commodityId)) {
-    ship.rum -= units;
+  if (isShipSupply(commodityId)) {
+    if (isCannonBall(commodityId)) ship.cannonballs -= units;
+    else ship.rum -= units;
     return;
   }
   const lot = lotOf(ship.cargo, commodityId);

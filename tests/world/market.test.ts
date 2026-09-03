@@ -6,6 +6,7 @@ import { FIRST_ENTITY_ID } from '../../packages/sim/src/ids.ts';
 import { freeHoldOf, holdCapacityOf } from '../../packages/sim/src/battle/booty.ts';
 import type { ShipClassId } from '../../packages/sim/src/ship/classes.ts';
 import { createShip, type ShipState } from '../../packages/sim/src/ship/state.ts';
+import { stowLot } from '../../packages/sim/src/world/cargo.ts';
 import { COMMODITY_IDS, type CommodityId } from '../../packages/sim/src/world/commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from '../../packages/sim/src/world/islands.ts';
 import {
@@ -29,7 +30,9 @@ const SPAWNED_COMMODITY: CommodityId = 'hemp';
 const OTHER_COMMODITY: CommodityId = 'stone';
 const FITTING_BALL: CommodityId = 'small-cannon-ball';
 const OVERSIZED_BALL: CommodityId = 'large-cannon-ball';
-const RUMS: CommodityId[] = ['swill', 'grog'];
+const RUM: CommodityId = 'swill';
+const OTHER_RUM: CommodityId = 'grog';
+const RUMS: CommodityId[] = [RUM, OTHER_RUM];
 const LARGE_GUNNED_CLASS: ShipClassId = 'war-galleon';
 
 const A_FEW_UNITS = 10;
@@ -303,6 +306,85 @@ test('a ship cannot sell a ball its cannons cannot fire', () => {
 
   assert.deepEqual(outcome, { ok: false, reason: 'wrong-cannon-ball-size' });
   assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('sold rum comes out of the rum store and not the hold', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS - 1, MARKET);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.rum, 1);
+  assert.deepEqual(ship.cargo, []);
+});
+
+test('a rum sale pays the pirate and restocks the dock', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const stock = stockAt(dock, RUM);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const remaining = pirate.poe;
+  const stocked = stock.units;
+
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS, MARKET);
+
+  assert.deepEqual(outcome, {
+    ok: true,
+    poe: A_FEW_UNITS * stock.buyPricePoe,
+    units: A_FEW_UNITS,
+  });
+  assert.equal(pirate.poe, remaining + A_FEW_UNITS * stock.buyPricePoe);
+  assert.equal(stock.units, stocked + A_FEW_UNITS);
+});
+
+test('a rum store cannot sell more rum than it holds', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const before = snapshotOf(dock, ship, pirate);
+
+  const outcome = sellCommodity(dock, ship, pirate, RUM, A_FEW_UNITS + 1, MARKET);
+
+  assert.deepEqual(outcome, { ok: false, reason: 'insufficient-cargo' });
+  assert.equal(snapshotOf(dock, ship, pirate), before);
+});
+
+test('swill and grog draw on one shared rum store', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+
+  buyCommodity(dock, ship, pirate, RUM, A_FEW_UNITS);
+  const outcome = sellCommodity(dock, ship, pirate, OTHER_RUM, A_FEW_UNITS, MARKET);
+
+  assert.ok(outcome.ok);
+  assert.equal(ship.rum, 0);
+});
+
+test('a supply lot in the hold is invisible to the sell path', () => {
+  const markets = createMarkets(MARKET);
+  const dock = dockAt(markets, SPAWNING_ISLAND);
+  const ship = sloop();
+  const pirate = pirateAt(SPAWNING_ISLAND);
+  buyCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS);
+  stowLot(ship.cargo, FITTING_BALL, A_FEW_UNITS);
+
+  const overdrawn = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS + 1, MARKET);
+  const sold = sellCommodity(dock, ship, pirate, FITTING_BALL, A_FEW_UNITS, MARKET);
+
+  assert.deepEqual(overdrawn, { ok: false, reason: 'insufficient-cargo' });
+  assert.ok(sold.ok);
+  assert.equal(ship.cannonballs, 0);
+  assert.deepEqual(ship.cargo, [{ commodityId: FITTING_BALL, units: A_FEW_UNITS }]);
 });
 
 test('a stocked magazine takes its own mass out of the free hold', () => {

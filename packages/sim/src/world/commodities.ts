@@ -91,3 +91,9 @@ export function isCannonBall(id: CommodityId): boolean {
 export function isRum(id: CommodityId): boolean {
   return id === 'swill' || id === 'grog';
 }
+
+export function isShipSupply(id: CommodityId): boolean {
+  return isCannonBall(id) || isRum(id);
+}
+
+export const PLUNDERABLE_COMMODITY_IDS = COMMODITY_IDS.filter((id) => !isShipSupply(id));
