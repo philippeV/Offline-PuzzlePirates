@@ -2615,3 +2615,57 @@ pure append-at-anchor and were interleaved by the commit time that introduced ea
 concatenated in block. The five fixtures were re-recorded, not resolved. `balance.json` and
 `packages/sim/src/index.ts` merged cleanly, which is the trap: the data file gained
 `tokenSpawnPerMille` without complaint while the reader that consumes it silently lost it.
+
+### 2026-09-03 — independent review of the slice 2c repair (OPP-14), PR 6, cycle 1
+
+Four lenses, run separately against the merged tree, each rebuilding what it measured rather than
+reading the PR body. Nothing blocks. The repair is approved and goes to the test stage. Everything
+the review found is in `ISSUES.md` under the matching dated heading.
+
+**The blocking finding is unreachable, and that was established by executing every route rather than
+by arguing one.** `bilge.swap` and `bilge.poke` on both committed fixtures, `sim.step` at 200 and 300
+ticks on a save that already had a puzzle running, the full harness protocol path, and hand-built
+saves at schema 4 and 5 carrying a balance missing only `tokenSpawnPerMille` — all refused before
+`tokens.ts:37`, with `bilge.tokens` never appearing in `rngStreams`. The one route that does reach
+the inverted gate is a save hand-forged at schema 6, which bypasses `migrate` entirely; that is the
+loader trusting every field of a current-version save, which is a pre-existing property and not this
+slice's to fix.
+
+**All seven claims the task asked to be checked are confirmed**, each by measurement: the gate at
+435 of 435 exit 0 from cold in a fresh worktree, TS2741 on a deleted `tokenSpawnPerMille` at the line
+and column the development entry quotes, exactly two failing tests on a reverted `balance: null` and
+both of them schema-5, a migrated v3 save gaining 144 `NO_SHAPE` shapes and `maneuverBar` 0, the
+original reproduction now answering `balance-missing`, the v3 fixture byte-identical to develop's,
+and the v5 save a genuine schema-5 recording. The review additionally reproduced the v5 fixture from
+`agent/develop` at seed 20260903 and 60 ticks, and found the harness reader has a run-time guard as
+well as the compile-time one the entry claims.
+
+**The fixture re-recording is honest, which was the thing most worth attacking.** `bilge-session`
+gained `bilge.tokens` as a genuinely new stream while `bilge.fill`, `bilge.refill`, `bilge.critters`
+and `marker.drift` kept their cursors byte-for-byte, so the token layer stole no draws from an
+existing stream and hid it behind a re-recorded hash. `marker-drift`'s entire state diff is the
+schema version. Every one of the ten hashes in the development entry's table matches the blob on both
+sides.
+
+**The merge lost nothing.** Zero sections, zero decision rows, zero `ISSUES.md` entries and zero
+non-blank lines are missing from either parent, and `tests/harness/balance.test.ts` kept every
+behavioural assertion — the single dropped line asserted a one-block `BALANCE` and is superseded.
+
+**Two things the review corrects in the record.** The first is that decision 99's rationale is only
+half-honoured: the conflicted paragraph in `pp-sim-harness` was rewritten correctly, but the pointer
+table auto-merged from develop's side, so `:91` changed from 3 to 4 when the true value is 6 — a new
+falsehood committed by the commit that made it false, twelve lines below the line it corrected. The
+second is `ISSUES.md`'s claim that decisions 90-101 collide with nothing. They collide with three
+live branches: slice 4b at 90-96, slice 5 at 90-100 and slice 4c at 101-103, all pushed before this
+branch's analysis commit. The analysis reached 90 by checking `agent/develop` alone, which is how the
+claim came to be written. Taking 90 was defensible on what was checked; the sentence asserting safety
+was not, and the integrator now has four branches to reconcile rather than three. The slice 5 repair
+has since numbered from 111, leaving 104-110 free for the renumber the slice 5 review recommends.
+
+**Where the next defect of this class will come from.** The v5 fixture inherits the v3 fixture's
+fragility: a plausible `migrations[6]` that nulls the balance ahead of it turns it into a non-witness
+with all nineteen migration tests still green — demonstrated, not predicted. Nothing in the suite
+asserts that a fixture named for a version still reaches the step it was created for, and
+`tests/sim/migration.test.ts:58` already carries the false name that mistake produces. Decision 93's
+standing rule has the same shape: it is honoured by every migration and enforced by nothing. None of
+this is blocking, and all of it is one table-driven test away.
