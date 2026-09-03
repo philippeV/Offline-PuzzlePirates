@@ -5,3 +5,4 @@ export const MAX_REPLAY_TICK = 1000000;
 export const MAX_REPLAY_ENTRIES = 100000;
 export const MAX_COMMANDS_PER_REQUEST = 100000;
 export const MAX_ECHOED_ID_LENGTH = 256;
+export const MAX_SAVE_LENGTH = 1000000;

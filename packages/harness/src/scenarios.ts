@@ -1,16 +1,22 @@
-import { Sim } from '@opp/sim';
+import { Sim, type Command } from '@opp/sim';
 
 import { BALANCE } from './balance.ts';
 import { RpcError } from './errors.ts';
 
 export const DEFAULT_SCENARIO = 'marker-field';
 export const BILGE_SCENARIO = 'bilge-session';
+export const SEA_BATTLE_SCENARIO = 'sea-battle';
+export const PILLAGE_LOOP_SCENARIO = 'pillage-loop';
+
+export const HOME_ISLAND = 'alkaid';
 
 const BILGING_PUZZLE = 'bilging';
 
 const declaredBuilders: Record<string, (seed: number) => Sim> = {
   [DEFAULT_SCENARIO]: (seed) => Sim.create({ seed }),
   [BILGE_SCENARIO]: (seed) => openBilgeSession(seed),
+  [SEA_BATTLE_SCENARIO]: (seed) => openSeaBattle(seed),
+  [PILLAGE_LOOP_SCENARIO]: (seed) => openPillageLoop(seed),
 };
 
 const BUILDERS: Record<string, (seed: number) => Sim> = Object.assign(
@@ -27,9 +33,59 @@ export function createScenarioSim(seed: number, scenario: string | undefined): S
 
 function openBilgeSession(seed: number): Sim {
   const sim = Sim.create({ seed, balance: BALANCE });
-  const started = sim.dispatch({ op: 'puzzle.start', puzzle: BILGING_PUZZLE });
-  if (started.status === 'rejected') {
-    throw new RpcError('internal-error', `the ${BILGE_SCENARIO} scenario was ${started.reason}`);
-  }
+  drive(sim, BILGE_SCENARIO, [{ op: 'puzzle.start', puzzle: BILGING_PUZZLE }]);
   return sim;
+}
+
+function openSeaBattle(seed: number): Sim {
+  const sim = Sim.create({ seed, balance: BALANCE });
+  const { startingCannonballs, startingRum } = BALANCE.battle;
+  drive(sim, SEA_BATTLE_SCENARIO, [
+    { op: 'puzzle.start', puzzle: BILGING_PUZZLE },
+    {
+      op: 'ship.commission',
+      shipClass: 'sloop',
+      allegiance: 'player',
+      playerStation: 'bilging',
+      cannonballs: startingCannonballs,
+      rum: startingRum,
+    },
+    {
+      op: 'ship.commission',
+      shipClass: 'sloop',
+      allegiance: 'brigand',
+      cannonballs: startingCannonballs,
+      rum: startingRum,
+      cargoUnits: BALANCE.booty.brigandCargoUnitsBase,
+    },
+    { op: 'battle.start', sinkingContext: true },
+  ]);
+  return sim;
+}
+
+function openPillageLoop(seed: number): Sim {
+  const sim = Sim.create({ seed, balance: BALANCE });
+  const { startingCannonballs, startingRum } = BALANCE.battle;
+  drive(sim, PILLAGE_LOOP_SCENARIO, [
+    { op: 'puzzle.start', puzzle: BILGING_PUZZLE },
+    { op: 'world.start', islandId: HOME_ISLAND },
+    {
+      op: 'ship.commission',
+      shipClass: 'sloop',
+      allegiance: 'player',
+      playerStation: 'bilging',
+      cannonballs: startingCannonballs,
+      rum: startingRum,
+    },
+  ]);
+  return sim;
+}
+
+function drive(sim: Sim, scenario: string, commands: Command[]): void {
+  for (const command of commands) {
+    const result = sim.dispatch(command);
+    if (result.status === 'rejected') {
+      throw new RpcError('internal-error', `the ${scenario} scenario was ${result.reason}`);
+    }
+  }
 }

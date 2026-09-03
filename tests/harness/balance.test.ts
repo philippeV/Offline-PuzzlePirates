@@ -1,37 +1,107 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { BALANCE, loadPuzzleBalance } from '../../packages/harness/src/index.ts';
+import { BALANCE, loadBalance } from '../../packages/harness/src/index.ts';
 import { canonicalJson } from '../../packages/sim/src/index.ts';
 
-const BILGING_KEYS = [
-  'boardWidth',
-  'boardHeight',
-  'colourCountByStarLevel',
-  'maxStarLevel',
-  'startingStarLevel',
-  'ticksPerStarStep',
-  'comboMultiplierByLineCount',
-  'comboScalePerMilleByStarLevel',
-  'vegasMultiplier',
-  'chainPointsPerCell',
-  'pufferSpawnPerMille',
-  'crabSpawnPerMille',
-  'jellySpawnPerMille',
-  'tokenSpawnPerMille',
-  'crabPointsAtFullWater',
-  'pufferPointsPerCell',
-  'jellyPointsPerCell',
-  'aboveWaterFallTicksPerCell',
-  'belowWaterFallTicksPerCell',
-  'inflowPerMillePerThousandTicks',
-  'pumpPerMillePerThousandTicks',
-  'ratingBandsPerMille',
-];
+const BLOCK_KEYS: Record<string, string[]> = {
+  bilging: [
+    'boardWidth',
+    'boardHeight',
+    'colourCountByStarLevel',
+    'maxStarLevel',
+    'startingStarLevel',
+    'ticksPerStarStep',
+    'comboMultiplierByLineCount',
+    'comboScalePerMilleByStarLevel',
+    'vegasMultiplier',
+    'chainPointsPerCell',
+    'pufferSpawnPerMille',
+    'crabSpawnPerMille',
+    'jellySpawnPerMille',
+    'tokenSpawnPerMille',
+    'crabPointsAtFullWater',
+    'pufferPointsPerCell',
+    'jellyPointsPerCell',
+    'aboveWaterFallTicksPerCell',
+    'belowWaterFallTicksPerCell',
+    'inflowPerMillePerThousandTicks',
+    'pumpPerMillePerThousandTicks',
+    'ratingBandsPerMille',
+  ],
+  ship: [
+    'bilgeInflowPerMillePerThousandTicks',
+    'damageBilgeCoefficientPerMille',
+    'carpentryBilgeSlowingPerMille',
+    'wearDamagePerMillePerThousandTicks',
+    'carpentryRepairPerMillePerThousandTicksAtFullDuty',
+    'bilgePumpPerMillePerThousandTicksAtFullDuty',
+    'bilgeSpeedCapPerMille',
+    'navigationBonusMaxPerMille',
+    'warGalleonRamDamageSmallMicro',
+    'rumPerPiratePerThousandTicks',
+  ],
+  battle: [
+    'movementTokenMilliPerThousandTicksAtFullDuty',
+    'bilgeTokenThrottlePerMille',
+    'cannonLoadMilliPerThousandTicksAtFullDuty',
+    'tallRockCount',
+    'smallRockCount',
+    'windTileCount',
+    'startingSeparationTiles',
+    'startingCannonballs',
+    'startingRum',
+  ],
+  npc: ['crewDutyOutputPerMille', 'brigandCrewDutyOutputPerMille'],
+  brigand: [
+    'planLookaheadPhases',
+    'weightCloseDistance',
+    'weightBroadsideExposure',
+    'weightIncomingBroadside',
+    'weightRockCollision',
+    'geniusChancePerMille',
+    'blunderNoisePerMille',
+    'disengageAtDamagePerMille',
+  ],
+  booty: [
+    'brigandPoeBase',
+    'brigandPoePerMightMilli',
+    'brigandPoeVariancePerMille',
+    'brigandCargoUnitsBase',
+    'chartDropChancePerMille',
+    'overflowPolicy',
+  ],
+  world: [
+    'startingPoe',
+    'encounterChancePerMille',
+    'encounterDifficultyWeightPerMille',
+    'pillageSpawnBonusPerMille',
+    'tradeSpawnPenaltyPerMille',
+    'brigandCrewCount',
+  ],
+  market: [
+    'rawBasePricePoe',
+    'refinedBasePricePoe',
+    'spawnDiscountPerMille',
+    'scarcityPremiumPerMille',
+    'spreadPerMille',
+    'startingStockUnits',
+    'maxStockUnits',
+  ],
+  division: ['crewCutPerMille', 'playerSharePerMille'],
+};
+
+const FILE = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../balance.json', import.meta.url)), 'utf8'),
+) as Record<string, Record<string, unknown>>;
+
+const BLOCKS = JSON.parse(canonicalJson(BALANCE)) as Record<string, Record<string, unknown>>;
+
+const TEXT_KEYS = ['booty.overflowPolicy'];
 
 function sourceHolding(contents: unknown): URL {
   const path = join(mkdtempSync(join(tmpdir(), 'opp-balance-')), 'balance.json');
@@ -39,52 +109,124 @@ function sourceHolding(contents: unknown): URL {
   return pathToFileURL(path);
 }
 
-function bilgingWithout(key: string): Record<string, unknown> {
-  const block: Record<string, unknown> = { ...BALANCE.bilging };
-  delete block[key];
-  return block;
+function fileWith(name: string, block: unknown): URL {
+  return sourceHolding({ ...BLOCKS, [name]: block });
 }
 
-test('the loaded balance carries the declared bilging block and no file metadata', () => {
-  assert.deepEqual(Object.keys(BALANCE), ['bilging']);
-  assert.deepEqual(Object.keys(BALANCE.bilging).sort(), [...BILGING_KEYS].sort());
-  assert.doesNotThrow(() => canonicalJson(BALANCE));
+function fileWithout(name: string, key: string): URL {
+  const block = { ...BLOCKS[name] };
+  delete block[key];
+  return fileWith(name, block);
+}
+
+function fileReplacing(name: string, key: string, value: unknown): URL {
+  return fileWith(name, { ...BLOCKS[name], [key]: value });
+}
+
+test('the loaded balance carries every declared block and no file metadata', () => {
+  assert.deepEqual(Object.keys(BALANCE).sort(), Object.keys(BLOCK_KEYS).sort());
+  for (const [name, keys] of Object.entries(BLOCK_KEYS)) {
+    assert.deepEqual(Object.keys(BLOCKS[name] ?? {}).sort(), [...keys].sort(), name);
+  }
 });
 
-test('the loaded balance holds safe integers only, so it survives hashing', () => {
-  assert.match(canonicalJson(BALANCE), /^\{"bilging":\{/);
+test('the loaded balance carries the bilging token spawn rate declared in the file', () => {
+  assert.equal(BALANCE.bilging.tokenSpawnPerMille, 120);
+});
+
+test('the loaded balance survives hashing and carries no file metadata', () => {
+  assert.doesNotThrow(() => canonicalJson(BALANCE));
+  assert.match(canonicalJson(BALANCE), /^\{"battle":\{/);
   assert.equal(canonicalJson(BALANCE).includes('_sources'), false);
   assert.equal(canonicalJson(BALANCE).includes('_note'), false);
 });
 
+test('every tuning value outside the declared text keys is a safe integer', () => {
+  for (const [name, block] of Object.entries(BLOCKS)) {
+    for (const [key, value] of Object.entries(block)) {
+      if (TEXT_KEYS.includes(`${name}.${key}`)) continue;
+      const entries: unknown[] = Array.isArray(value) ? value : [value];
+      for (const entry of entries) {
+        assert.ok(Number.isSafeInteger(entry), `${name}.${key} holds ${String(entry)}`);
+      }
+    }
+  }
+});
+
+test('every tuning constant has a provenance entry and every entry names a constant', () => {
+  const sources = Object.keys(FILE['_sources'] ?? {});
+  const constants = Object.entries(FILE)
+    .filter(([name]) => !name.startsWith('_'))
+    .flatMap(([name, block]) => Object.keys(block).map((key) => `${name}.${key}`));
+
+  assert.deepEqual(
+    constants.filter((key) => !sources.includes(key)),
+    [],
+    'constants with no _sources entry',
+  );
+  assert.deepEqual(
+    sources.filter((key) => !constants.includes(key)),
+    [],
+    '_sources entries naming no constant',
+  );
+});
+
 test('a balance file missing a required field is refused by the name of that field', () => {
-  assert.throws(() => loadPuzzleBalance(sourceHolding({ bilging: bilgingWithout('boardWidth') })), {
+  assert.throws(() => loadBalance(fileWithout('bilging', 'boardWidth')), {
     name: 'TypeError',
     message: /bilging\.boardWidth/,
   });
 });
 
 test('a balance field that is not a safe integer is refused by the name of that field', () => {
-  const fractional = { ...BALANCE.bilging, inflowPerMillePerThousandTicks: 0.5 };
-
-  assert.throws(() => loadPuzzleBalance(sourceHolding({ bilging: fractional })), {
-    name: 'TypeError',
-    message: /bilging\.inflowPerMillePerThousandTicks/,
-  });
+  assert.throws(
+    () => loadBalance(fileReplacing('bilging', 'inflowPerMillePerThousandTicks', 0.5)),
+    { name: 'TypeError', message: /bilging\.inflowPerMillePerThousandTicks/ },
+  );
 });
 
 test('a balance array holding a non-integer is refused by the name of the offending entry', () => {
-  const ragged = { ...BALANCE.bilging, ratingBandsPerMille: [500, 'lots', 1100] };
+  assert.throws(
+    () => loadBalance(fileReplacing('bilging', 'ratingBandsPerMille', [500, 'lots', 1100])),
+    { name: 'TypeError', message: /bilging\.ratingBandsPerMille\[1\]/ },
+  );
+});
 
-  assert.throws(() => loadPuzzleBalance(sourceHolding({ bilging: ragged })), {
+test('a fractional ship field is refused by its own key path, not the bilging one', () => {
+  assert.throws(
+    () => loadBalance(fileReplacing('ship', 'bilgeInflowPerMillePerThousandTicks', 27.5)),
+    { name: 'TypeError', message: /^balance\.json ship\.bilgeInflowPerMillePerThousandTicks/ },
+  );
+});
+
+test('a battle field holding text is refused by its own key path', () => {
+  assert.throws(
+    () => loadBalance(fileReplacing('battle', 'bilgeTokenThrottlePerMille', '700')),
+    { name: 'TypeError', message: /^balance\.json battle\.bilgeTokenThrottlePerMille/ },
+  );
+});
+
+test('a missing brigand field is refused by its own key path', () => {
+  assert.throws(() => loadBalance(fileWithout('brigand', 'weightRockCollision')), {
     name: 'TypeError',
-    message: /bilging\.ratingBandsPerMille\[1\]/,
+    message: /^balance\.json brigand\.weightRockCollision/,
   });
 });
 
-test('a balance file with no bilging block is refused', () => {
-  assert.throws(() => loadPuzzleBalance(sourceHolding({ _note: 'nothing here' })), {
+test('a booty overflow policy outside the declared set is refused', () => {
+  assert.throws(() => loadBalance(fileReplacing('booty', 'overflowPolicy', 'jettison')), {
+    name: 'TypeError',
+    message: /^balance\.json booty\.overflowPolicy must hold one of truncate, refuse, spill-to-sea/,
+  });
+});
+
+test('a balance file missing a whole block is refused by the name of that block', () => {
+  assert.throws(() => loadBalance(sourceHolding({ _note: 'nothing here' })), {
     name: 'TypeError',
     message: /bilging/,
+  });
+  assert.throws(() => loadBalance(fileWith('npc', undefined)), {
+    name: 'TypeError',
+    message: /^balance\.json npc must hold an object/,
   });
 });
