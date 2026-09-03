@@ -4,6 +4,405 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — physical test of the slice 4b repair (PR 7, cycle 1)
+
+Sixty seeds, 355 voyages, 421 battles and 103 plunder draws over real `pp-harness` processes, plus a
+save-and-reload track and a determinism track. Nothing blocked: no ship supply ever reached a cargo
+lot, every plundered lot sold, the refusal is the promised one, the magazine's mass is exact, and a
+stocked magazine survives a reload into a separate process byte-identically. These seven are what the
+play-through saw and could not act on.
+
+### `hold-full` cannot be reached through `market.buy` on a normally laden ship
+
+`buyCommodity` checks stock, then purse, then hold, and at this balance the first two always bind
+first: a sloop's free hold is about 13,135 kg while `world.startingPoe` is 2000 and
+`market.startingStockUnits` is 500, so the largest order a dock and a purse allow is roughly 167
+units of a raw good. Both test tracks tried to provoke `hold-full` through the real buy path and got
+`insufficient-poe` every time; the refusal had to be reached through a state carrying a 13,000-unit
+lot and through a snapshot-scoped throwaway hull. The path itself is correct once the hold genuinely
+binds — 500 units of free hold fell to 358 after twenty small balls and to 308 after fifty grog,
+exactly `floor(20 x 7.1)` and 50 — but `magazineMassKgOf`'s contribution to `freeHoldOf` is
+unreachable in normal play. It starts to matter the day a ship can hold cheap tonnage or a purse can
+buy a hold's worth: until then the mass rule is real but inert, and any test that wants it must
+construct the load rather than earn it.
+
+### A zero-unit buy of a ball the hull cannot fire is accepted
+
+`market.buy large-cannon-ball 0` on a sloop is accepted and emits a `market.traded` event naming a
+ball the ship can never load, because the zero-unit short-circuit sits ahead of the calibre guard.
+Nothing moves and no state changes, so it is a contract wart rather than a defect, and the pinned
+refusal order in the analysis document is what puts the zero case first. It matters only if a client
+ever treats an accepted `market.traded` as proof the commodity is loadable.
+
+### `negative-units` is unreachable over the protocol
+
+Confirmed live, and already recorded as decision 96's RPC-path note: `requiredCount` in
+`packages/harness/src/params.ts` answers `invalid-params` (JSON-RPC −32602, "params.units must not be
+negative") before `market.buy` or `market.sell` reaches the sim, so `market.ts`'s `negative-units`
+reason cannot be observed from outside. Both refusals are behaviourally identical — nothing changes
+either way — but a harness test asserting `reasonOf(...) === 'negative-units'` will fail, and only an
+in-process test can pin that branch. Recorded so no future test is written against it from the
+outside.
+
+### `rng.cursors` key order is not stable across a save round trip
+
+A live session returns the cursor map in stream-insertion order with each cursor spelled
+`{hi, lo, draws}`; the same state reloaded through `session.load` returns it canonically sorted with
+each cursor spelled `{draws, hi, lo}`. Every value is identical element-wise, and the full state
+compares byte-identical, so nothing is lost — but `JSON.stringify(before) === JSON.stringify(after)`
+on `rng.cursors` reports a false divergence. Any test comparing cursors across a reload must use a
+deep equality, not a string comparison.
+
+### Seed 2026 never plunders, and it is the seed the restocking test uses
+
+`tests/world/loop.ts:agentPlanOf` is `planBrigandTurn` pointed at the player, so a scripted player
+fights itself with the brigand AI and loses most battles — three wins in nine battles over a ten-seed
+sweep. On a lost battle the plunder half of the loop never runs: `world.plunder` and `booty.poe`
+never open and `booty.divide` is refused `no-booty`. Seed 2026, which
+`tests/harness/restocking.test.ts` uses, is one of the losing seeds, so that acceptance test exercises
+the restock path and nothing downstream of a win. Seeds 2 and 3 win. Any world golden or replay
+recorded later must pick a winning seed or it will silently cover the encounter stream only.
+
+### A committed world replay golden is blocked by the per-tick trail, not by the world
+
+The review's headline coverage gap — no committed fixture exercises any world RNG stream — is real
+and this test could not close it. `tools/record-replay.ts` writes one checkpoint per tick, a pillage
+voyage on seed 2 runs 155,100 ticks, and `MAX_REPLAY_ENTRIES` is 100,000, so a world replay is both
+oversized and refused. `replay.verify` already accepts a `scenario`, so `{scenario: "pillage-loop",
+seed: 2}` would work as-is once the trail problem is solved: either a sparse hash trail (checkpoint at
+command ticks plus a fixed stride) in `recordReplay` and `replay.verify`, or a short world scenario
+that starts one league point from its destination so the whole loop fits in a few thousand ticks. The
+command log itself is trivial — `voyage.chart`, the per-turn `battle.plan` commands at their exact
+ticks, then `voyage.port`, `booty.divide`, `market.buy` and `market.sell`.
+
+### `balance.json`'s rationale for `world.brigandCrewCount` does not match its value
+
+The `_sources` prose says brigands are "crewed just below a player sloop's swabbie staffing so an even
+fight tilts marginally to the player", but the value is 5 and a sloop's `swabbieStaffing` is also 5.
+Since `resolveMelee` breaks an exact tie in favour of the defender, an otherwise even melee is decided
+by who grappled — and the aggressor loses. Observed rather than derived: melee snapshots one turn from
+conclusion on three seeds put the player at 5 to 6 million `meleeDamageSmallMicro` against the sloop's
+6 million cap, and the brigand at 0.5 to 2.5 million. Nothing is wrong with the code; the recorded
+intent and the number disagree, and one of them should move.
+
+## 2026-09-03 — independent review of the slice 4b repair (PR 7, cycle 1)
+
+Four lenses against `caf8cec`. Nothing blocked: the invariant of decision 124 is closed by
+construction on every runtime route, the three `market.ts` sites are behaviour-preserving for all
+sixteen ids, the merge lost nothing, and `npm run check` is 436/436 exit 0 from cold on four
+independent runs. Twelve mutations were run against the ten new tests and none survived.
+
+### A pre-fix save keeps its orphan supply lot, and the hold it eats never comes back
+
+Decision 123 accepts this deliberately, and it is the right call — no committed fixture is affected
+and no released save exists. Recorded here with what it actually costs, because the decision states
+the policy without measuring the consequence.
+
+`deserialise` (`packages/sim/src/save.ts:32-55`) `JSON.parse`s a save already at
+`SCHEMA_VERSION = 5` and casts it to `WorldState` with no id validation; the cargo-wiping migration
+is `migrations[4]`, so it never runs on such a save. A ship that plundered a supply before `f9a192b`
+and then divided booty holds e.g. `grog x40` as a lot. Measured against the PR head: with
+`ship.rum === 0` every sale of it is refused `insufficient-cargo`; with `ship.rum > 0` the sale
+succeeds and drains the *magazine*, leaving the lot untouched. Either way the lot's mass is
+subtracted from `freeHoldOf` for the life of the ship. `tests/world/market.test.ts:372-387` pins
+this as expected behaviour rather than repairing it.
+
+It starts to matter the day a save outlives a build — the first release, or the first time a
+developer's scratch save is worth keeping. The fix is a `migrations[5]` that folds supply lots back
+into the counters or drops them, taken together with the schema bump slice 2c is already holding.
+
+### No committed fixture exercises a world RNG stream
+
+This PR narrowed a live RNG draw — `world.plunder` went from sixteen ids to eleven — and the whole
+436-test suite stayed green with no fixture touched and no hash re-blessed. Decision 122 predicted
+the opposite and was wrong for a structural reason worth naming.
+
+`tests/sim/determinism.test.ts` is entirely self-comparative: same seed against same seed, on a
+three-command marker script. Every literal hash in the repo lives in the bilge and marker fixtures,
+and `goldens/bilge-session-idle-minute.json` has `"ships": []`. So no pinned hash covers voyage,
+encounter, plunder, market or battle at all.
+
+The rule, rather than this instance: **a change to world RNG stream consumption cannot be detected
+by anything currently pinned.** It is not silent once a replay exists —
+`packages/harness/src/replay.ts:40-57` compares every checkpoint and the final hash — which is
+exactly why the first committed world replay or golden closes this. This file circles the same
+ground from two other angles already, without ever stating it as a coverage rule.
+
+### `stowLot` still accepts any commodity id, so the bug class is guarded observationally
+
+Both new invariants watch behaviour rather than the container. `tests/world/encounter.test.ts:165`
+watches the plunder draw; `tests/world/soak.test.ts:247` watches the end state of one scenario. A
+future `stowLot` caller off the pillage-loop path — salvage, a shipyard, a quest reward, a migration
+— reintroduces the defect with nothing red. Proven both ways: an off-by-one on the draw bound is
+caught by the encounter test only, and a new `stowLot` call injected into `divideBooty` is caught by
+the soak only.
+
+`stowLot` (`packages/sim/src/world/cargo.ts:37`) takes any `CommodityId`. One line inside it —
+refusing or asserting on `isShipSupply` — turns the invariant from observed into structural. Not
+done here because this stage reports and does not fix, and because the three callers that exist
+today are all guarded.
+
+### The soak invariant uses the production predicate as its own oracle
+
+`supplyLotsOf` (`tests/world/soak.test.ts:169-176`) calls `isShipSupply` to decide what counts as a
+violation, so a regression in that predicate makes the assertion vacuously true rather than red.
+Confirmed: with `isShipSupply` forced to `false`, every lot in the world is a ship supply and
+`soak.test.ts:247` still passes. `tests/world/commodities.test.ts:93` avoids exactly this trap by
+pinning against a literal `SHIP_SUPPLY_IDS`; the soak should import or restate the same literal.
+
+Bounded — forcing `isShipSupply` false is caught by eleven other tests — but it costs the PR's
+headline invariant its independence.
+
+### The `commodityId === undefined` guard cannot fire
+
+`packages/sim/src/world/encounter.ts:78`. `nextIntInRange(0, n)` returns a valid index for any
+non-empty array, and for an empty one it throws `RangeError('empty range 0..0')` from
+`packages/sim/src/rng.ts:37` — one line *earlier*, propagating out of `world/session.ts:22`
+mid-battle-resolution before the brigand is removed. So the guard reads as graceful degradation for
+an empty `PLUNDERABLE_COMMODITY_IDS` while protecting nothing of the sort. It is a
+`noUncheckedIndexedAccess` appeasement. Either assert non-emptiness at module load in
+`commodities.ts:99`, or drop it.
+
+### Decision 122 is right for a reason it does not state
+
+The decision picks a pre-filtered array over a re-roll because one draw means one advance and
+constant stream consumption. `nextIntInRange` rejection-samples above `2^32 - (2^32 % span)`:
+`2^32 % 16 === 0`, so the *old* sixteen-id draw consumed exactly one uint32 always, while
+`2^32 % 11 === 4` gives the *new* draw a 4-in-2^32 chance of consuming more. So consumption became
+marginally less constant, not more.
+
+Nothing to fix — determinism is untouched, the same seed yields the same sequence, and the
+probability is about 1e-9. Recorded because the property the design was chosen for is not the
+property the code has, and the next reader will believe the decision.
+
+### The narrowed draw also removed a mass leak, and that is not in the record
+
+All eleven plunderable ids weigh 1000 g/unit, so `units` at
+`packages/sim/src/world/encounter.ts:80-82` now equals `bootyCargoUnits` exactly and the stowed
+lot's mass equals the counter it zeroes. Under the sixteen-id draw a heavy ball floored units down
+and deleted the remainder from the laden hold — a 40 kg chest drawn as `large-cannon-ball`
+materialised as 1 unit, evaporating 47% of it.
+
+The analysis records the reward-distribution shift as this change's cost but not this, and it is
+tuning-relevant in the opposite direction: pillage voyages now come home slightly heavier. It also
+silently resolves half of an existing entry — *The double floor got wider, and the plunder roll got
+heavier*, below — whose plunder-floor half is now unreachable while its double-floor half still
+stands. That entry was not amended.
+
+### The reward shift is not symmetric, and the note should say which way
+
+Recorded in the analysis as a share change from 6.25% to about 9.09% per raw id. The direction is
+worth having: expected value *falls*, roughly 550 to 480 base PoE per plunder, because the two rum
+ids drew 40 units at the refined price — about 3x a raw draw — and they are gone with the tail. No
+spec pins it: `balance.json`'s `booty` block has no key for the draw distribution and its `_sources`
+prose never mentions it. A tuning note, not a constant change, exactly as recorded.
+
+### `isShipSupply` makes "not a cannon ball" mean "rum" in three places
+
+`packages/sim/src/world/market.ts:95, :105, :110`. The new shape is an outer predicate that is the
+disjunction of the inner one and its complement, so the false arm silently claims every non-ball
+supply is rum. That is a fact about today's catalogue, not about the type. It is
+behaviour-preserving for all sixteen ids — verified — but it changes the failure mode for a future
+third supply class from *visibly wrong* (a cargo lot, which is the defect this PR repairs and which
+tests now catch) to *silently wrong* (folded into `ship.rum`, caught by nothing).
+
+Decision 121's goal — name the set once — is already served by `isShipSupply` in `encounter.ts` and
+by `PLUNDERABLE_COMMODITY_IDS`. These three bodies did not have to change to achieve it, and the
+flat two-branch form they replaced was more direct.
+
+### The coincidence tripwire's diff points at the wrong fix
+
+`tests/world/commodities.test.ts:104-109`. Reproduced by adding a refined non-supply commodity to a
+scratch copy: production behaviour is correct for the new id and this test is the only thing that
+notices, which is what decision 121 wanted. But the `deepEqual` argument order puts the supply set
+in `actual`, so Node prints `- 'cloth'` under *expected* — reading as "the ship-supply set is
+missing cloth", the opposite of what the message below it says. A reader who follows the diff adds
+`cloth` to `isShipSupply` and sends it into `ship.rum`. That wrong fix is caught by the literal-list
+test at `:93`, so the failure mode is bounded rather than silent. Swap the argument order, and say
+in the message that the divergence is anticipated and the test should then be retired.
+
+### Smaller things
+
+`PLUNDERABLE_COMMODITY_IDS` is exported from `packages/sim/src/index.ts:249` with no consumer
+outside `packages/sim/src` — its two test consumers import it by source path. This continues a
+pattern already recorded here for `cannonBallOf`, `isCannonBall` and `isRum`; either drop it from
+the barrel or add it to that bullet. `isShipSupply` beside it is genuinely used through `@opp/sim`
+by `tests/world/soak.test.ts` and should stay.
+
+The merge left the analysis document out of chronological order. It is oldest-first throughout, and
+the union resolution appended `agent/develop`'s `### 2026-09-02 — physical test of slice 4` *after*
+the two `2026-09-03` slice-4b sections, so the file ends on an out-of-date entry. Nothing was lost
+or duplicated — purely ordering, and a one-block move fixes it.
+
+`tests/world/market.test.ts:360` pins swill and grog sharing one store as expected behaviour. It is
+a faithful description of today and it closed a real coverage hole, but this file already records
+that path as a latent unbounded PoE printer the moment the two prices diverge. The test should carry
+a pointer to that entry so whoever fixes the printer knows this assertion is expected to change. No
+exploit exists today: no island's `spawnCommodities` list contains a rum, and both are `refined`, so
+`openingStockOf` prices them identically everywhere.
+
+The soak is non-vacuous today — instrumenting the draw counts 10 plunders across the 12 seeds — but
+nothing in `soak.test.ts` asserts that plunder fired at all, so it would go green-and-empty if
+plunder ever stopped happening. `tests/world/encounter.test.ts:165`, which asserts all eleven ids
+are drawn over 60 seeds, is the real non-vacuity guard.
+
+## 2026-09-03 — analysis of the review finding, slice 4b (cycle 1)
+
+Two defects turned up while mapping the inventory surface to decide where plundered ship supplies
+live. Neither is part of the blocking cluster, and neither is in the development task this cycle
+produced.
+
+### Loading a cannon deletes its mass from the laden hold
+
+`ship.cannonsLoaded` is a third supply store and nothing weighs it. `stepCannonLoading`
+(`packages/sim/src/ship/meters.ts:103-105`) moves a ball out of `ship.cannonballs` and into
+`ship.cannonsLoaded`, while `magazineMassKgOf` (`packages/sim/src/world/cargo.ts:25-31`) weighs only
+`cannonballs` and `rum`. So every cannon a ship loads removes 7.1, 14.2 or 21.3 kg from what
+`freeHoldOf` counts, and `battle/gunnery.ts:56` never puts it back when the shot is fired — the mass
+is gone for the life of the ship.
+
+It is not exploitable in an interesting way today, because loading is capped at the class's cannon
+count and the freed kilograms are small against a hold. It starts to matter the moment a hull with
+many guns and large shot exists, or if anything ever lets a player load and unload deliberately: the
+loop is "load the guns, buy more cargo than the hold holds". The fix is a term in
+`magazineMassKgOf`, and `tests/world/soak.test.ts:165-173` must move with it, since `ladenKgOf`
+re-derives the same sum.
+
+### `booty.divide` can leave an un-materialised chest counter behind
+
+`divideBooty` (`packages/sim/src/world/division.ts:28`) transfers lots only. `ship.bootyCargoUnits`
+— the abstract kilograms `awardBooty` takes off the loser (`packages/sim/src/battle/booty.ts:39-40`)
+— is zeroed in exactly one place, `materialisePlunder` (`packages/sim/src/world/encounter.ts:82`),
+which runs only while `state.voyage !== null` (`packages/sim/src/world/session.ts:10`). The
+`booty.divide` guard (`packages/sim/src/world/dispatch.ts:135`) tests `bootyPoe` and
+`bootyCargo.length` and ignores `bootyCargoUnits` entirely.
+
+So a chest counter that was never materialised into a lot survives a division untouched, and keeps
+occupying hold mass through `freeHoldOf`, which subtracts `bootyCargoUnits` directly
+(`packages/sim/src/battle/booty.ts:52`). Reaching it needs a battle that concludes without a voyage
+running — a hand-started `battle.start` — so it is adjacent to the settlement questions slice 4c is
+already reworking. It starts to matter as soon as battles can conclude outside a voyage in ordinary
+play; today it is a dead corner reachable only by driving the commands by hand.
+
+## 2026-09-02 — independent review of slice 4b (PR 7, cycle 0)
+
+A four-lens review of PR 7. One cluster blocked and went back to analysis: the sell path routes the
+five magazine commodities to the counters and never looks at `ship.cargo`, so a plundered lot of any
+of them is unsellable, and a sale that is accepted is paid out of the magazine while the lot stays
+aboard. Everything else the four lenses substantiated is below.
+
+The named risk of the slice came up clean, and is recorded here so nobody hunts it twice.
+`freeHoldOf` is the only capacity gate in the repo, `magazineMassKgOf` now reaches it, and every
+caller of `freeHoldOf`, `cargoLotsMassKgOf` and `holdCapacityOf` was swept — `takenCargoOf`,
+`awardBooty`, `buyCommodity` and the soak's laden-hold invariant all go through it. There is no free
+hold space. `npm run check` is green from cold at 397 on two independent worktrees, the save format
+needs no schema bump and a stocked magazine round-trips exactly, both the v2 and v3 fixture saves
+still migrate, and the slice adds no dependency and no comment.
+
+### The double floor got wider, and the plunder roll got heavier
+
+`ISSUES.md` records `small-cannon-ball` at 7100 g as "the only commodity whose mass is not a whole
+kilogram". This slice adds 14200 g and 21300 g, and `freeHoldOf`
+(`packages/sim/src/battle/booty.ts:50-56`) now floors three sums separately — cargo, booty cargo,
+magazine — where it floored two, taking the worst-case slack from 1 kg to 2 kg. Searched exhaustively
+on the buy path (every `n` balls aboard by every bulk size `k`, `n + k <= 1910`, fresh stock each
+time) the worst over-capacity overshoot is **0 kg**: the double floor is conservative there. The
+largest magazine reachable one ball at a time is 1901 balls = 13497 kg against a 13500 kg hold.
+
+Separately, `materialisePlunder` (`world/encounter.ts:78`) computes
+`floor(bootyCargoUnits * 1000 / massGramsPerUnit)`, so a heavier commodity loses more of the chest to
+the floor. A 40 kg chest rolled as `large-cannon-ball` materialises as 1 unit = 21.3 kg — 47% of the
+chest evaporates, where before this slice the heaviest draw was 7100 g and the worst loss was ~7 kg.
+
+### Swill and grog are the same thing aboard ship
+
+`depositUnits`, `heldUnitsOf` and `withdrawUnits` (`packages/sim/src/world/market.ts:95-124`) route
+both rum ids to the single `ship.rum` counter, so a dock will convert one into the other: buy 100
+swill, sell 100 grog having never held grog. It is PoE-neutral today only because `openingStockOf`
+prices both identically — buy 42, sell 56 at alkaid, doyle, marlowe and sayers-rock, neither on any
+island's `spawnCommodities`. The moment either price diverges, from a spawning island or from
+per-commodity refined pricing, this is an unbounded PoE printer. Decision 94 records the deferred
+proof; it does not record this coupling, which is the same deferral's other half.
+
+### Load-time validation now reaches the hold guards
+
+`magazineMassKgOf` feeds `freeHoldOf`, and neither `ship.cannonballs` nor `ship.rum` is validated on
+load — `save.ts:32-34` is a `JSON.parse` and a cast. With `cannonballs` set to a string,
+`magazineMassKgOf` is `NaN`, `freeHoldOf` is `NaN`, and `buyCommodity` accepts 400 units because
+`massKgOf(...) > NaN` is false. The door itself is already recorded as "`deserialise` validates
+nothing", and it is a player corrupting their own save, so this is a widening rather than a new hole.
+A `Number.isFinite` guard in `magazineMassKgOf` closes it. Related and harmless:
+`packages/harness/src/commands.ts:50-51` takes `cannonballs` and `rum` as `optionalCount` rather than
+`boundedCount`, so `ship.commission` with `2^53 - 1` produces a magazine of 6.4e16 kg — precision is
+lost, `freeHoldOf` clamps to 0, nothing crashes.
+
+### Two guards answer before they have looked
+
+- `sellCommodity`'s `withdrawUnits` (`market.ts:121`) silently no-ops when the lot is missing.
+  `heldUnitsOf` makes it unreachable today, but it is the same "the units are not where I think they
+  are" shape as the blocking finding, and it fails silently rather than loudly.
+- The `units === 0` early return precedes the size check on both paths (`market.ts:48,75`), so
+  `market.buy 0 large-cannon-ball` on a sloop reports `ok` rather than `wrong-cannon-ball-size`.
+  Contract inconsistency only; no state changes either way.
+
+### The coverage the mutation pass found missing
+
+Thirty deliberate mutations to `market.ts`, `cargo.ts`, `commodities.ts` and `booty.ts`; twenty-five
+were killed, including every mutation of the slice's central claim. The five survivors:
+
+- **The whole rum sell path is unverified.** Mutating `heldUnitsOf`'s rum branch (`market.ts:109`) to
+  read a cargo lot leaves 397/397 green, and deleting `withdrawUnits`'s rum branch
+  (`market.ts:118-121`) also leaves 397/397 green — under which selling 10 swill credits the purse,
+  adds 10 to the dock's stock and leaves `ship.rum` untouched. The equivalent cannon-ball mutations
+  are both killed. `tests/world/market.test.ts:227` buys rum and never sells it.
+- **The medium cannon ball is invisible.** `medium: 'medium-cannon-ball'` to `'small-cannon-ball'`
+  (`commodities.ts:64`) survives, and `14200` to `14000` (`commodities.ts:33`) survives. The five
+  medium-gunned classes could silently restock with 7.1 kg small shot, which is the failure decision
+  93 exists to prevent. Small and large are both pinned.
+- **The magazine's rounding direction is asserted nowhere.** `Math.floor` to `Math.ceil` in
+  `magazineMassKgOf` (`cargo.ts:30`) survives, because every test uses ten balls and 71000 g is an
+  exact kilogram multiple.
+- No test constructs a ship holding **both** a magazine and a `ship.cargo` lot of a magazine
+  commodity — which is exactly the state `booty.divide` produces, and exactly why the blocking
+  finding was not caught here.
+
+### Shape
+
+- The three-way cannon-ball / rum / cargo-lot branch is written three times (`market.ts:95-124`), so
+  a fourth ship store means editing three functions in lockstep; the two surviving rum mutations are
+  a direct symptom. `isCannonBall` derives from `CANNON_BALL_IDS` (`commodities.ts:87`) while
+  `isRum` hardcodes two ids four lines later.
+- The gram-to-kilogram floor is written three times in `world/cargo.ts` (`:14`, `:22`, `:30`);
+  extracting it is also what would let the triple floor above be fixed in one place. On adjacent
+  lines `:28` reads a mass through `commodityOf(...).massGramsPerUnit` and `:29` reads one from the
+  bare `RUM_MASS_GRAMS_PER_UNIT` — two routes to the same kind of figure.
+- `magazineMassKgOf` is the only function in `world/cargo.ts` taking a `ShipState` rather than
+  `CargoLot[]`, which is what forces that file to import `ship/classes.ts` and `ship/state.ts`, and
+  it adds a second `world` import to `battle/booty.ts` — the dependency direction the previous
+  analysis entry asked slice 5 not to deepen. Placing it in `ship/` keeps the coupling out of
+  `battle/`.
+- `cannonBallOf`, `isCannonBall` and `isRum` are exported from `packages/sim/src/index.ts` with no
+  consumer outside `packages/sim/src`. `magazineMassKgOf` has a real one in the soak.
+
+### `_sources`
+
+`balance.json`'s `market.refinedBasePricePoe` claims prices follow the wiki's recipe inputs, and
+`docs/wiki-map/04-world-ports-economy.md:373-375` gives small iron 5 / wood 1, medium 8 / 3, large
+12 / 4 — yet all three ball sizes price identically at 56 PoE, so a war galleon restocks three times
+the mass for the same coin as a sloop. Decision 95 rewrote two `_sources` entries for truthfulness
+and left this one, which decision 93 falsified.
+
+### Recorded rather than argued
+
+Decision 94's deferral of the published rum proof equivalence is right, and the review agrees with
+it: after `depositUnits` there is no per-commodity key left to index a proof table with, so proof
+needs per-type lots exactly as the decision says. Decision 96's `negative-units` clears decision 59 —
+it is returnable from `applyWorldCommand`, which `index.ts:229` exports as public API, while the RPC
+path refuses it earlier in `requiredCount`. What decision 96 omits is the reachability argument
+decision 92 spells out for its own reason. Guard ordering needed no separate record: validity before
+resource is already the house pattern in `world/dispatch.ts:100-110` and in `buyCommodity` before
+this slice.
+
 ## 2026-09-03 — independent review of the slice 2c repair (OPP-14), PR 6, cycle 1
 
 Four lenses against the merged tree. Nothing blocks: the repair does what decisions 90 to 101 say,

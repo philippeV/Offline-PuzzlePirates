@@ -2,9 +2,17 @@ import type { MarketBalance } from '../balance.ts';
 import { freeHoldOf } from '../battle/booty.ts';
 import type { RejectionReason } from '../commands.ts';
 import { PER_MILLE } from '../puzzle/scoring.ts';
+import { shipClassOf } from '../ship/classes.ts';
 import type { ShipState } from '../ship/state.ts';
 import { lotOf, massKgOf, releaseLot, stowLot } from './cargo.ts';
-import { COMMODITY_IDS, commodityOf, type CommodityId } from './commodities.ts';
+import {
+  cannonBallOf,
+  COMMODITY_IDS,
+  commodityOf,
+  isCannonBall,
+  isShipSupply,
+  type CommodityId,
+} from './commodities.ts';
 import { ISLAND_IDS, islandOf, type IslandId } from './islands.ts';
 import type { IslandMarket, MarketStock, PirateState } from './state.ts';
 
@@ -34,9 +42,13 @@ export function buyCommodity(
   commodityId: CommodityId,
   units: number,
 ): TradeOutcome {
+  if (units < 0) return { ok: false, reason: 'negative-units' };
   const stock = stockOf(market, commodityId);
   if (stock === undefined) return { ok: false, reason: 'unknown-commodity' };
   if (units === 0) return { ok: true, poe: 0, units: 0 };
+  if (isCannonBall(commodityId) && !firesCannonBall(ship, commodityId)) {
+    return { ok: false, reason: 'wrong-cannon-ball-size' };
+  }
   if (stock.units < units) return { ok: false, reason: 'insufficient-stock' };
 
   const poe = units * stock.sellPricePoe;
@@ -44,7 +56,7 @@ export function buyCommodity(
   if (massKgOf(commodityId, units) > freeHoldOf(ship)) return { ok: false, reason: 'hold-full' };
 
   stock.units -= units;
-  stowLot(ship.cargo, commodityId, units);
+  depositUnits(ship, commodityId, units);
   pirate.poe -= poe;
   return { ok: true, poe, units };
 }
@@ -57,21 +69,51 @@ export function sellCommodity(
   units: number,
   balance: MarketBalance,
 ): TradeOutcome {
+  if (units < 0) return { ok: false, reason: 'negative-units' };
   const stock = stockOf(market, commodityId);
   if (stock === undefined) return { ok: false, reason: 'unknown-commodity' };
   if (units === 0) return { ok: true, poe: 0, units: 0 };
-
-  const lot = lotOf(ship.cargo, commodityId);
-  if (lot === undefined || lot.units < units) return { ok: false, reason: 'insufficient-cargo' };
+  if (isCannonBall(commodityId) && !firesCannonBall(ship, commodityId)) {
+    return { ok: false, reason: 'wrong-cannon-ball-size' };
+  }
+  if (heldUnitsOf(ship, commodityId) < units) return { ok: false, reason: 'insufficient-cargo' };
   if (stock.units + units > balance.maxStockUnits) {
     return { ok: false, reason: 'market-stock-full' };
   }
 
   const poe = units * stock.buyPricePoe;
   stock.units += units;
-  releaseLot(ship.cargo, lot, units);
+  withdrawUnits(ship, commodityId, units);
   pirate.poe += poe;
   return { ok: true, poe, units };
+}
+
+function firesCannonBall(ship: ShipState, commodityId: CommodityId): boolean {
+  return commodityId === cannonBallOf(shipClassOf(ship.shipClass).cannonSize);
+}
+
+function depositUnits(ship: ShipState, commodityId: CommodityId, units: number): void {
+  if (isShipSupply(commodityId)) {
+    if (isCannonBall(commodityId)) ship.cannonballs += units;
+    else ship.rum += units;
+    return;
+  }
+  stowLot(ship.cargo, commodityId, units);
+}
+
+function heldUnitsOf(ship: ShipState, commodityId: CommodityId): number {
+  if (isShipSupply(commodityId)) return isCannonBall(commodityId) ? ship.cannonballs : ship.rum;
+  return lotOf(ship.cargo, commodityId)?.units ?? 0;
+}
+
+function withdrawUnits(ship: ShipState, commodityId: CommodityId, units: number): void {
+  if (isShipSupply(commodityId)) {
+    if (isCannonBall(commodityId)) ship.cannonballs -= units;
+    else ship.rum -= units;
+    return;
+  }
+  const lot = lotOf(ship.cargo, commodityId);
+  if (lot !== undefined) releaseLot(ship.cargo, lot, units);
 }
 
 function openingStockOf(
