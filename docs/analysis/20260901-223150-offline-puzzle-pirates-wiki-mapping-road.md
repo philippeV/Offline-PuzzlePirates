@@ -1995,7 +1995,7 @@ pillaged or foraged during a voyage go to the booty chest.**
 | -- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 86 | A ship carries a `bootyCargo` chest distinct from its `cargo` hold                    | `bootyPoe` already stood beside `poe` for exactly this reason — coin taken is not coin owned until it is divided. Goods needed the same pair, and without it `booty.divide` had nothing to divide but coin                                        |
 | 87 | Plunder enters the chest; division is the only thing that moves it to the hold        | It makes division a real event rather than a coin transfer, and it is what makes "sell what you pillaged" require porting first — the loop the wiki describes. `market.sell` sells from the hold, so plunder is unsellable until it is divided     |
-| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both — in grams since decision 103, because flooring each array's kilograms apart made division gain a kilogram |
+| 88 | The chest and the hold draw on one mass budget                                        | The wiki shares the hold's mass and volume limits with the booty chest, so a full hold cannot take on plunder. `freeHoldOf` counts both, which also makes division mass-neutral and removes any need for a capacity check when the chest empties   |
 | 89 | `booty.divide` is refused only when the chest holds neither coin nor goods            | The first guard tested `bootyPoe` alone, so a chest holding goods but no coin was undividable and its goods were stranded. A roll can pay no coin, so the case is reachable                                                                       |
 
 **Schema 5 was extended rather than bumped again.** It is unreleased — PR 5 is open and unmerged —
@@ -2275,12 +2275,13 @@ number of ticks in port clearing either. Porting now settles the battle on its w
 means a pillage won on the last leg pays its plunder into the chest at the dock instead of on the next
 voyage's first tick.
 
-**Decision 88's justification was wrong, and its text is corrected above rather than annotated.** The
-claim was that a shared budget makes division mass-neutral and so needs no capacity check. Mass was
-floored per lot array, so merging the chest into the hold re-floored the combined sum and could gain a
-kilogram — `small-cannon-ball` at 7100 g being the only commodity with a gram remainder to lose, and
-both buyable and plunderable. The premise survives and the conclusion does too, but only once the
-budget is counted the way decision 103 counts it.
+**Decision 88's justification was wrong, and it is corrected here rather than by editing its row,
+per the append-don't-rewrite convention.** The claim was that a shared budget makes division
+mass-neutral and so needs no capacity check. Mass was floored per lot array, so merging the chest
+into the hold re-floored the combined sum and could gain a kilogram — `small-cannon-ball` at 7100 g
+being the only commodity with a gram remainder to lose, and both buyable and plunderable. Decision
+103 counts that budget in grams and floors it once, so division is mass-neutral in fact: the premise
+survives and the conclusion does too, but neither was true as stated until decision 103 made it so.
 
 **The kilogram was never really invented at the division, and that is worth knowing before the market
 is touched.** With the budget in grams, the review's own reproduction — 3 cannon balls and 13429 kg of
@@ -2589,3 +2590,47 @@ One development slice, against the existing branch and PR 9. It is done when a c
 cannot survive a voyage by more than the tick it concluded in, that property is asserted by the test
 that used to assert its opposite, the predicate's name matches what it tests, and the three
 folded-in items are closed. `npm run check` green from cold.
+
+### 2026-09-03 — development, slice 4c repair: letting a concluded battle clear (OPP-16), PR 9, cycle 1
+
+Decisions 126 to 131, on the existing branch and PR 9. Two lines left `concludedEncounterOf` and one
+took their place, and the predicate is again byte-for-byte the one on base `22ec18e`: there is a
+voyage and the battle is concluded. `settleConcludedEncounter` and its call from `port()` are new in
+this slice and stay — they simply became unowned-tolerant with the predicate. Both names now say what
+they test, per decision 127, and both are reached by direct module import, so the rename touched
+`world/dispatch.ts` and nothing else.
+
+**The repair was measured, not asserted.** Restoring decision 102's `sailed` lines fails exactly one
+test — the rewritten one — and no other. `tests/world/encounter.test.ts` now asserts the property the
+wedge test denied: a concluded battle the voyage never sailed into is settled onto its own berthed
+hull, the brigand is struck off, `state.battle` is null, the plunder materialises onto that hull, and
+the voyage sails on the next tick. Its name changed with it.
+
+**The two undefended guarantees are defended, and were confirmed the same way.** Hoisting
+`settleConcludedEncounter` above every guard in `port()` now fails one test, and renaming
+`refused('unknown-ship')` at all three of its sites fails one test. The write-order test refuses a
+porting from the open-water league index with an owned concluded battle standing, and asserts both
+the `not-at-island` reason and that the battle and the brigand hull survived the command that failed
+— a settle that ran before the guard would clear both. The reason test dispatches all three commands
+that can reach the guard, charting, trading and dividing, against a ship id the fleet does not hold.
+
+**Decision 88's row is back as it was written, and its correction had to be reworded, which decision
+131 did not literally ask for.** The correction paragraph already sat where decisions 31 and 39 put
+theirs — in the prose of the entry that found the error — but its lead sentence announced the
+in-place edit itself, so restoring the row would have left the document asserting an edit that no
+longer exists. It now states the correction on its own terms and hands the fix to decision 103. The
+two live citations resolve against row 88's text again.
+
+**`ISSUES.md`'s headline count is 435, not 417.** The 2026-09-02 slice 4c entry's own prose still
+describes `stepWorld` settling only a battle the voyaging ship stands in. That is what was true when
+it was written and it is left as written, per this document's append-don't-rewrite rule; this entry
+is where that behaviour is withdrawn.
+
+**PR 9 no longer merged cleanly, and this is documentation only.** PR 6 landed on `agent/develop`
+after the review ran, and both `ISSUES.md` and this document take their entries at the top, so both
+conflicted. `agent/develop` was merged into the feature branch and the two files resolved by keeping
+both sides' sections in date order; no production file was involved. PR 7 and PR 8 are still moving
+against the same two files, so the test stage should expect to do this again.
+
+`npm run check` green from cold at 437 tests, up from 435 — the two new tests, the rewrite replacing
+one in place.

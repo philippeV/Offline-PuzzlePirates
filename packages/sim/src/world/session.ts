@@ -9,23 +9,22 @@ import { stepVoyage } from './voyage.ts';
 export function stepWorld(state: WorldState): SimEvent[] {
   if (state.voyage === null) return [];
 
-  const encounter = ownedEncounterOf(state);
+  const encounter = concludedEncounterOf(state);
   if (encounter === null) return stepVoyage(state);
   return settleEncounter(state, encounter);
 }
 
-export function settleOwnedEncounter(state: WorldState): SimEvent[] {
-  const encounter = ownedEncounterOf(state);
+export function settleConcludedEncounter(state: WorldState): SimEvent[] {
+  const encounter = concludedEncounterOf(state);
   if (encounter === null) return [];
   return settleEncounter(state, encounter);
 }
 
-function ownedEncounterOf(state: WorldState): BattleState | null {
+function concludedEncounterOf(state: WorldState): BattleState | null {
   const voyage = state.voyage;
   const battle = state.battle;
   if (voyage === null || battle === null || battle.outcome === 'running') return null;
-  const sailed = battle.ships.some((berth) => berth.shipId === voyage.shipId);
-  return sailed ? battle : null;
+  return battle;
 }
 
 function settleEncounter(state: WorldState, battle: BattleState): SimEvent[] {

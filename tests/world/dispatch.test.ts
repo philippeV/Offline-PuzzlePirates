@@ -20,6 +20,7 @@ const DESTINATION: IslandId = 'doyle';
 const UNCOLONIZED_ISLAND: IslandId = 'edgars-choice';
 const UNKNOWN_ISLAND = 'sirius' as IslandId;
 const UNKNOWN_COMMODITY = 'kraken-ink' as CommodityId;
+const UNKNOWN_SHIP_ID = 404;
 const LEGS_TO_DESTINATION = 2;
 const OPEN_WATER_LEG_INDEX = 1;
 const TRADED_COMMODITY: CommodityId = 'small-cannon-ball';
@@ -413,4 +414,68 @@ test('porting in open water between two islands is refused as no island at all',
   assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.port' })), 'not-at-island');
   assert.notEqual(state.voyage, null);
   assert.equal(state.pirate?.atIslandId, null);
+});
+
+test('a ship the fleet does not hold is refused by name, charting, trading or dividing', () => {
+  const [state] = startedWorldOf();
+
+  assert.equal(
+    reasonOf(
+      applyWorldCommand(state, {
+        op: 'voyage.chart',
+        shipId: UNKNOWN_SHIP_ID,
+        toIslandId: DESTINATION,
+        voyageType: 'trade',
+      }),
+    ),
+    'unknown-ship',
+  );
+  assert.equal(
+    reasonOf(
+      applyWorldCommand(state, {
+        op: 'market.buy',
+        shipId: UNKNOWN_SHIP_ID,
+        commodityId: TRADED_COMMODITY,
+        units: TRADED_UNITS,
+      }),
+    ),
+    'unknown-ship',
+  );
+  assert.equal(
+    reasonOf(applyWorldCommand(state, { op: 'booty.divide', shipId: UNKNOWN_SHIP_ID })),
+    'unknown-ship',
+  );
+});
+
+test('a refused porting settles nothing, so the battle outlives the command that failed', () => {
+  const [state, ship] = startedWorldOf();
+  assert.equal(
+    applyWorldCommand(state, {
+      op: 'voyage.chart',
+      shipId: ship.id,
+      toIslandId: DESTINATION,
+      voyageType: 'pillage',
+    }).status,
+    'accepted',
+  );
+  const voyage = state.voyage;
+  assert.ok(voyage !== null);
+  voyage.legIndex = OPEN_WATER_LEG_INDEX;
+  const brigand = createShip(state, { shipClass: 'sloop', allegiance: 'brigand' });
+  state.ships.push(brigand);
+  state.battle = createBattle(
+    [
+      { shipId: ship.id, x: 1, y: 1, facing: 'north' },
+      { shipId: brigand.id, x: 1, y: 20, facing: 'south' },
+    ],
+    false,
+  );
+  state.battle.outcome = 'player-won';
+
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.port' })), 'not-at-island');
+  assert.equal(state.battle?.outcome, 'player-won');
+  assert.deepEqual(
+    state.ships.map((hull) => hull.id),
+    [ship.id, brigand.id],
+  );
 });

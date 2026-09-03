@@ -213,7 +213,7 @@ precedent. `npm run check` was re-run from cold at 435/435.
 
 The three world defects the review and the physical test of PR 5 queued are closed: porting settles a
 concluded battle the voyage owns, `stepWorld` settles only a battle the voyaging ship stands in, and
-the shared mass budget is counted in grams and floored once. `npm run check` is 417/417 exit 0 from
+the shared mass budget is counted in grams and floored once. `npm run check` is 435/435 exit 0 from
 cold. What follows is what closing them turned up.
 
 ### The hold under-accounts a purchase, and that is where the kilogram is really invented

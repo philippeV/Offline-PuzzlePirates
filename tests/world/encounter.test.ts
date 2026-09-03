@@ -250,7 +250,7 @@ test('a lost battle pays no cargo but still strikes the brigand off', () => {
   assert.deepEqual(player.cargo, []);
 });
 
-test('a concluded battle the voyage never sailed into is left where it stands', () => {
+test('a concluded battle the voyage never sailed into is settled onto its own berthed hull', () => {
   const state = sailingState(SEED, 'evade');
   const sailing = state.ships[0];
   assert.ok(sailing !== undefined);
@@ -267,15 +267,19 @@ test('a concluded battle the voyage never sailed into is left where it stands', 
   );
   state.battle.outcome = 'player-won';
 
-  assert.deepEqual(stepWorld(state), []);
+  const events = stepWorld(state);
 
-  assert.equal(state.battle?.outcome, 'player-won');
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, 'cargo.plundered');
+  assert.equal(state.battle, null);
   assert.deepEqual(
     state.ships.map((ship) => ship.id),
-    [sailing.id, moored.id, brigand.id],
+    [sailing.id, moored.id],
   );
-  assert.equal(moored.bootyCargoUnits, BOOTY_CARGO_UNITS);
-  assert.deepEqual(moored.bootyCargo, []);
+  assert.equal(moored.bootyCargoUnits, 0);
+  assert.equal(moored.bootyCargo.length, 1);
+
+  stepWorld(state);
   assert.equal(state.voyage?.legTicks, 1);
 });
 
