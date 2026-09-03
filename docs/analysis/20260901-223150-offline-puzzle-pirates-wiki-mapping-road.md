@@ -2364,3 +2364,78 @@ already load-bearing, untouched. Switching scenarios would be a stronger test an
 it is not done here.
 
 `npm run check` green from cold at 435 tests, up from 412 at the `agent/develop` tip.
+
+### 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 0
+
+Four lenses run separately against the branch. `npm run check` was re-run from cold rather than
+taken from the PR: green at 435 tests. One finding blocks; fourteen are in `ISSUES.md` under the
+matching dated heading.
+
+**Blocking: decision 102 removes the only path that ever cleared a concluded battle.**
+`settleEncounter` at `packages/sim/src/world/session.ts:41` is the sole writer of
+`state.battle = null` in the whole of `packages/` — the field has exactly three writers, the other
+two being the two places a battle starts. Decision 102 gates that single clear behind
+`ownedEncounterOf`, so a concluded battle whose berths do not include `voyage.shipId` is cleared by
+nothing: not `stepWorld`, not `voyage.port`, not any later voyage.
+
+It is reachable through public commands. Commission two player sloops and a brigand, chart on the
+second player ship, then `battle.start` — which picks the *first* player ship
+(`packages/sim/src/battle/dispatch.ts:41`) — and conclude it. The berths no longer contain the
+voyaging ship. Run one tick on that state and, on this branch, the battle is still standing (the
+same object, still `player-won`); on `22ec18e` it is `null`, because the old guard settled any
+concluded battle while a voyage ran, and settled it onto the correct hull, since `settleEncounter`
+resolves the player from the battle's own berths rather than from the voyage.
+
+The consequence is that the pillage loop dies silently. `packages/sim/src/world/encounter.ts:38`
+suppresses spawning on *any* non-null battle, concluded or not — measured at the same league point,
+base spawns two events where this branch spawns none — and `packages/sim/src/battle/dispatch.ts:40`
+refuses `battle.start` with `battle-already-running` for the rest of the session. The orphaned
+brigand hull is never struck off, and the stale battle rides in the canonical hash and every save.
+It is bounded in size, so a wedge rather than unbounded growth.
+
+Decision 102's recorded rationale rejects provenance because it "would strand a hand-started
+mid-voyage battle in hashed state for good". The predicate that shipped strands exactly that class
+whenever the hand-started battle's player berth is not the voyaging ship, so the rationale asserts
+a property the code does not have. `tests/world/encounter.test.ts:253` builds precisely this state
+and pins `stepWorld` returning `[]` — a good test of the intended narrowing that nonetheless locks
+in the permanent strand, because it asserts nothing about the battle ever clearing.
+
+This returns to analysis rather than straight to development because the repair is a decision:
+something has to clear an unowned concluded battle, and the options differ in what they pay out.
+Settling it onto its own berthed player — which `settleEncounter` already does correctly — honours
+both decision 101's goal and decision 83's words. Clearing it without paying plunder is also
+defensible. Either way the escape has to exist, be recorded, and be tested; and decision 102's
+rationale sentence needs correcting whichever is chosen.
+
+**What the review confirms, so no later stage need redo it.** The three defects slice 4 queued are
+genuinely closed, and none by a test that pins the old behaviour. Decision 101's write order is
+correct: all five refusals in `port()` return before `settleOwnedEncounter`. Double settlement is
+impossible — `settleEncounter` nulls the battle, `port` nulls the voyage, and commands never run
+inside a tick. Decision 103's arithmetic errs in the safe direction, since
+`floor((h+c)/1000) >= floor(h/1000) + floor(c/1000)` always: the new count is stricter by at most a
+kilogram and no caller can be pushed over a hold's stated limit. Event order is safe for replay,
+because `hash()` and `save()` serialise state and state holds no event log. Decision 102 is a
+legitimate reading of decision 83 — the fault is in its rationale and its missing escape, not in
+the reinterpretation — and settling from inside a command matches precedent set by
+`battle.disengage`.
+
+**Two gaps confirmed by mutation, both recorded as non-blocking.** Hoisting `settleOwnedEncounter`
+above every guard in `port()` passes 435 of 435, so decision 101's write-order guarantee — the
+property the decision turns on — is defended by no test. And renaming every
+`refused('unknown-ship')` in `world/dispatch.ts` passes 435 of 435, so the rejection-union sweep
+this slice performed missed a reason at all three of its world-dispatcher sites.
+
+**A note on this document's own conventions.** Decision 88's rationale was edited in place. The
+document states the append-don't-rewrite rule twice, at lines 996 and 1783, and has followed it
+every previous time a decision's reasoning was found wanting — decisions 31 and 39 both kept their
+original rows with the correction appended. Two live citations now quote text that no longer exists
+in row 88. The blocking repair will reopen this branch anyway, so restoring row 88 and letting the
+correction plus decision 103 carry the fix costs nothing extra and keeps the record readable
+backwards.
+
+**Ownership is now a concept in one place and not the other three.**
+`packages/sim/src/world/dispatch.ts:76`, `world/voyage.ts:57` and `world/encounter.ts:38` still read
+raw `state.battle`, so an unrelated ship's *running* battle still freezes a voyage and refuses its
+port. Not a regression — those predicates are unchanged — but decision 102 introduces the ownership
+rule and these three contradict it. They sit next to the blocking repair and should be decided with
+it rather than by omission.

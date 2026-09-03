@@ -4,6 +4,163 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — independent review of slice 4c (OPP-16), PR 9
+
+Four-lens review of the settlement guard, the division budget and the dispatcher's tests. One
+blocking finding went back to analysis as cycle 1: decision 102 removes the only path that ever
+cleared a concluded battle, so an unowned one stands forever and silently kills encounter spawning
+and `battle.start` for the rest of the session. What follows is everything else — judged not worth
+stopping the pipeline for, with when it starts to matter.
+
+Two of these were confirmed by injecting the fault and watching the suite stay green, so they are
+gaps in what the tests defend rather than opinions about them.
+
+### Guarantees the suite does not defend
+
+- **Decision 101's write-order guarantee is undefended.** Hoisting
+  `const settled = settleOwnedEncounter(state);` from `packages/sim/src/world/dispatch.ts:84` to
+  immediately after the `no-voyage-running` guard passes **435 of 435**. No test constructs a
+  *refused* port with a concluded owned battle in state: the `not-at-island` test
+  (`tests/world/dispatch.test.ts:398`) has `state.battle === null`, the `battle-running` test
+  (`:335`) uses a running battle for which `settleOwnedEncounter` returns `[]` anyway, and
+  `no-voyage-running` has no voyage. The mutant would settle the battle, strike the brigand off
+  `state.ships`, materialise plunder into the chest and then return `{status:'rejected'}` — a
+  rejected command that mutated hashed state, which is the exact class this slice exists to close.
+  One test closes it: an owned concluded battle plus `legIndex` at the open-water index, asserting
+  `not-at-island` **and** `state.battle` unchanged.
+- **`unknown-ship` is unasserted at all three world-dispatcher sites.** Changing every
+  `refused('unknown-ship')` in `packages/sim/src/world/dispatch.ts` (lines 51, 106, 136) to a
+  different reason passes **435 of 435**. Every world command in the suite is dispatched with a
+  real `ship.id`, and the repo's only `unknown-ship` assertion
+  (`tests/harness/battle.test.ts:248`) exercises the *battle* dispatcher. The slice's sweep of the
+  rejection union describes finding `not-at-island` as the ninth survivor; it missed this one, and
+  it is the same "asserted somewhere, assumed asserted everywhere" shape the sweep was written to
+  catch. Also still unexercised: `charter`'s pass-through `refused(charted)` at `dispatch.ts:54`,
+  and `port`'s first `not-at-island` at `:79`, whose `pointId === undefined` arm no fixture reaches.
+
+### Tests that pass for a weaker reason than they appear to
+
+- **The crew-cut test the analysis says was repaired was not touched.** The entry states the test
+  "now divides 1003 PoE against literal expected values of 250 and 301 rather than production's
+  formula" — that describes the **new** test at `tests/world/dispatch.test.ts:172`. The one it
+  names still exists untouched at `tests/world/division.test.ts:83-96`, with both original defects:
+  it recomputes its expectation with production's own formula, and `CHEST_POE = 1000` against 250‰
+  and 400‰ divides exactly, so `floor`, `ceil` and `round` all agree. The repo now carries two
+  crew-cut tests, one strong and one worthless, in different files — and a developer opening
+  `division.test.ts` finds the bad pattern. The recompute should go; the
+  `crewCut + pirateShare + crewShare === CHEST_POE` invariant on line 95 is genuine and worth
+  keeping.
+- **The test named for decision 103 asserts that zero equals zero.**
+  `tests/world/division.test.ts:126-134` fills a 13 500 kg sloop to exactly 13 500 000 g, so
+  `freeHoldOf` is `0` before the division and `0` after. It does kill the target mutant — the old
+  floor-twice code gives `13499`, hence `1` before and `0` after — but it survives anything that
+  pushes both sides past the `Math.max(…, 0)` clamp. Dropping the filler by ~100 units would put
+  both sides at a non-zero value and make it a measurement rather than a coincidence.
+- **`tests/world/division.test.ts:136-146` compares production with itself.**
+  `assert.deepEqual(boughtOneHempOf(undivided, …), boughtOneHempOf(divided, …))` asserts the two
+  sides agree, never what the answer is; both are `{status:'rejected', reason:'hold-full'}` today.
+  Deleting the `hold-full` guard in `buyCommodity` outright leaves both sides an identical
+  `accepted` and the test still passes. The guard is covered elsewhere
+  (`tests/world/market.test.ts:284`), so nothing is unprotected — but the test that names the hold
+  is not the one defending it. One added line asserting the literal outcome removes the
+  self-reference.
+- **Both new settlement tests port from leg 0**, i.e. the island the voyage departed
+  (`tests/world/encounter.test.ts:282-311` and `:313-338`). `sailingState` leaves `legIndex` at 0,
+  so `assert.equal(state.pirate?.atIslandId, 'alkaid')` coincides with the origin, and a mutant
+  hard-coding the ported island to the voyage's origin passes both. It dies at
+  `tests/world/dispatch.test.ts:104`, so the property is covered — but the two tests written for
+  decision 101 never exercise an actual arrival, which is the state a settlement is meant to
+  accompany.
+- **One rounding mutant survives the sharpened crew-cut fixture.**
+  `tests/world/dispatch.test.ts:29-31` uses `CHEST_POE = 1003`, giving `floor(250.75) = 250` — which
+  kills `floor`→`round` — but `floor(301.2) = 301`, which `round` also produces. A chest whose two
+  remainders both exceed one half would kill `round` on both fields. `ceil` and the field swap are
+  correctly killed.
+- **Decision 102's leak is pinned for `stepWorld` but not for `port`.**
+  `tests/world/encounter.test.ts:253` is a good test of the narrowing — the `legTicks` assertion
+  distinguishes "settled silently" from "stepped the voyage" — but `settleOwnedEncounter` has a
+  second caller and nothing drives an unowned concluded battle through `voyage.port`. Dropping the
+  ownership predicate at that call site alone would pass the suite.
+
+### Ownership is a concept in one place and not the other three
+
+- `packages/sim/src/world/dispatch.ts:76`, `packages/sim/src/world/voyage.ts:57` and
+  `packages/sim/src/world/encounter.ts:38` all still read raw `state.battle`:
+
+  ```ts
+  if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
+  ```
+
+  So while one ship's hand-started battle is *running*, an unrelated ship's voyage neither advances
+  nor may port, and spawns nothing — for a fight `stepWorld` now declares none of its business. Not
+  a regression, since both predicates are unchanged, but decision 102 introduces the ownership rule
+  and these three sites contradict it. A single `ownedEncounterOf`-shaped predicate would serve all
+  four, and this wants deciding deliberately rather than by omission — it is adjacent to the
+  blocking finding and will likely be touched by the same repair.
+
+### The harness boundary test
+
+- **`tests/harness/world-commands.test.ts` should have switched to `pillage-loop`.** The judgement
+  call was flagged deliberately, and the reasoning against it is sound as far as it goes, but the
+  file is the **only** place in the repo that sends a world command over the wire — everything else
+  drives the loop in-process through `createScenarioSim`. Its unique job is the boundary contract,
+  and the pinned refusals cannot test it, because every one of the six fires *before* its payload is
+  read: `world.start` bails at `balance-missing` before `isIslandId`, and the other five bail at
+  `world-not-started`, the first line of their handler. `islandId`, `shipId`, `commodityId` and
+  `units` are all inert, so a parser that accepted the schema and then dropped `units` passes all
+  six. Five of the six expect the same reason, so the router is unpinned too — routing
+  `voyage.port` into `divide()` still yields `world-not-started`. The stated cost is smaller than
+  feared: `PILLAGE_LOOP_SCENARIO` is already exported from `packages/harness/src/index.ts`, and the
+  malformed half of the file shares only `harness`, `session` and `dispatch`. Two riders if it is
+  switched: the six tests share one mutable session created in `before()` and are order-independent
+  only because nothing currently mutates, so per-test sessions become necessary; and
+  `{ op: 'market.sell', …, units: 0 }` on line 18 is an accepted no-op under a started world.
+
+### The analysis record
+
+- **Decision 88's rationale was edited in place**, against the convention this document states
+  twice — "per the append-don't-rewrite convention" (line 996) and "this document appends rather
+  than rewrites" (line 1783) — and follows everywhere else. Decision 31's rationale was found false
+  and decision 39's needed amending; both original rows still stand, with the correction appended.
+  This is the first row overwritten. Two live citations now quote text that no longer exists in
+  row 88: line 2128 ("makes division mass-neutral and removes any need for a capacity check when
+  the chest empties") and decision 103's own rationale at line 2268 ("which is what decision 88
+  asserted without it being so"). The slice entry announces the edit but does not name the
+  convention it overrides or why. Restoring 88's original text and letting the correction plus
+  decision 103 carry the fix would match how 31 and 39 were handled.
+- **`ISSUES.md`'s own headline count is stale.** Line 11 says `npm run check` is 417/417; that was
+  true at `cd8834d`, before the last two commits added 18 tests. The analysis document says 435,
+  and 435 is what the suite reports.
+
+### An invariant that drifted out from under this change
+
+- **`tests/world/soak.test.ts:164-166` no longer matches the definition it guards.**
+
+  ```ts
+  function ladenKgOf(ship: ShipState): number {
+    return ship.cargoUnits + ship.bootyCargoUnits + cargoLotsMassKgOf(ship.cargo);
+  }
+  ```
+
+  `freeHoldOf` now charges `stowedMassKgOf(ship.cargo, ship.bootyCargo)` — both arrays, floored
+  once — while `ladenKgOf` omits `bootyCargo` entirely and floors the hold alone, so `breachesOf`'s
+  `laden > capacity` check cannot see chest mass at all. The drift began when the chest joined the
+  budget in slice 4, but decision 103 is what makes it visibly wrong, and this is the one invariant
+  that would otherwise catch the over-capacity state `ISSUES.md` already documents.
+
+### Verified sound, recorded so the next review need not redo it
+
+The three defects slice 4 queued are genuinely closed, none by a test that pins the old behaviour.
+Decision 101's write order is correct — all five refusals return before `settleOwnedEncounter`.
+Double settlement is impossible: `settleEncounter` nulls `state.battle` and `port` nulls
+`state.voyage`, and commands never run inside a tick. Decision 103's arithmetic errs safely —
+`floor((h+c)/1000) >= floor(h/1000) + floor(c/1000)` always, so the new count is stricter and no
+caller can be pushed over a hold's limit; both callers are comparisons and the numbers stay three
+orders of magnitude inside `MAX_SAFE_INTEGER`. Event order is safe for replay, because `hash()` and
+`save()` serialise state, which holds no event log, and `SCHEMA_VERSION` is unchanged. Decision 102
+is a legitimate reading of decision 83, and settling from inside a command matches existing
+precedent. `npm run check` was re-run from cold at 435/435.
+
 ## 2026-09-02 — development of slice 4c (OPP-11), the settlement guard and the division budget
 
 The three world defects the review and the physical test of PR 5 queued are closed: porting settles a
