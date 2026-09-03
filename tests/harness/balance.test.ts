@@ -23,6 +23,7 @@ const BLOCK_KEYS: Record<string, string[]> = {
     'pufferSpawnPerMille',
     'crabSpawnPerMille',
     'jellySpawnPerMille',
+    'tokenSpawnPerMille',
     'crabPointsAtFullWater',
     'pufferPointsPerCell',
     'jellyPointsPerCell',
@@ -127,6 +128,10 @@ test('the loaded balance carries every declared block and no file metadata', () 
   for (const [name, keys] of Object.entries(BLOCK_KEYS)) {
     assert.deepEqual(Object.keys(BLOCKS[name] ?? {}).sort(), [...keys].sort(), name);
   }
+});
+
+test('the loaded balance carries the bilging token spawn rate declared in the file', () => {
+  assert.equal(BALANCE.bilging.tokenSpawnPerMille, 120);
 });
 
 test('the loaded balance survives hashing and carries no file metadata', () => {

@@ -22,6 +22,7 @@ export interface PuzzleState {
   intervalTick: number;
   totalScore: number;
   moves: number;
+  maneuverBar: number;
   bilgePerMille: number;
   bilgeAccumulator: number;
   waterLineRow: number;
@@ -42,6 +43,7 @@ export function startBilging(state: WorldState, balance: BilgingBalance): Puzzle
     intervalTick: 0,
     totalScore: 0,
     moves: 0,
+    maneuverBar: 0,
     bilgePerMille: 0,
     bilgeAccumulator: 0,
     waterLineRow: waterLineRowOf(board.height, 0),

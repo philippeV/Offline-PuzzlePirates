@@ -5,13 +5,17 @@ import {
   BILGE_CRITTER_STREAM,
   BILGE_FILL_STREAM,
   BILGE_REFILL_STREAM,
+  BILGE_TOKEN_STREAM,
   DRIFT_STREAM,
   Sim,
+  ratingOf,
 } from '../../packages/sim/src/index.ts';
 import { BALANCE, bilgingSim, clearingSwapOf, puzzleOf } from './fixtures.ts';
 
 const TICKS_PER_MOVE = 13;
 const MOVES = 5;
+const GOOD_BAND_INDEX = 2;
+const GOOD_OUTPUT = BALANCE.bilging.ratingBandsPerMille[GOOD_BAND_INDEX] ?? 0;
 
 function runScript(seed: number): Sim {
   const sim = bilgingSim(seed);
@@ -40,6 +44,7 @@ test('stepping a bilging session draws only from the drift stream', () => {
   assert.equal(sim.state.rngStreams[BILGE_FILL_STREAM]?.draws, fillDraws);
   assert.equal(sim.state.rngStreams[BILGE_REFILL_STREAM], undefined);
   assert.equal(sim.state.rngStreams[BILGE_CRITTER_STREAM], undefined);
+  assert.equal(sim.state.rngStreams[BILGE_TOKEN_STREAM], undefined);
 });
 
 test('a sim with no puzzle running leaves no bilge cursor in state', () => {
@@ -57,4 +62,23 @@ test('drawing from the refill stream does not shift the fill stream', () => {
 
   assert.ok((sim.state.rngStreams[BILGE_REFILL_STREAM]?.draws ?? 0) > 0);
   assert.deepEqual({ ...sim.state.rngStreams[BILGE_FILL_STREAM] }, fillBefore);
+});
+
+test('drawing from the token stream does not shift the refill draw order', () => {
+  const withheld = bilgingSim(0xc0ffee);
+  const spawning = bilgingSim(0xc0ffee);
+  const puzzle = puzzleOf(spawning);
+  puzzle.dutyOutputPerMille = GOOD_OUTPUT;
+  const swap = clearingSwapOf(puzzleOf(withheld).board);
+
+  assert.equal(ratingOf(GOOD_OUTPUT, BALANCE.bilging), 'good');
+  assert.equal(withheld.dispatch({ op: 'bilge.swap', ...swap }).status, 'accepted');
+  assert.equal(spawning.dispatch({ op: 'bilge.swap', ...swap }).status, 'accepted');
+
+  assert.equal(withheld.state.rngStreams[BILGE_TOKEN_STREAM]?.draws, 0);
+  assert.ok((spawning.state.rngStreams[BILGE_TOKEN_STREAM]?.draws ?? 0) > 0);
+  assert.deepEqual(
+    { ...spawning.state.rngStreams[BILGE_REFILL_STREAM] },
+    { ...withheld.state.rngStreams[BILGE_REFILL_STREAM] },
+  );
 });

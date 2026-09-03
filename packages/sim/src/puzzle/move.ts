@@ -13,6 +13,7 @@ import {
 } from './resolve.ts';
 import { PER_MILLE, chainScoreOf, comboScoreOf, crabScoreOf } from './scoring.ts';
 import type { PuzzleState } from './session.ts';
+import { BILGE_TOKEN_STREAM, MANEUVER_BAR_GOLD, SHAPES_PER_PAIR } from './tokens.ts';
 
 export function applyBilgeMove(
   state: WorldState,
@@ -27,6 +28,7 @@ export function applyBilgeMove(
 
   puzzle.moves += 1;
   puzzle.totalScore += points;
+  puzzle.maneuverBar = Math.min(puzzle.maneuverBar + pairsOf(steps), MANEUVER_BAR_GOLD);
   recordMove(puzzle.frame, points);
   return [
     moved,
@@ -46,6 +48,10 @@ export function stepPointsOf(step: ResolveStep, context: ResolveContext): number
   return clearPointsOf(step, context) + crabs;
 }
 
+function pairsOf(steps: ResolveStep[]): number {
+  return steps.reduce((total, step) => total + step.pairedCells.length / SHAPES_PER_PAIR, 0);
+}
+
 function resolveContextOf(
   state: WorldState,
   balance: BilgingBalance,
@@ -54,14 +60,17 @@ function resolveContextOf(
   const colourCount = colourCountOf(balance, puzzle.starLevel);
   const colours = rngStream(state.seed, state.rngStreams, BILGE_REFILL_STREAM);
   const critters = rngStream(state.seed, state.rngStreams, BILGE_CRITTER_STREAM);
+  const tokens = rngStream(state.seed, state.rngStreams, BILGE_TOKEN_STREAM);
   return {
     balance,
     rules: BILGE_RULES,
     starLevel: puzzle.starLevel,
     waterLineRow: puzzle.waterLineRow,
     bilgePerMille: puzzle.bilgePerMille,
+    dutyOutputPerMille: puzzle.dutyOutputPerMille,
     drawColour: () => colours.nextIntInRange(0, colourCount),
     drawCritter: () => critters.nextIntInRange(0, PER_MILLE),
+    drawToken: () => tokens.nextIntInRange(0, PER_MILLE),
   };
 }
 

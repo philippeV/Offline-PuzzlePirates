@@ -1915,6 +1915,101 @@ worktree recipe that works is to copy the main checkout's `node_modules` **inclu
 omitting it costs a run on `tsc is not recognized` — then replace `node_modules/@opp` with three
 junctions pointing at that worktree's own `packages/`.
 
+### 2026-09-02 — development, slice 2c (OPP-14)
+
+The bonus-shape token layer and the maneuver meter, on
+`agent/feature/20260902-094000-opp-slice-2c-bilging-token-layer`, branched from the slice 2b head
+`af6d428` rather than from `agent/develop`: slice 2b is still in the test stage and `agent/develop`
+is at `eca8058`, which has no critters and no star levels to hang a token layer off. The task file
+sanctions the unmerged base explicitly.
+
+**The representation, decided before the adjacency rule was written**, because decision 58 gated
+this slice on it and everything else follows from it.
+
+**Decisions taken on the goal's behalf.**
+
+| #  | Decision                                                                                              | Rationale                                                                                                                                                                                                                                             |
+| -- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 61 | Bonus halves live in a parallel `shapes: number[]` on `Board`, indexed exactly like `cells`             | `BoardCell` stays a bare number, so colours 0-15, empty at -1 and the three critter sentinels keep the meanings decision 46 gave them, and every board test written against them still holds. Widening the encoding would re-partition a namespace that board, gravity, resolve, critters and the fixtures all read directly |
+| 62 | A shape is `symbol * 2 + half`, 0 to 7, and -1 for none                                                | The eight published shapes fit one small non-negative integer, so `canonicalJson`'s safe-integer guard covers the payload for free and no enum string reaches hashed state                                                                              |
+| 63 | Gravity carries the shapes inside `compactSegment` rather than replaying the permutation afterwards     | `applyGravity` returns `CellFall { row, distance }` with no column, so the permutation cannot be reconstructed from its result. One traversal that moves both arrays is the only version that cannot drift out of lockstep                              |
+| 64 | The schema goes to 4, with a real v3 to v4 migration and a committed v3 save fixture                   | `Board` gains a field, so every v3 save lacks it. Slices 1 and 2 both set the precedent that a migration is written only when a committed older-schema fixture exercises it                                                                             |
+| 65 | Token pieces spawn from a new `bilge.tokens` stream, after the critter pass, only onto refilled colour cells | Decision 52: draws on `bilge.refill` would shift the pinned refill order. Spawning after critters and only where `isColourCell` holds keeps a shape off a crab, a puffer and a jelly, so a shape never rides something that is not a bilge piece         |
+| 66 | The spawn rate is stated as a conditional rate in its `_sources` entry                                  | Decision 53's honesty rule, and the crab-rate lesson the slice 2b review left: a gate over a spawn band silently turns a flat stated rate into a lie. The draw happens only on a refilled colour cell while performance is good, and the entry says so   |
+| 67 | A pair is two orthogonally adjacent matching halves, resolved once per settle, ascending index order, each half consumed at most once | The wiki says only that the halves are "adjacent" and states no orientation. Requiring the top half directly above the bottom would be a stricter rule than the source gives, with no published pair rate to calibrate the difference against. Ascending index order makes the pass deterministic without a draw |
+| 68 | A "bonus piece" on the meter is one completed symbol, that is one removed pair                          | Halves come in twos, so the published "3 bonus pieces fill the bilge meter" is only coherent if the unit is the completed symbol, and the sloop's published 3 / 6 silver / gold bilge row reads the same way                                            |
+| 69 | The meter is the sloop's bilge bar alone, capped at the published gold 6, with no consumer               | The task scopes out what the meter feeds, and the wiki's full `ManeuverMeter` is per ship, per shape, across three duties. A cap keeps a long session bounded without inventing a consumer                                                             |
+| 70 | The published 3 and 6 live in code, not in `balance.json`                                               | Decisions 44 and 54: the file is for invented numbers, and a sourced value in it blurs the line it exists to draw                                                                                                                                      |
+
+**What is here.** `Board` carries a parallel `shapes` array indexed exactly like `cells`, and every
+place a piece moves carries its shape with it: `swapCells`, `clearCells`, `refillBoard`,
+`compactSegment` inside `applyGravity`, and `climbCrabs`. `tokens.ts` holds the two passes —
+`spawnTokens` writes a shape onto a refilled colour cell while the duty rating is good or better,
+and `clearShapePairs` removes both halves of every completed symbol and leaves the two pieces
+standing. `settleStep` runs them in that order after the critter spawn, and reports the removed
+shapes as `ResolveStep.pairedCells`; `applyBilgeMove` turns two removed shapes into one point on
+`PuzzleState.maneuverBar`, clamped at the published gold 6.
+
+**The one invented constant.** `bilging.tokenSpawnPerMille` at 120, and nothing else. The
+performance gate reuses the published rating `good` through `ratingOf`, rather than inventing a
+second threshold for a band the wiki already names.
+
+**The rate was measured, not guessed**, because the slice 2b review had just caught
+`crabSpawnPerMille` producing zero crabs — a gate over a spawn band silently turning a stated rate
+into a lie. Over 5 seeds by 400 clearing swaps, at 13 ticks a swap, with about 6.5 refilled colour
+cells per clearing swap:
+
+| rate | tokens per 100 swaps | pairs per 100 swaps | swaps to fill a sloop's 3-pair bar |
+| ---- | -------------------- | ------------------- | ---------------------------------- |
+| 60   | 37.25                | 0.90                | 333                                |
+| 120  | 71.70                | 2.90                | 103                                |
+| 180  | 113.25               | 6.40                | 47                                 |
+| 240  | 152.75               | 12.75               | 24                                 |
+
+At 60 the mechanic is dead — one bar per very long session. 120 fills silver in about 100 swaps and
+gold in about 207, and no seed is an outlier (10, 11, 10, 12, 15 pairs over 400 swaps). Pairs scale
+with roughly the square of the rate, as two shapes have to meet. The `_sources` entry states the
+conditionality and the measured yield in words, so the number cannot be read as a share of the
+board.
+
+**Correction to decision 66's premise, worth having.** The gate is real and tested but it is an
+opening delay rather than a throttle: over those same 2000 moves it was open on 1991 of them, the
+nine closed being the first swaps of each session while the rating climbs out of `booched`. Nobody
+should later read the wiki's "token pieces only spawn while performance is good" as a meaningful
+brake on a competent player. The wiki's other half of that sentence, "low score slows or stops token
+spawning", would need a graded rate to be true, and this slice does not have one.
+
+**A bug the token layer exposed, fixed here.** `climbCrabs` swapped a crab with the piece above it
+by writing `board.cells` directly, so once shapes existed the displaced piece left its shape behind
+on the crab's old square. Fixed in the same traversal.
+
+**The schema went to 4 with a migration that is genuinely exercised.** `packages/fixtures/saves/`
+gains `bilge-session-v3.json`, generated by driving the slice 2b head `af6d428` in a throwaway
+worktree rather than by relabelling a current save — the pre-existing `saveAtSchemaVersion` helper
+builds its older save from a current sim whose puzzle is null, so those three tests take the
+migration's pass-through branch and are vacuous with respect to the fields it exists to add. That is
+recorded in `ISSUES.md`, not fixed here.
+
+**Every re-blessed fixture was classified before it was touched**, per the golden-state skill: 2 ops
+on the scenario, 4 on the golden, and hash-trail-only changes on both replays. `marker-drift` needed
+re-recording for the schema bump alone. Nothing behavioural moved, and two things were verified
+directly against `af6d428` rather than argued: the opening board's `cells` are byte-identical, and
+`bilge.refill` ends at the identical cursor `{hi 1590756343, lo 3448896022, draws 12}` after the
+committed replay's command log. The only new stream is `bilge.tokens`.
+
+**What is left for the follow-up.** Nothing consumes the meter, by scope — and because nothing
+drains it, it saturates at gold after 66 to 166 swaps depending on seed and every later pair is
+discarded. That is correct for this slice and wrong the moment blockades exist. The wiki's real
+`ManeuverMeter` is per ship, per shape, across three duties with silver and gold tiers; this slice
+has one integer on the puzzle state. Both are in `ISSUES.md`.
+
+**Verified:** `npm run check` green from cold, 149 tests, up from 130 at the end of slice 2b — the
+dependency gate, the import gate, three typecheck projects, lint and the suite. The containment
+boundary is unmoved at 99987 accepted / 99988 refused, re-measured rather than assumed. `sim.step`
+still opens no puzzle stream, `bilge.tokens` included. Token draws do not shift the pinned
+`bilge.refill` order, asserted now by a test that runs the same seed and swap with the gate shut and
+open and compares the refill cursors.
+
 ### 2026-09-02 — development, slice 4 (OPP-11)
 
 The MVP loop is closed. A pirate starts in port at Alkaid with a purse, buys cargo on the dock,
@@ -2562,6 +2657,94 @@ since this branch was cut. The alternative was to hand the review and test stage
 merge, and the repo has done this before at the same point in the cycle. `npm run check` was rerun
 from cold on the merged tree, not only on the repair: 436 of 436, exit 0.
 
+### 2026-09-02 — independent review of slice 2c (OPP-14), PR 6
+
+Four lenses over `af6d428..a97600f`, each an independent agent: correctness and regression, security
+and data safety, spec and architecture conformance, and maintainability and test coverage. The suite
+is green at 149 from cold in the main checkout, and the branch's true diff against `agent/develop` is
+these four commits only, because PR 4 merged with a merge commit rather than a squash and
+`agent/develop` therefore already contains `af6d428`.
+
+**One finding blocks.** The v3 to v4 migration adds `board.shapes` and `maneuverBar` to the puzzle
+and stops there, but this slice also added a field to the **persisted balance** —
+`bilging.tokenSpawnPerMille` — and `Sim.load` takes the save's own balance as authoritative. After
+migrating the branch's own committed `bilge-session-v3.json`, `balance.bilging.tokenSpawnPerMille`
+is `undefined`, and the gate at `tokens.ts:37` reads
+`if (draw() >= rules.balance.tokenSpawnPerMille) continue`. Because `n >= undefined` is `false` the
+`continue` is dead, and the density throttle inverts from 120 per mille of refilled colour cells to
+all of them: a migrated save reaches gold in about 15 moves against the entry's measured 66 to 166,
+carrying 25 to 28 simultaneous shapes on a 144-cell board. Re-saving then launders the defect
+forward — the file is stamped schema 4 with the field still missing. Two lenses found it
+independently and the test stage's own re-run reproduced it; the answer already exists three lines
+above in the same file, where migration 2 rewrites `balance` to `null` and fails closed at
+`puzzle.start` with `balance-missing`, and slice 3 answered the identical situation the same way on
+`agent/develop`. It is routed back to analysis rather than fixed here.
+
+Its reachability is worth stating honestly, because it decides nothing but explains why the suite is
+green: `deserialise` and `Sim.load` are exported from `@opp/sim` but reached from no RPC method and
+no CLI, so only the tests call them, and no test plays a migrated save. It is judged blocking anyway
+— it is silent world corruption produced by the exact commit whose purpose is the migration, and the
+committed v3 fixture exists precisely so that saves get loaded.
+
+**What the review could not break, which is the more useful half.** The lockstep between `cells` and
+`shapes` — named in the task as the whole risk of the design — holds. Every write to either array
+across `packages/sim` was enumerated: construction, swap, clear, refill, critter spawn, crab climb,
+gravity's `compactSegment`, and the two token passes. The one unpaired write to `cells` is
+`spawnCritters`, and it is provably safe because it only ever writes over indices in `refilled`,
+which both `refillBoard` calls have already set to `NO_SHAPE`. Three independent empirical sweeps
+agree: 400 randomised boards with every colour piece carrying a unique opaque tag through the full
+settle pipeline, 300 randomised `resolveBoard` runs at star 7, and 2100 full-sim moves including 221
+pokes, 82 jelly swaps and 150 planted crabs — no shape ever rode a non-colour cell, none was
+duplicated or stranded, and no adjacent opposed pair was ever left standing after a settle. The
+`climbCrabs` fix is real rather than claimed: reconstructing the pre-fix body strands a shape on the
+crab's old square. There is no sixth path.
+
+Both verification claims in the development entry reproduce, and one is stronger than stated. The
+opening board's `cells` are byte-identical to `af6d428` — checked by running the base engine
+extracted with `git archive` side by side on five seeds, not by comparing fixtures — and
+`bilge.refill` ends at exactly `{hi 1590756343, lo 3448896022, draws 12}` on both engines, with
+`bilge.fill` and `bilge.critters` also identical, and with agreement on every cell, event and score
+over 3 seeds by 400 scripted swaps. The committed v3 save is genuinely a pre-slice artifact: loaded
+and re-saved by the **base** code it round-trips byte-identically. Nothing hostile survived the data
+lens either — no prototype pollution through `__proto__` or `constructor` at any nesting, no path for
+`NaN` or `Infinity` into the hash, `shapes.length === cells.length` and `maneuverBar` in 0 to 6 across
+18000 fuzzed commands, and not one of 12929 rejections moved the state hash.
+
+**Two things the review measured differently from the development entry**, both recorded in
+`ISSUES.md` rather than treated as defects. The `_sources` yield for `tokenSpawnPerMille` does not
+reproduce: 4.5 and 5.3 completed pairs per 100 clearing swaps on two independent measurements
+against a stated 2.9, with the 3-pair bar filling in 57 to 71 swaps rather than about 100. The
+recorded figure is also internally inconsistent with this slice's own gold measurement of 66 to 166
+swaps, which implies the higher rate; the re-measurements land where the gold figure predicts. The
+constant itself is honest at 122 per mille measured against 120 stated, so this is a wrong number in
+a provenance note and not a second `crabSpawnPerMille`. And the performance gate is looser than
+recorded: under degraded play it is open on 1910, 1891 and 1821 of 2000 moves for one-clearing-swap-
+in-three, one-in-ten and purely random play, so the 1991 of 2000 in the entry is not a consequence of
+good play but of a scale where `POINTS_PER_MOVE_AT_FULL_EFFICIENCY` is 3 while real 7-star play sits
+at 2148 to 2428 per mille against a `good` band starting at 1100. The recommendation is to implement
+the wiki's second clause with a rate graded by rating rather than to raise the threshold, because
+re-anchoring that slice-2 constant reaches far beyond this layer.
+
+**Coverage.** 39 semantic mutants against a clean export: 32 caught, 7 survived, and 3 more caught
+only by the replay fixture this slice re-blessed. The survivors that matter are the slice's own new
+rules — the adjacency rule accepts diagonals with the suite green and 29 per cent more pairs, pairing
+before spawning survives at 27 per cent fewer pairs, and the published gold cap of 6 is asserted
+nowhere because the one test that looks like it does uses the constant on both sides. The new tests
+are otherwise real behaviour tests derived from the decisions rather than blessed snapshots, which is
+the distinction earlier reviews in this document drew.
+
+**One thing the next stage must not discover the hard way.** Slice 2c and slice 3 both define
+`SCHEMA_VERSION = 4` with different `3` to `4` migrations — this slice's adds the shape layer,
+slice 3's adds `ships`, `battle` and a null balance — and both commit a `bilge-session-v3.json`, so
+git reports an add/add conflict on the fixture and a content conflict on `save.ts` and
+`tests/sim/migration.test.ts`. That is a real collision of meaning, not a textual one: whoever
+integrates has to decide which slice keeps 4, sequence the two migrations, and re-bless. It is
+recorded here so the decision is made deliberately rather than inside a conflict resolution.
+
+**Environment.** A worktree abandoned by a dead session held this branch in a conflicted mid-merge
+state and had to be removed before the branch could be checked out. It carried no commit that was
+not already on origin, so nothing was lost.
+
 ### 2026-09-02 — physical test of slice 4 (OPP-11), PR 5
 
 Three threads drove real `pp-harness` processes over stdio against the merged branch `6808738`. The
@@ -2700,3 +2883,310 @@ exists anywhere. Decisively, the merge touches no file under `packages/sim/src/w
 leave: this document is oldest-first, and the union resolution appended develop's slice-4 physical
 test section *after* the two 2026-09-03 slice-4b sections, so the file now ends on an out-of-date
 entry. Ordering only; nothing lost.
+
+### 2026-09-03 — analysis of review findings, slice 2c (cycle 1)
+
+Re-analysis of the one blocking finding from the PR 6 review, plus the schema collision the review
+asked to have settled here rather than inside a conflict resolution. The eight non-blocking findings
+stay in `ISSUES.md` at `549e171` and are out of scope; one development task is emitted, against the
+existing branch and PR 6, so the slice still lands as one reviewed unit.
+
+**The document is committed on the feature branch, not on `agent/develop`,** for the reason the
+slice-3 repair entry gives: every previous entry in this lineage was committed on the branch it
+describes, the repair continues on PR 6, and `docs/analysis/` is already one of the fourteen files
+that conflict.
+
+**The collision is bigger than the review could see, and that changes the answer.** The review
+compared this branch against `agent/develop` at `3ef6d50` and reported a three-file conflict over who
+keeps schema 4. Two merges have landed since: PR 5 took `agent/develop` to `SCHEMA_VERSION = 5` —
+slice 3 took 4 for `ships`/`battle`, slice 4 extended to 5 for `pirate`/`voyage`/`markets` — and
+`git merge-tree` against the current tip `22ec18e` now reports **fourteen** conflicting files, not
+three: `save.ts`, `state.ts` and `migration.test.ts`; the v3 fixture as an add/add; the harness
+balance reader and its two test files; four hash-bearing fixtures under `packages/fixtures/`; and
+`ISSUES.md`, this document and one skill. PR 6 is `CONFLICTING`/`DIRTY` on GitHub. So "which slice
+keeps 4" is no longer a live question — develop has 4 and 5 both spoken for, and this slice takes 6.
+
+#### The blocking finding dissolves rather than gets patched
+
+`migrations[3]` on this branch is `(save) => ({ ...save, puzzle: shapedPuzzleOf(save['puzzle']) })`.
+It is the only migration in the table that does not null `balance`, which is the whole defect: the
+save keeps a `PuzzleBalance` written before `tokenSpawnPerMille` existed, and `puzzle/tokens.ts:37`
+reads the missing key as `undefined`, making `if (draw() >= undefined) continue` dead and inverting
+the throttle from 120 per mille to 1000.
+
+Renumbered to `5` and given the same `balance: null` its three siblings carry, the finding stops
+being reachable rather than being fixed in place. A migrated save arrives with no balance at all, and
+`puzzle/dispatch.ts:34` refuses `puzzle.start` with `balance-missing` before `startBilging` — so
+`tokens.ts` is never entered with a partially populated balance. The repair is one word in one line,
+and it is the same word migrations 2, 3 and 4 already use.
+
+**The alternative — migrating the balance block and supplying the key — is rejected, and not only on
+taste.** Decision 41 pins the tuning a replay was recorded under into hashed state precisely so that
+a balance edit which changes play fails loudly; a migration that backfills a value would make an old
+save silently claim it was recorded under tuning it never saw. It is also mechanically impossible
+from `packages/sim`, which cannot import `balance.json` without failing `tools/check-sim-imports.ts`
+— the same wall decision 68 hit. The review invited this stage to overturn its blocking judgement; it
+stands, but the reason is now stronger than the review's, because the fix costs one word.
+
+**What this does not fix, and is not asked to.** A migrated save remains inert — `balance: null` is
+terminal, `Sim.load` does not re-attach a balance and there is no `session.load`. That is develop's
+existing `ISSUES.md` entry *A migrated v3 save keeps a permanently inert puzzle*, it predates this
+slice, and it stays there. Its sibling — `bilge.swap` and `bilge.poke` reporting `no-puzzle-running`
+at `puzzle/dispatch.ts:45` and `:58` for what is really a missing balance — is recorded there too.
+
+#### The merge can re-create the same defect somewhere the migration never touches
+
+This is the finding that was not visible from either side alone, and it is why decision 97 keeps the
+merge inside the repair. `balance.json` **auto-merges cleanly**, so `tokenSpawnPerMille: 120` lands in
+the data file whatever else happens. But `packages/harness/src/balance.ts` conflicts, and the two
+sides are structural rewrites of each other: develop refactored to a generic `readerOf` closure
+covering nine balance blocks, while this branch kept a single-block `bilgingBalanceOf` with the
+explicit `tokenSpawnPerMille: integerOf(block, 'tokenSpawnPerMille')` at `:42`. **Develop's reader
+never reads the key.** Resolving that conflict by taking develop's side — the natural instinct, since
+it is the newer and larger rewrite — drops `tokenSpawnPerMille` out of `BALANCE` even though the JSON
+carries it, and `spawnTokens` then compares against `undefined` on a *freshly created* sim, with no
+save, no migration and no v3 fixture anywhere near it.
+
+So the blocking finding has two homes, and only one of them is the migration. The type system is the
+backstop: `BilgingBalance` must keep this branch's 22-key declaration
+(`packages/sim/src/puzzle/balance.ts:17`) rather than develop's 21-key one, and if it does, a reader
+that fails to populate the key is a `typecheck` failure rather than a silent inversion. That is the
+property to preserve when resolving conflict — not the shape of either reader.
+
+**Decisions taken on the review's behalf.**
+
+| #  | Decision                                                                                                                                                        | Rationale                                                                                                                                                                                                                                                                                                                                                                             |
+| -- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90 | Slice 2c's bump becomes `5` to `6`, not `3` to `4`                                                                                                              | `agent/develop` reached `SCHEMA_VERSION = 5` while PR 6 sat in review. Two different `3` to `4` migrations cannot coexist, and sequencing this slice's shape layer last is the only ordering that keeps "an older save migrates forward" true for saves already written under 4 and 5                                                                                                   |
+| 91 | `migrations[5]` sets `balance: null` alongside the shape layer                                                                                                  | Migrations 2, 3 and 4 all do it, every consumer already guards for null, and it makes the blocking finding unreachable instead of patched. A save written under schema 5 carries a `Balance` with no `tokenSpawnPerMille`, and no honest rule invents one                                                                                                                              |
+| 92 | Backfilling `tokenSpawnPerMille` from `balance.json` is refused                                                                                                 | Decision 41 makes recorded tuning part of the hash, so supplying a value would let an old save claim provenance it does not have. `packages/sim` also cannot reach `balance.json` without failing `tools/check-sim-imports.ts`, which is where decision 68 landed for the identical case                                                                                                |
+| 93 | A saved world replays with the tuning it was recorded under; a migration that cannot carry that tuning forward nulls it rather than substituting the current one | This is the question the review asked to have settled once rather than at every bump. Decision 41 already implies it for replays; stating it for migrations is what makes `balance: null` a rule instead of a habit repeated four times                                                                                                                                                 |
+| 94 | This branch drops its own `bilge-session-v3.json`; develop's recording — seed 20260902 at tick 120 — is canonical, and the blob is re-recorded against the merged sim | The add/add conflict is resolved by taking develop's side, but not its bytes: once `tokenSpawnPerMille` reaches `BALANCE`, `spawnTokens` draws inside the same resolve, so the tick-120 board is no longer the one on disk and develop's hash-equality test at `migration.test.ts:116` would fail against a copied file. One v3 fixture per repo, and it now exercises the whole chain 3 to 6 rather than one step |
+| 95 | A committed schema-5 fixture is added, and the new assertions are positive ones                                                                                  | The v3 fixture reaches `migrations[5]` with its balance already nulled at step 3, so it cannot witness decision 91. Only a v5 save can. The slice-3 repair's lesson applies directly: `assert.notEqual(migrated.balance, null)` passed vacuously for a whole cycle, so the tests assert `balance === null`, `puzzle.start` refused with `balance-missing`, `shapes.length === cells.length` all `NO_SHAPE`, and `maneuverBar === 0` |
+| 96 | Every hash-bearing fixture is re-recorded from live runs, each proven by rolling back across the slice-2c delta to reproduce develop's committed hash | Five blobs move, not three — the two replays, the golden, the scenario and the v3 save — because the state hash covers the whole `WorldState`, so even the marker-only replay diverges on the schema constant alone. The slice-4 physical test established this procedure, and the roll-back proof is the only thing that distinguishes a legitimate re-record from a hash that was simply overwritten |
+| 97 | The integration merge belongs to this repair, not to the test stage                                                                                             | Decision 74 gave the merge to the test stage, but there the conflict was incidental. Here the renumbering *is* the repair — decision 90 cannot be implemented except against develop's migration table — so deferring the merge would mean writing the fix twice                                                                                                                        |
+| 98 | The merged `bilgingBalanceOf` reads `tokenSpawnPerMille`, and `BilgingBalance` keeps this branch's 22-key declaration | Develop's generic `readerOf` rewrite does not read the key, so resolving `packages/harness/src/balance.ts` in its favour re-creates the identical `undefined` comparison on the fresh path, where no save and no migration are involved. Keeping the wider type makes that a `typecheck` failure instead of a silent inversion |
+
+**Numbering.** These take 90 onward because develop is at 89 and this branch at 70. That leaves this
+branch's 61 to 70 still colliding with develop's on merge, which is the review's own non-blocking
+`ISSUES.md` entry *Decision numbers now collide across concurrent slices*, and it is deliberately not
+reopened here — the new numbers are merely chosen not to make it worse.
+
+#### The slice after the merge
+
+`migrations` becomes develop's table with one entry appended, and `SCHEMA_VERSION` becomes 6:
+
+```
+  4: (save) => ({ ...save, balance: null, pirate: null, voyage: null, markets: [], ships: shipsWithCargo(save['ships']) }),
+  5: (save) => ({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) }),
+```
+
+`shapedPuzzleOf` is carried over unchanged, including its unguarded cast — that is a recorded
+non-blocking finding, and widening it here would be scope this cycle did not earn. `state.ts` keeps
+develop's `WorldState` with this branch's `board.shapes` and `maneuverBar` added to the puzzle, and
+the harness balance keeps both sides' keys with `tokenSpawnPerMille` among them.
+
+**Done when** `npm run check` is green from cold on the merged branch, the v3 and v5 fixtures both
+migrate to 6 under the assertions decision 95 names, and PR 6 is mergeable against `agent/develop`.
+
+### 2026-09-03 — development, slice 2c repair (PR 6, cycle 1)
+
+The one blocking finding is fixed and `agent/develop` is merged in. `npm run check` is 435 of 435,
+exit 0 from cold. The repair is three lines of production code; the merge around it is eighty-seven
+files, and most of what follows is about the merge, because that is where the risk turned out to be.
+
+**The fix is the one word decision 91 named.** `migrations[5]` now reads
+`({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) })`, `SCHEMA_VERSION` is 6, and
+this slice's step sits after develop's 3 to 4 and 4 to 5 rather than colliding with them. Driving the
+review's own reproduction against the merged branch now prints `balance: null` where it printed a
+`PuzzleBalance` with a missing key, and `puzzle.start` answers
+`{"status":"rejected","reason":"balance-missing"}`. The shape layer still arrives: 144 shapes, every
+one `NO_SHAPE`, `maneuverBar` 0.
+
+**The most important measurement in this cycle inverts the review's own reproduction.** Reverting
+just `balance: null` from `migrations[5]` and re-running the migration suite fails **two** tests, and
+both are the schema-5 ones. Every v3 test stays green. Once this slice's migration is renumbered to 5,
+a v3 save has already had its balance nulled by develop's step 3, so **it can no longer witness this
+defect at all** — the review's `bilge-session-v3.json` repro would not reproduce even on unfixed code.
+Decision 95 predicted this and it is now measured. Had the repair leaned on the v3 fixture, as the
+review's evidence naturally suggests, it would have shipped with no failing test behind it.
+
+**Decision 98's trap was real, and it was not hypothetical.** Develop's rewritten `readerOf` genuinely
+does not read `tokenSpawnPerMille`; resolving `packages/harness/src/balance.ts` in its favour dropped
+the key from `BALANCE` while `balance.json` merged it in cleanly. The type backstop the decision
+relied on was verified rather than assumed: deleting the restored line produces
+`balance.ts(69,3): error TS2741: Property 'tokenSpawnPerMille' is missing in type ... but required in
+type 'BilgingBalance'`. The same backstop then caught a **second** instance nobody had predicted —
+`tests/ship/meters.test.ts:29` builds a `Balance` literal by hand and had the same hole. Both are
+fixed. This is the argument for keeping the wider type rather than the narrower one: the compiler
+found the second site, and no amount of reading the migration would have.
+
+**Decision 94 is corrected: the v3 save is not re-recorded.** The decision predicted that
+`tokenSpawnPerMille` reaching `BALANCE` would move the tick-120 board and break the hash-equality
+test. It does not. `bilge-session` draws on `bilge.tokens` only when a swap clears, and a stepped-only
+session never clears, so the recorded run is untouched and reproduces develop's committed blob exactly.
+Develop's 1562-byte fixture is taken unchanged. Re-recording a fixture that still reproduces would
+have destroyed the roll-back evidence rather than produced it.
+
+**Five hash-bearing fixtures did move, and each new hash is attributed rather than blessed.** Every
+one was re-recorded through the project's own tooling — the pp-golden-state and pp-scenario-author
+recipes and `tools/record-replay.ts`, never a hand-typed hash — and each was proven by running the
+same recipe in a throwaway worktree at `22ec18e` and reproducing develop's committed file first.
+
+| Fixture                     | Old                | New                | Why it moved                                              |
+| --------------------------- | ------------------ | ------------------ | ---------------------------------------------------------- |
+| golden `bilge-session-idle-minute` | `34ce4718d58a966d` | `efe30d9d0626d2d9` | schema 6, the token key, `board.shapes`, `maneuverBar`      |
+| scenario `bilge-opening`    | `346b5f71bff6b32d` | `c5491f6c19a5e6e1` | the same four                                              |
+| replay `marker-drift`       | `9abfd8c6ea454068` | `c9bb1c3d8d9e4f43` | schema 6 and nothing else                                  |
+| replay `bilge-session`      | `afd8ed21ba4a3434` | `3c9406489de6557d` | the same four, plus a new `bilge.tokens` RNG stream         |
+| `marker-drift-diverged-at-tick-5` | `9abfd8c6ea454068` | `c9bb1c3d8d9e4f43` | inherits `marker-drift`; still diverges at exactly tick 5   |
+
+Two of those rows are worth reading twice. **`marker-drift` moves on the schema constant alone** —
+one `jsonPatch` path, `replace /schemaVersion 6`, with marker positions and the `marker.drift` cursor
+byte-identical. That is the signature of a bump with no gameplay change, and it is why a replay hash
+is a weak canary for behaviour. And **the bilge replay gains `bilge.tokens` as a new stream rather
+than extra draws on `bilge.fill`**, whose cursor is unchanged — the token layer takes its own stream,
+which is the isolation the golden-state skill asks for rather than the violation it warns about. The
+idle golden has no such stream because an idle minute never clears.
+
+**Decisions taken during the repair, continuing the series above.**
+
+| #   | Decision                                                                   | Rationale                                                                                                                                                                                                     |
+| --- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 99  | The harness skill's scenario paragraph is rewritten, not taken from either side | Both sides of the conflict claimed `schemaVersion` 4 and both undercounted the scenarios — `scenarios.ts` registers four. Taking either side would have committed a known falsehood in the same commit that made it false |
+| 100 | The v3 save fixture is taken from develop unchanged rather than re-recorded | Measured: it still reproduces against the merged sim. Decision 94 assumed otherwise; re-recording a fixture that reproduces removes the only evidence that it does |
+| 101 | The two migration test files collapse to develop's recording, not this branch's | Develop's seed 20260902 at tick 120 is the one the hash-equality test is written against and the one that survives. This branch's 20260903/tick-28 recording is dropped with its fixture, and its shape assertions are ported onto develop's |
+
+**What the merge cost, for the next slice that has to do one.** Fourteen files conflicted. The three
+that needed judgement were `save.ts` (semantically incompatible migration tables), `balance.ts` (two
+structural rewrites of the same reader, where the naive resolution re-creates the bug) and
+`migration.test.ts` (two mutually exclusive fixture recordings). `ISSUES.md` and this document were
+pure append-at-anchor and were interleaved by the commit time that introduced each section, not
+concatenated in block. The five fixtures were re-recorded, not resolved. `balance.json` and
+`packages/sim/src/index.ts` merged cleanly, which is the trap: the data file gained
+`tokenSpawnPerMille` without complaint while the reader that consumes it silently lost it.
+
+### 2026-09-03 — independent review of the slice 2c repair (OPP-14), PR 6, cycle 1
+
+Four lenses, run separately against the merged tree, each rebuilding what it measured rather than
+reading the PR body. Nothing blocks. The repair is approved and goes to the test stage. Everything
+the review found is in `ISSUES.md` under the matching dated heading.
+
+**The blocking finding is unreachable, and that was established by executing every route rather than
+by arguing one.** `bilge.swap` and `bilge.poke` on both committed fixtures, `sim.step` at 200 and 300
+ticks on a save that already had a puzzle running, the full harness protocol path, and hand-built
+saves at schema 4 and 5 carrying a balance missing only `tokenSpawnPerMille` — all refused before
+`tokens.ts:37`, with `bilge.tokens` never appearing in `rngStreams`. The one route that does reach
+the inverted gate is a save hand-forged at schema 6, which bypasses `migrate` entirely; that is the
+loader trusting every field of a current-version save, which is a pre-existing property and not this
+slice's to fix.
+
+**All seven claims the task asked to be checked are confirmed**, each by measurement: the gate at
+435 of 435 exit 0 from cold in a fresh worktree, TS2741 on a deleted `tokenSpawnPerMille` at the line
+and column the development entry quotes, exactly two failing tests on a reverted `balance: null` and
+both of them schema-5, a migrated v3 save gaining 144 `NO_SHAPE` shapes and `maneuverBar` 0, the
+original reproduction now answering `balance-missing`, the v3 fixture byte-identical to develop's,
+and the v5 save a genuine schema-5 recording. The review additionally reproduced the v5 fixture from
+`agent/develop` at seed 20260903 and 60 ticks, and found the harness reader has a run-time guard as
+well as the compile-time one the entry claims.
+
+**The fixture re-recording is honest, which was the thing most worth attacking.** `bilge-session`
+gained `bilge.tokens` as a genuinely new stream while `bilge.fill`, `bilge.refill`, `bilge.critters`
+and `marker.drift` kept their cursors byte-for-byte, so the token layer stole no draws from an
+existing stream and hid it behind a re-recorded hash. `marker-drift`'s entire state diff is the
+schema version. Every one of the ten hashes in the development entry's table matches the blob on both
+sides.
+
+**The merge lost nothing.** Zero sections, zero decision rows, zero `ISSUES.md` entries and zero
+non-blank lines are missing from either parent, and `tests/harness/balance.test.ts` kept every
+behavioural assertion — the single dropped line asserted a one-block `BALANCE` and is superseded.
+
+**Two things the review corrects in the record.** The first is that decision 99's rationale is only
+half-honoured: the conflicted paragraph in `pp-sim-harness` was rewritten correctly, but the pointer
+table auto-merged from develop's side, so `:91` changed from 3 to 4 when the true value is 6 — a new
+falsehood committed by the commit that made it false, twelve lines below the line it corrected. The
+second is `ISSUES.md`'s claim that decisions 90-101 collide with nothing. They collide with three
+live branches: slice 4b at 90-96, slice 5 at 90-100 and slice 4c at 101-103, all pushed before this
+branch's analysis commit. The analysis reached 90 by checking `agent/develop` alone, which is how the
+claim came to be written. Taking 90 was defensible on what was checked; the sentence asserting safety
+was not, and the integrator now has four branches to reconcile rather than three. The slice 5 repair
+has since numbered from 111, leaving 104-110 free for the renumber the slice 5 review recommends.
+
+**Where the next defect of this class will come from.** The v5 fixture inherits the v3 fixture's
+fragility: a plausible `migrations[6]` that nulls the balance ahead of it turns it into a non-witness
+with all nineteen migration tests still green — demonstrated, not predicted. Nothing in the suite
+asserts that a fixture named for a version still reaches the step it was created for, and
+`tests/sim/migration.test.ts:58` already carries the false name that mistake produces. Decision 93's
+standing rule has the same shape: it is honoured by every migration and enforced by nothing. None of
+this is blocking, and all of it is one table-driven test away.
+
+### 2026-09-03 — physical test of the slice 2c repair (OPP-14), PR 6, cycle 1
+
+The system was played, not asserted on. There is no renderer in this slice, so the real interface is
+`pp-harness` over stdio, driven the way a session would be driven: roughly 700 hand-played moves
+across five seeds, plus a save-and-reload scenario and a hostile-input pass, each in its own
+worktree. The suite was run once as a gate and is the least interesting thing here.
+
+**The token layer does what the document says, and every load-bearing claim was seen rather than
+inferred.** Shapes spawn onto refilled colour cells and only from the `bilge.tokens` stream. Two
+matching halves of one symbol clear when adjacent while both underlying pieces survive — observed
+directly, with the state diff showing `/puzzle/board/shapes/32` and `/44` going to `-1` while cells
+3 and 0 stayed put and `maneuverBar` went 0 to 1. The meter takes one point per completed symbol,
+was walked to the gold 6 on four separate seeds, and then sat at 6 for another 260 moves while pairs
+kept resolving. Over those 700 moves no invariant broke: `shapes.length === cells.length` always,
+every shape in 0 to 7 or `NO_SHAPE`, no shape ever rode a crab, puffer, jelly or empty cell, and no
+adjacent matching pair was ever left standing after a settle.
+
+**Decision 66's correction is itself corrected.** The development entry recorded the performance
+gate as "an opening delay rather than a throttle", measured over sessions that were played well. It
+is a real brake in both directions: after ninety deliberately wasted moves dropped
+`dutyOutputPerMille` to 756, twelve consecutive *clearing* swaps produced zero token draws, and
+spawning resumed on the move duty crossed 1100 — the `good` band. Shapes already on the board fell
+from eight to four during the drought as existing ones were consumed. The gate stops spawning
+outright rather than slowing it, so the wiki's "slows or stops" is implemented as the stop, which is
+what the document already says.
+
+**A behaviour worth writing down, because nobody had.** A swap that clears nothing is accepted, costs
+a move, and runs no settle — so it can park two matching halves side by side and leave them standing
+until the next clearing move resolves them. That follows from resolving once per settle and
+contradicts nothing, but it means the meter is not "adjacency is consumed instantly": a player can
+stage a pair and bank it. It is also what made the core rule cleanly observable.
+
+**The repair's own distinction holds in both directions.** A save taken at the current schema
+reloads at the identical tick and hash (`tick 65`, `68735ae3bdfb5a26`), keeps its balance —
+`tokenSpawnPerMille` still 120 — and keeps playing: further swaps accepted, a genuine `bilge.poke`
+at star level 3, score and moves advancing. The save round trip is byte-identical across two
+independent reloads, and `snapshot.restore` returns the hash exactly. Both committed fixtures
+migrate to schema 6 into a fully inert world: `balance` null, 144 shapes all `NO_SHAPE`,
+`maneuverBar` 0, `puzzle.start` refused `balance-missing`, `bilge.swap` and `bilge.poke` refused
+`no-puzzle-running` with the state hash unchanged, and `bilge.tokens` never appearing in
+`rngStreams`. The shapes distinction is not vacuous: a live save demonstrably carries non-`NO_SHAPE`
+shapes that survive the round trip byte-identically.
+
+**Determinism survived the merge.** Two cold processes on seed 20260903 agreed on the opening hash
+`0ca982849bdeab3e` and on `a5778dd5b88d6824` after sixty ticks; a thirty-command replay on seed 4242
+agreed at every intermediate hash. All three committed replays verify from a cold harness:
+`marker-drift` and `bilge-session` `ok true` at `c9bb1c3d8d9e4f43` and `3c9406489de6557d`, and
+`marker-drift-diverged-at-tick-5` still `ok false` with `divergedAtTick` 5 and
+`finalHash == expectedHash`. `npm run check` is 435 of 435, exit 0, in 25.8 seconds.
+
+**Nothing blocked.** The hostile-input pass confirmed, from outside at the protocol level, the two
+save defects already recorded as non-blocking: `{"schemaVersion":5}` and a save with `puzzle` removed
+answer `internal-error` rather than `invalid-params` and leak a permanently broken registered
+session — provable because the session ids skip one — and a save hand-forged at schema 6 is accepted
+whole. One new instance of the same known class: a save whose `board.cells` is `{"length":1000}` is
+accepted silently and builds a 1000-entry `shapes` array on a 144-cell board. All three are the
+unguarded cast the analysis deliberately declined to widen this cycle, and all three are closed by
+the shallow top-level guard the slice 5 repair puts in `deserialise`. The harness never hung, never
+crashed, and served a fresh playable session after every hostile input.
+
+**Coverage this test could not reach**, stated rather than glossed: no crab spawned in any session,
+so the shape-never-rides-a-critter invariant is verified against puffers only, and the crab and jelly
+interactions with shapes went unexercised. The crab spawn rate is a recorded slice 2b issue, not a
+regression here.
+
+**The merge.** PR 6 goes into `agent/develop` with a merge commit rather than a squash, continuing
+the deviation recorded for PR 3 and PR 4 and for a reason that is now stronger: three sibling
+branches have already merged `agent/develop` into themselves, and squashing would detach exactly the
+history they will merge back against. It stays raised for the human in `ISSUES.md` rather than
+settled quietly.
