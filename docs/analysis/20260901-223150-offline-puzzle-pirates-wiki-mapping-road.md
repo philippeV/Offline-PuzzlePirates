@@ -3190,3 +3190,96 @@ the deviation recorded for PR 3 and PR 4 and for a reason that is now stronger: 
 branches have already merged `agent/develop` into themselves, and squashing would detach exactly the
 history they will merge back against. It stays raised for the human in `ISSUES.md` rather than
 settled quietly.
+
+### 2026-09-03 — physical test of the slice 4b repair (PR 7, cycle 1)
+
+The slice was played, not asserted on. Everything below was driven over real `pp-harness` processes
+speaking stdio JSON-RPC — three independent tracks, each spawning its own child from a cold start,
+none of them calling the sim in process. `npm run check` is 459 of 459, exit 0, from cold, twice.
+The task expected 436; the merge of `agent/develop` at `9edc820` brought the suite up. One earlier
+run answered 127 immediately after `lint` with no test output at all and did not reproduce in two
+subsequent cold runs — a spawn failure under memory pressure on this machine, not a finding.
+
+**The restock loop closes over the wire, and the purse arithmetic is the other way round from the
+task's guess.** Seed 2026, `pillage-loop`: chart a pillage to doyle, meet a brigand at tick 34560,
+fight fifteen planned turns, battle ends at tick 66060, magazine 40 to 29 — four balls spent loading
+cannon before the fight, seven in it. Port at tick 66300. At the dock the purse moves by
+`sellPricePoe` on a buy and `buyPricePoe` on a sale: ten small balls cost 560 at 56 each, taking the
+purse 2000 to 1440 and `ship.cannonballs` 29 to 39; five swill then five grog cost 280 each and take
+`ship.rum` 20 to 30; selling three balls returns 126 and four swill returns 168, both at 42. Every
+counter moved by exactly the units traded and every dock stock moved with it. `voyage.chart` back to
+alkaid was accepted, and stepping 16000 ticks advanced the leg and opened a fresh encounter — the
+ship really sails again.
+
+**The repair holds under real play, and the seeds that used to break it were hit.** Sixty distinct
+seeds, 355 voyages, 421 battles, and 103 genuine plunder draws — a count corroborated twice, once
+from `cargo.plundered` events and once from the `world.plunder` cursor's own `draws`. Ten thousand
+eight hundred and forty-eight full-state scans of every ship's `cargo` and `bootyCargo` found **zero
+ship-supply lots**. All eleven plunderable ids materialised: sincosite 19, stone 12, butterfly-weed
+11, wood 11, chalcocite 8, hemp 8, iris-root 8, lily-of-the-valley 8, pokeweed-berries 8, sugar-cane
+6, iron 4. Every lot the ships actually held was sold at a dock — 102 of the 103, all forty units,
+all accepted, at 480 PoE on a scarcity island and 200 on a spawn island; the missing one sat
+undivided in `bootyCargo` on a seed that hit the tick cap, and it was `iris-root`, a plunderable id.
+The run is not vacuous and the four named seeds prove it: replaying the very same `world.plunder`
+stream through the old sixteen-id draw reproduces the cycle-0 review's findings exactly — 7919
+swill, 71271 swill, 79190 grog, 95028 small-cannon-ball — where the live eleven-id draw yields
+chalcocite, pokeweed-berries, sincosite and sincosite. These seeds hit the exact draws that used to
+land a ship supply in a container the sell path cannot read.
+
+**The oversized-ball refusal is exactly what the contract promises, and it costs nothing.** Buying
+and selling both `large-cannon-ball` and `medium-cannon-ball` on a sloop are refused
+`wrong-cannon-ball-size`; an unknown id is refused `unknown-commodity` ahead of the size check; a
+zero-unit buy succeeds with `units 0, poe 0`. Thirteen refusal probes were bracketed by
+`snapshot.take` and `state.diff`, and the patch came back empty with the hash never leaving
+`91fcf9a7753a1f98`. The one deviation from the pinned order is already recorded at decision 96: a
+negative unit count never reaches the sim, because `requiredCount` in the harness's params layer
+answers `invalid-params` (−32602) first. `negative-units` in `market.ts` is therefore unreachable
+over the protocol — confirmed live, and now recorded in `ISSUES.md` so no future test asserts it
+from outside.
+
+**The magazine's mass is real, but the hold only binds where nothing can reach it.** On a normally
+laden sloop `hold-full` cannot be provoked through `market.buy` at all: free hold is about 13,135 kg
+while a 2000 PoE purse and a 500-unit dock stock cap an order two orders of magnitude below it, and
+`buyCommodity` checks stock and purse before the hold, so the refusal is always `insufficient-poe`.
+Probed where the hold genuinely binds — once through a loaded state with a 13,000-unit lot aboard,
+once through a snapshot-scoped throwaway hull — the accounting is exact and rounding-free: 500 units
+of free hold fall to 358 after twenty small balls (142 = `floor(20 x 7.1)`) and to 308 after fifty
+grog (50); on the other track 50 falls to 15 after five balls (35). Derived free hold on a live ship,
+13500 − 30 − 80 − 255, is 13135 and matched on both sides of a save.
+
+**A stocked magazine survives a save and a reload into a different process.** Seed 2, 154,500 ticks,
+two encounters both won, plunder materialised as `sugar-cane 40` and `wood 40`, twelve balls, eight
+swill and thirty hemp bought. The save — `state.get {pointer:""}` stringified, 9,803 characters —
+loaded into a separately spawned harness reproduces `cannonballs 32`, `rum 28`, `cargo [hemp 30]`,
+`bootyCargo [sugar-cane 40, wood 40]`, `poe 670`, tick 154500 and hash `28703aa744efe5b6`; the full
+state compares byte-identical and all seven RNG cursors match element-wise. The free-hold probe run
+identically on both sides agrees exactly, and the reloaded session keeps playing — a fresh
+`voyage.chart` accepted, 600 ticks stepped, no crash. The magazine round trip the slice never
+claimed is now evidence rather than an assumption.
+
+**Determinism, over the surface the pinned hashes cannot see.** Five seeds run twice in two cold
+processes with an identical command script agreed at every single checkpoint, on the final tick, on
+the full final state and on every RNG cursor: seed 2 `8c3374bfd9d0bdef`, seed 3 `c7e03dd5d1dba588`,
+seed 2026 `14d90902a3e96984`, seed 7 `820b503b43682825`, seed 12345 `6f8796ab538a6d79` — five
+distinct hashes, so the check is not comparing a constant with itself. `world.encounter` opens on
+every seed at two draws; `world.plunder` and `booty.poe` open only where the player wins the fight.
+
+**Two things the record needs, neither of them a defect.** The player driven by
+`tests/world/loop.ts:agentPlanOf` loses most sea battles — the helper is `planBrigandTurn` pointed at
+the player, so the ship fights itself with the brigand AI — and seed 2026, the seed
+`tests/harness/restocking.test.ts` uses, is one of the losing ones. On a lost battle the plunder half
+of the loop never runs at all: `world.plunder` and `booty.poe` never open and `booty.divide` is
+refused `no-booty`. Any world replay or golden recorded later must therefore pick a winning seed —
+2 or 3 — or it will silently cover the encounter stream only. And a world golden is not cheap today:
+`tools/record-replay.ts` writes a checkpoint per tick, a pillage voyage on seed 2 is 155,100 ticks,
+and `MAX_REPLAY_ENTRIES` is 100,000, so it needs either a sparse hash trail or a short world scenario
+first. Recorded in `ISSUES.md` as the shape of the work rather than attempted here.
+
+**The reward shift was observed and is not worth retuning.** Every plunder lot was exactly forty
+units — `bootyCargoUnits` is always the brigand's base cargo and all eleven plunderable ids weigh a
+kilogram — worth 480 or 200 PoE at the dock. It plays as intended; nothing about it felt wrong.
+
+**Nothing blocked.** Seven non-blocking observations went to `ISSUES.md`. PR 7 merges into
+`agent/develop` with a merge commit rather than a squash, continuing the deviation recorded for PR 3,
+PR 4 and PR 6 and for the same reason: sibling branches have already merged `agent/develop` into
+themselves and squashing would detach the history they will merge back against.

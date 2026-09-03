@@ -4,6 +4,87 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — physical test of the slice 4b repair (PR 7, cycle 1)
+
+Sixty seeds, 355 voyages, 421 battles and 103 plunder draws over real `pp-harness` processes, plus a
+save-and-reload track and a determinism track. Nothing blocked: no ship supply ever reached a cargo
+lot, every plundered lot sold, the refusal is the promised one, the magazine's mass is exact, and a
+stocked magazine survives a reload into a separate process byte-identically. These seven are what the
+play-through saw and could not act on.
+
+### `hold-full` cannot be reached through `market.buy` on a normally laden ship
+
+`buyCommodity` checks stock, then purse, then hold, and at this balance the first two always bind
+first: a sloop's free hold is about 13,135 kg while `world.startingPoe` is 2000 and
+`market.startingStockUnits` is 500, so the largest order a dock and a purse allow is roughly 167
+units of a raw good. Both test tracks tried to provoke `hold-full` through the real buy path and got
+`insufficient-poe` every time; the refusal had to be reached through a state carrying a 13,000-unit
+lot and through a snapshot-scoped throwaway hull. The path itself is correct once the hold genuinely
+binds — 500 units of free hold fell to 358 after twenty small balls and to 308 after fifty grog,
+exactly `floor(20 x 7.1)` and 50 — but `magazineMassKgOf`'s contribution to `freeHoldOf` is
+unreachable in normal play. It starts to matter the day a ship can hold cheap tonnage or a purse can
+buy a hold's worth: until then the mass rule is real but inert, and any test that wants it must
+construct the load rather than earn it.
+
+### A zero-unit buy of a ball the hull cannot fire is accepted
+
+`market.buy large-cannon-ball 0` on a sloop is accepted and emits a `market.traded` event naming a
+ball the ship can never load, because the zero-unit short-circuit sits ahead of the calibre guard.
+Nothing moves and no state changes, so it is a contract wart rather than a defect, and the pinned
+refusal order in the analysis document is what puts the zero case first. It matters only if a client
+ever treats an accepted `market.traded` as proof the commodity is loadable.
+
+### `negative-units` is unreachable over the protocol
+
+Confirmed live, and already recorded as decision 96's RPC-path note: `requiredCount` in
+`packages/harness/src/params.ts` answers `invalid-params` (JSON-RPC −32602, "params.units must not be
+negative") before `market.buy` or `market.sell` reaches the sim, so `market.ts`'s `negative-units`
+reason cannot be observed from outside. Both refusals are behaviourally identical — nothing changes
+either way — but a harness test asserting `reasonOf(...) === 'negative-units'` will fail, and only an
+in-process test can pin that branch. Recorded so no future test is written against it from the
+outside.
+
+### `rng.cursors` key order is not stable across a save round trip
+
+A live session returns the cursor map in stream-insertion order with each cursor spelled
+`{hi, lo, draws}`; the same state reloaded through `session.load` returns it canonically sorted with
+each cursor spelled `{draws, hi, lo}`. Every value is identical element-wise, and the full state
+compares byte-identical, so nothing is lost — but `JSON.stringify(before) === JSON.stringify(after)`
+on `rng.cursors` reports a false divergence. Any test comparing cursors across a reload must use a
+deep equality, not a string comparison.
+
+### Seed 2026 never plunders, and it is the seed the restocking test uses
+
+`tests/world/loop.ts:agentPlanOf` is `planBrigandTurn` pointed at the player, so a scripted player
+fights itself with the brigand AI and loses most battles — three wins in nine battles over a ten-seed
+sweep. On a lost battle the plunder half of the loop never runs: `world.plunder` and `booty.poe`
+never open and `booty.divide` is refused `no-booty`. Seed 2026, which
+`tests/harness/restocking.test.ts` uses, is one of the losing seeds, so that acceptance test exercises
+the restock path and nothing downstream of a win. Seeds 2 and 3 win. Any world golden or replay
+recorded later must pick a winning seed or it will silently cover the encounter stream only.
+
+### A committed world replay golden is blocked by the per-tick trail, not by the world
+
+The review's headline coverage gap — no committed fixture exercises any world RNG stream — is real
+and this test could not close it. `tools/record-replay.ts` writes one checkpoint per tick, a pillage
+voyage on seed 2 runs 155,100 ticks, and `MAX_REPLAY_ENTRIES` is 100,000, so a world replay is both
+oversized and refused. `replay.verify` already accepts a `scenario`, so `{scenario: "pillage-loop",
+seed: 2}` would work as-is once the trail problem is solved: either a sparse hash trail (checkpoint at
+command ticks plus a fixed stride) in `recordReplay` and `replay.verify`, or a short world scenario
+that starts one league point from its destination so the whole loop fits in a few thousand ticks. The
+command log itself is trivial — `voyage.chart`, the per-turn `battle.plan` commands at their exact
+ticks, then `voyage.port`, `booty.divide`, `market.buy` and `market.sell`.
+
+### `balance.json`'s rationale for `world.brigandCrewCount` does not match its value
+
+The `_sources` prose says brigands are "crewed just below a player sloop's swabbie staffing so an even
+fight tilts marginally to the player", but the value is 5 and a sloop's `swabbieStaffing` is also 5.
+Since `resolveMelee` breaks an exact tie in favour of the defender, an otherwise even melee is decided
+by who grappled — and the aggressor loses. Observed rather than derived: melee snapshots one turn from
+conclusion on three seeds put the player at 5 to 6 million `meleeDamageSmallMicro` against the sloop's
+6 million cap, and the brigand at 0.5 to 2.5 million. Nothing is wrong with the code; the recorded
+intent and the number disagree, and one of them should move.
+
 ## 2026-09-03 — independent review of the slice 4b repair (PR 7, cycle 1)
 
 Four lenses against `caf8cec`. Nothing blocked: the invariant of decision 124 is closed by
