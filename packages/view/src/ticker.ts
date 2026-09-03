@@ -14,12 +14,12 @@ export function createTicker(step: FrameStep): Ticker {
   let carry = 0;
 
   function frame(now: number): void {
+    handle = requestAnimationFrame(frame);
     const elapsedMs = last === 0 ? 0 : now - last;
     last = now;
     const budget = budgetOf(elapsedMs, carry);
     carry = budget.carry;
     step(budget.ticks, elapsedMs);
-    handle = requestAnimationFrame(frame);
   }
 
   return {

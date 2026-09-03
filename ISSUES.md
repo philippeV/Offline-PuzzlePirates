@@ -4,6 +4,54 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — development of the slice 5 review repairs (OPP-12), PR 8, cycle 1
+
+Found while building decisions 111-117. Three entries under the review heading below were struck
+because this task repaired them: the keyboard clamp, the dead `'swap-outside-board'` refusal on the
+pointer path, and the ticker re-arm.
+
+### The render smoke can silently test a different checkout
+
+`playwright.config.ts` sets `reuseExistingServer: !process.env.CI` against a fixed
+`DEV_SERVER_PORT = 5178`, and several worktrees of this repo exist at once. **This is not
+hypothetical: the first `npm run smoke` of this task ran green against a vite server belonging to
+another worktree**, on the slice 5 branch as it stood *before* these repairs. Nothing in the output
+says which tree served the page, so a run looks identical either way. It was caught only because
+starting a second dev server failed with the port already in use.
+
+Everything the smoke asserts — the readiness signal, the canvas, the screenshot baseline — is
+therefore conditional on no other checkout holding 5178. A port derived from the checkout path, or
+`reuseExistingServer: false`, or a served-tree assertion in the readiness contract would close it.
+It starts to matter the moment two agents run the smoke in the same hour, which is now.
+
+### The screenshot baseline cannot see player-facing text
+
+`MAX_DIFF_PIXEL_RATIO = 0.01` is 9216 pixels of a 1280×720 shot. This task rewrote both paragraphs
+of the puzzle panel's help text and **all four smokes stayed green with no baseline diff at all** —
+`--update-snapshots` rewrote nothing, because nothing failed. The tolerance is sized for the
+bilging scene's own animation, which moves 1400 to 3300 pixels between two consecutive frames of a
+settled board, and two lines of 12px copy are smaller than that headroom.
+
+So the baseline guards gross render regressions and nothing about the words the player reads. The
+analysis for this cycle expected the baseline to diff and be re-blessed; it did not, and forcing
+`--update-snapshots=all` would only have committed a fresh animation frame. A separate assertion on
+the panel's text, or a still scene for the text-bearing shot, is what would actually cover it.
+
+### The cursor clamp itself is still untested
+
+The clamp lives inside the Pixi-importing closure in `puzzle.ts`, and this repo has no jsdom, so
+`tests/view/` cannot reach it. Decision 116's extraction gives the *mapping* a test, and inverting
+the mapping fails it — but reintroducing `board.width - 2` in `moveCursor` leaves the whole suite
+green. The keyboard path is covered by review and by the test stage, not by the suite.
+
+### The hover pair highlight stops one column short of what is clickable
+
+`cellUnder` keeps its `isSwapOrigin` filter, deliberately: the hover highlight draws *two* outlines
+and a connector between them, so in the last column it would promise a partner that does not exist.
+The consequence is that the last column is now fully clickable and shows no hover feedback. Making
+the highlight gesture-aware — one outline for a poke, two for a swap — is a redesign of `drawPair`
+and was out of scope for the repair.
+
 ## 2026-09-03 — independent review of slice 5 (OPP-12), PR 8
 
 Four-lens review of the isometric renderer and the playable client. Two blocking findings went back
@@ -53,14 +101,12 @@ The gate cannot see any of these, because none is an import.
   today, because `stationsOf` only tests `> 0` and every class has both values positive. It matters
   when a hull is added whose navigation complement is not one. The analysis document's claim that
   the deck reads "all seven stations from `ShipClass` rather than hardcoded" is false as written.
-- **The sim's swap geometry is re-derived three ways in `puzzle.ts`.** `isSwapOrigin` (`:649`)
-  correctly derives the partner from `swapPartnerOf(BILGE_RULES, …)`, but `:391`
-  (`clamp(cursorX + dx, 0, board.width - 2)`) and `:660` (`if (partner.x >= board.width) return`)
-  hardcode the horizontal axis, and `:137` restates the rule in prose. If `BILGE_RULES.swapAxis`
-  ever becomes vertical, two of the three are silently wrong while the third is right. A related
-  consequence: `:328` returns silently for a non-puffer last-column click instead of dispatching
-  and letting the sim answer, so `'swap-outside-board'` → "That swap falls off the board."
-  (`client/log.ts:20`) is dead for the pointer path. Same shape at `deck.ts:119-121`, where
+- **The sim's swap geometry is re-derived two ways in `puzzle.ts`.** `isSwapOrigin` correctly
+  derives the partner from `swapPartnerOf(BILGE_RULES, …)`, but `drawCursor` hardcodes the
+  horizontal axis in `if (partner.x >= board.width) return`, and the panel's hint paragraph
+  restates the rule in prose. If `BILGE_RULES.swapAxis` ever becomes vertical, both are silently
+  wrong while `isSwapOrigin` is right. The cursor clamp and the pointer path's silent pre-refusal
+  were the third and fourth and are repaired in cycle 1. Same shape at `deck.ts:119-121`, where
   `moored()` re-derives "in port" instead of using the facade's `atSea`.
 - **`FULL_METER = 1000` is declared three times** — `scenes/hud.ts:16`, `scenes/planner.ts:79`,
   `scenes/puzzle.ts:103` — plus bare `1000` at `scenes/battle.ts:323,437`, while the sim exports
@@ -81,13 +127,6 @@ The gate cannot see any of these, because none is an import.
 
 ### Input and scene defects
 
-- **The keyboard cursor cannot reach the board's last column.** `puzzle.ts:391` clamps `cursorX` to
-  `board.width - 2`, which is right for a swap (the partner is `x+1`) but also gates poking, since
-  both go through `performAt`. `tileUnder` (`:370`) accepts any in-board tile, so a puffer in the
-  last column is poppable with the mouse and unreachable from the keyboard. The two paths share the
-  dispatch function but not the reachable input set, which is narrower than the merge note's claim
-  that they "cannot diverge". Distinct from the blocking puffer finding, and it survives whatever
-  fix that one gets unless the clamp is made poke-aware.
 - **A deck scene constructed at sea has no gangplank, permanently.** `deck.ts:83,160` bakes the
   portal tile into the grid at construction from `moored(state)`. On the ordinary pillage loop a
   brigand spawn moves the scene to `battle` (`client.ts:137`), `app.ts:97-104` destroys the deck
@@ -114,14 +153,6 @@ The gate cannot see any of these, because none is an import.
 
 ### Robustness
 
-- **Any throw inside a frame kills the render loop forever while `running` still reports `true`.**
-  `ticker.ts:21-22` re-arms after the callback, unguarded, so one throw from `client.advance`,
-  `stage.update` or `application.render` means `frame` is never scheduled again; `handle` keeps the
-  id of the frame that already fired, so `get running()` (`:26`) lies and `stop()` cancels a stale
-  id. This is what turns the blocking restore defect into a frozen canvas rather than a dropped
-  frame. Wrapping `step(...)` in try/finally, or re-arming first, contains any future scene bug to
-  one frame. The mirror case is latent: `stop()` called from inside a step callback is undone by
-  the unconditional re-arm, though the only caller today is `app.ts:151`, outside the callback.
 - **"New game" and "Load game" discard the running voyage on one unconfirmed click.**
   `panels/ye.ts:76-79` and `:68` sit either side of "Save game" in the same `actionRow`, and
   nothing persists — the only copy of a session is whatever text the player copied out of the

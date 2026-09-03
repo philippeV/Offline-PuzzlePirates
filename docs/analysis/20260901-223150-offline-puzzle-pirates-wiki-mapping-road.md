@@ -2590,3 +2590,109 @@ frame costs one frame and not the loop; a puffer in the last column is reachable
 the poke-or-swap mapping is an exported function with tests; the panel text matches what the code
 does; `npm run check`, `npm run build` and the four render smokes are green with the baseline
 re-blessed.
+
+### 2026-09-03 — development of the slice 5 review repairs (OPP-12), PR 8, cycle 1
+
+Decisions 111 to 117 are built on this branch, against PR 8. Two of them were delivered differently
+from the letter of the decision and one number in the entry above is wrong; both are set out below
+rather than left for the reviewer to find.
+
+#### What was built
+
+**The guard (111, 112).** `deserialise` now ends in `worldStateOf`, which checks every top-level
+field for presence and primitive kind before the `as unknown as WorldState` cast — the cast now
+exists in exactly one place. It follows `balanceParse.ts`: `isRecord`, `TypeError`, a dotted path.
+`{"schemaVersion":5}` is refused with `save.seed must hold a number`, and `'{"schemaVersion":5}'`
+has joined `UNLOADABLE_SAVES` in `tests/harness/session-load.test.ts`, which accepted it before.
+`packages/sim` stays dependency-free.
+
+The kinds live in a `Record<keyof WorldState, FieldKind>` table, so adding a field to `WorldState`
+fails typecheck until the field is given a kind. That is the property that stops this guard rotting.
+
+The guard runs **after** migration, not before. A v2 or v3 save legitimately lacks `balance`,
+`puzzle`, `ships`, `battle`, `pirate`, `voyage` and `markets` — supplying them is what the
+registered migrations are for — so guarding first would refuse every genuine older save. Running
+after means a save is judged against the schema it claims to be at, which is exactly where
+`{"schemaVersion":5}` fails: no migration runs for it, so it reaches the guard unimproved. Both
+directions were checked, including the committed v2 fixture `saves/marker-field-v2.json`.
+
+**The extraction (115, 116).** The mapping is `gestureAt(board, position)` in
+`packages/view/src/scenes/bilgeGesture.ts`, which imports only the client facade and no Pixi, so
+`tests/view/` can reach it. `npm run boundary` sees it now: the rule the gate could not see because
+it was a conditional inside a closure is an import it can follow.
+
+**The clamp and the pre-refusal (117).** `moveCursor` clamps to `board.width - 1` and lets the
+mapping decide the gesture; `performAt` dispatches instead of returning silently, so the sim's
+`'swap-outside-board'` refusal reaches the chat log the way `planner.ts`'s refusals already do.
+
+**The panel text.** *"Click a puffer to pop it. Click any other tile to swap it with the tile on its
+right."* and *"Arrows move the cursor · Space or Enter pops or swaps · Escape leaves the duty."*
+Both were read off a running client to confirm they render and wrap inside the panel.
+
+#### Correction to the entry above
+
+That entry says `WorldState` has **twelve** top-level fields and that `{"schemaVersion":5}` leaves
+"the other eleven" undefined. It has **thirteen**: the twelve it declares plus `nextEntityId`,
+inherited from `EntityIdCounter`. The guard checks all thirteen. Leaving `nextEntityId` out would
+have admitted a save that breaks `takeEntityId` on the first entity created — the same class of
+failure the guard exists to stop, one field further along. Decision 112's substance is unchanged.
+
+Corrected here rather than edited in place, following decision 118's own reasoning about dated
+entries.
+
+#### Decision 113 was delivered by its purpose, not its letter
+
+The decision says `restore` should mirror `methods/session.ts` — build into a local, attach only on
+success. Mirroring it literally changes nothing: `this.sim = Sim.load(text)` already evaluates
+`Sim.load` before the assignment, so a save the sim refuses never reached the field even before this
+task. But the decision states its purpose plainly — to stop "the next unvalidated failure inside
+`syncScene` or `announce` from costing a voyage" — and a reordering does not deliver that, because
+those calls run *after* the swap by construction. `announce` in particular must run after the fields
+are live, since listeners read them.
+
+So `restore` swaps the session in and puts the running one back if the work that follows throws.
+That is more than the decision's letter and is what its stated purpose requires. The test that pins
+it uses a throwing subscriber; the reordering alone leaves that test red.
+
+**The cost of that shape, recorded rather than hidden.** A listener that already ran before another one threw has seen a state
+that is then rolled back, and is not told. It self-heals on the next frame, because the ticker's
+step calls `announce` again — which is only true because decision 114 landed in the same task and
+keeps the loop alive through a throwing frame. The two repairs hold each other up.
+
+#### The baseline did not diff, and that is the finding
+
+The entry above expected the panel rewrite to move the committed Playwright screenshot and be
+re-blessed. It did not move it. `MAX_DIFF_PIXEL_RATIO = 0.01` is 9216 pixels of a 1280×720 shot,
+and the bilging scene's own animation already moves 1400 to 3300 pixels between two consecutive
+frames of a settled board; two lines of 12px copy fit inside that headroom. All four smokes are
+green, `--update-snapshots` rewrote nothing because nothing failed, and forcing
+`--update-snapshots=all` would have committed a fresh animation frame rather than a re-blessing.
+No baseline is touched by this task. The gap is recorded in `ISSUES.md`.
+
+#### Two things the suite still cannot see, stated plainly
+
+**The cursor clamp has no test.** It lives inside the Pixi-importing closure and this repo has no
+jsdom. Inverting `gestureAt` fails four tests; reintroducing `board.width - 2` in `moveCursor`
+leaves all 463 green. Decision 116 moved the *rule* to where it can be tested, which is what it
+promised, but the clamp is not the rule.
+
+**The keyboard path was not exercised by hand.** Key events do not reach the app through this
+environment's browser pane — arrow presses left `Moves` at zero and the board untouched, which is a
+statement about the pane and not about the code. The panel text was confirmed visually; the last
+column's keyboard reachability is for the test stage, which drives a real browser.
+
+While fixing the clamp, `drawCursor` needed one more change: it returned early when the swap partner
+was off-board, which was harmless while the clamp kept the cursor out of the last column and would
+have made the cursor **invisible** there once it could go. The cursor cell is now always outlined and
+only the partner outline is skipped.
+
+#### Verification
+
+`npm run check` 463 of 463 exit 0 from cold, `npm run build` clean, `npm run smoke` 4 of 4.
+
+The smoke needed a second run to mean anything. `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI` on the fixed port 5178, and the first run was served by a
+**different worktree's** dev server — the slice 5 branch as it stood before these repairs. The
+reported run above is from a dev server started on a private port against this tree. That trap is
+now in `ISSUES.md`; anyone running the smoke while another checkout is up should assume the same
+until it is closed.

@@ -73,3 +73,34 @@ test('a saved game restores through the client', () => {
 
   assert.equal(reloaded.save(), save);
 });
+
+test('a refused save leaves the running game intact and still stepping', () => {
+  const client = GameClient.create({ seed: SEED, balance: BALANCE });
+  client.advance(600);
+  const running = client.save();
+
+  assert.throws(() => client.restore('{"schemaVersion":6}'));
+
+  assert.equal(client.save(), running);
+  client.advance(600);
+  assert.equal(client.tick, 1200);
+});
+
+test('a load that fails after the sim is built leaves the running game intact', () => {
+  const client = GameClient.create({ seed: SEED, balance: BALANCE });
+  client.advance(600);
+  const running = client.save();
+
+  const incoming = GameClient.create({ seed: SEED, balance: BALANCE });
+  incoming.advance(1200);
+
+  const unsubscribe = client.subscribe(() => {
+    throw new Error('the panel be broken');
+  });
+  assert.throws(() => client.restore(incoming.save()));
+  unsubscribe();
+
+  assert.equal(client.save(), running);
+  client.advance(600);
+  assert.equal(client.tick, 1200);
+});

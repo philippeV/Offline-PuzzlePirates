@@ -11,6 +11,7 @@ import {
   swapPartnerOf,
 } from '../client/rules.ts';
 import type { Board, BoardPosition, PuzzleState, SimEvent } from '../client/rules.ts';
+import { gestureAt } from './bilgeGesture.ts';
 import type { Scene, SceneContext } from './scene.ts';
 import {
   HUD_ACCENT,
@@ -134,13 +135,13 @@ export function createPuzzleScene(context: SceneContext): Scene {
   const bilge = createMeterBar('Bilge', PANEL_INNER_WIDTH, HUD_WATER);
   const caption = createText('', 14, HUD_ACCENT);
   const hint = createParagraph(
-    'Click a tile to swap it with the tile on its right. The last column cannot start a swap. Click a puffer to pop it.',
+    'Click a puffer to pop it. Click any other tile to swap it with the tile on its right.',
     12,
     HUD_DIM_INK,
     PANEL_INNER_WIDTH,
   );
   const keys = createParagraph(
-    'Arrows move the cursor  ·  Space or Enter swaps  ·  Escape leaves the duty.',
+    'Arrows move the cursor  ·  Space or Enter pops or swaps  ·  Escape leaves the duty.',
     12,
     HUD_DIM_INK,
     PANEL_INNER_WIDTH,
@@ -324,11 +325,10 @@ export function createPuzzleScene(context: SceneContext): Scene {
   function performAt(x: number, y: number): void {
     const board = boardOf();
     if (board === null) return;
-    const pokes = board.cells[flatIndexOf(board, x, y)] === PUFFER_CELL;
-    if (!pokes && !isSwapOrigin(board, x, y)) return;
+    const gesture = gestureAt(board, { x, y });
     const before = [...board.cells];
     const result = client.dispatch(
-      pokes ? { op: 'bilge.poke', x, y } : { op: 'bilge.swap', x, y },
+      gesture === 'poke' ? { op: 'bilge.poke', x, y } : { op: 'bilge.swap', x, y },
     );
     if (result.status === 'rejected') return;
     cascade = cascadeStepsOf(before, result.events, board);
@@ -388,7 +388,7 @@ export function createPuzzleScene(context: SceneContext): Scene {
   function moveCursor(dx: number, dy: number): boolean {
     const board = boardOf();
     if (board === null) return true;
-    cursorX = clamp(cursorX + dx, 0, board.width - 2);
+    cursorX = clamp(cursorX + dx, 0, board.width - 1);
     cursorY = clamp(cursorY + dy, 0, board.height - 1);
     return true;
   }
@@ -657,8 +657,8 @@ function drawPair(
 
 function drawCursor(graphic: Graphics, board: Board, x: number, y: number, size: number): void {
   const partner = swapPartnerOf(BILGE_RULES, x, y);
-  if (partner.x >= board.width) return;
   outlineCell(graphic, x, y, size, HUD_INK, 0.9);
+  if (partner.x >= board.width) return;
   outlineCell(graphic, partner.x, partner.y, size, HUD_INK, 0.4);
 }
 

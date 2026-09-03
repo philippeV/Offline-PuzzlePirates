@@ -112,11 +112,20 @@ export class GameClient {
   }
 
   restore(text: string): void {
-    this.sim = Sim.load(text);
+    const restored = Sim.load(text);
+    const running = { sim: this.sim, lines: this.lines, scene: this.current };
+    this.sim = restored;
     this.lines = [];
     this.current = 'port';
-    this.syncScene();
-    this.announce();
+    try {
+      this.syncScene();
+      this.announce();
+    } catch (failure) {
+      this.sim = running.sim;
+      this.lines = running.lines;
+      this.current = running.scene;
+      throw failure;
+    }
   }
 
   reset(seed: number): void {
