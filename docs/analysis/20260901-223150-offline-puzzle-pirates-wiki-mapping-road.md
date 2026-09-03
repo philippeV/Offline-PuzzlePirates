@@ -2425,8 +2425,14 @@ non-`.ts` extension, and a template-literal dynamic import. None is used in this
 deep import is the one to close first, because it is the shape a developer reaches for once the
 package specifier is rejected.
 
-**Decision numbering.** The review recommends that **slice 4b renumber its decisions to 101–107**
-and that slice 5 keep 90–100. PR 7 is `DIRTY` and must be reworked before it can merge, so the
-renumber rides along with work already queued; it carries seven decisions against slice 5's eleven,
-and slice 5's numbers are referenced across eight commits, 69 files, `ISSUES.md` and its PR body.
-This is a recommendation to whoever integrates them, not a finding against either branch.
+**Decision numbering.** Three open branches are involved, not two: slice 4b holds 90–96, slice 5
+holds 90–100, and **slice 4c (PR 9) already holds 101–103**, having deliberately numbered above
+both. The review recommends that **slice 4b renumber its decisions to 104–110**, and that slice 5
+keep 90–100 and slice 4c keep 101–103.
+
+PR 7 is `DIRTY` and must be reworked before it can merge, so the renumber rides along with work
+already queued; it carries seven decisions against slice 5's eleven, and slice 5's numbers are
+referenced across eight commits, 69 files, `ISSUES.md` and its PR body. Slice 4c is left alone
+because it is the one branch that numbered defensively.
+
+This is a recommendation to whoever integrates them, not a finding against any branch.
