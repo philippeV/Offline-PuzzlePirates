@@ -1479,3 +1479,108 @@ recorded here so the decision is made deliberately rather than inside a conflict
 **Environment.** A worktree abandoned by a dead session held this branch in a conflicted mid-merge
 state and had to be removed before the branch could be checked out. It carried no commit that was
 not already on origin, so nothing was lost.
+
+### 2026-09-03 — analysis of review findings, slice 2c (cycle 1)
+
+Re-analysis of the one blocking finding from the PR 6 review, plus the schema collision the review
+asked to have settled here rather than inside a conflict resolution. The eight non-blocking findings
+stay in `ISSUES.md` at `549e171` and are out of scope; one development task is emitted, against the
+existing branch and PR 6, so the slice still lands as one reviewed unit.
+
+**The document is committed on the feature branch, not on `agent/develop`,** for the reason the
+slice-3 repair entry gives: every previous entry in this lineage was committed on the branch it
+describes, the repair continues on PR 6, and `docs/analysis/` is already one of the fourteen files
+that conflict.
+
+**The collision is bigger than the review could see, and that changes the answer.** The review
+compared this branch against `agent/develop` at `3ef6d50` and reported a three-file conflict over who
+keeps schema 4. Two merges have landed since: PR 5 took `agent/develop` to `SCHEMA_VERSION = 5` —
+slice 3 took 4 for `ships`/`battle`, slice 4 extended to 5 for `pirate`/`voyage`/`markets` — and
+`git merge-tree` against the current tip `22ec18e` now reports **fourteen** conflicting files, not
+three: `save.ts`, `state.ts` and `migration.test.ts`; the v3 fixture as an add/add; the harness
+balance reader and its two test files; four hash-bearing fixtures under `packages/fixtures/`; and
+`ISSUES.md`, this document and one skill. PR 6 is `CONFLICTING`/`DIRTY` on GitHub. So "which slice
+keeps 4" is no longer a live question — develop has 4 and 5 both spoken for, and this slice takes 6.
+
+#### The blocking finding dissolves rather than gets patched
+
+`migrations[3]` on this branch is `(save) => ({ ...save, puzzle: shapedPuzzleOf(save['puzzle']) })`.
+It is the only migration in the table that does not null `balance`, which is the whole defect: the
+save keeps a `PuzzleBalance` written before `tokenSpawnPerMille` existed, and `puzzle/tokens.ts:37`
+reads the missing key as `undefined`, making `if (draw() >= undefined) continue` dead and inverting
+the throttle from 120 per mille to 1000.
+
+Renumbered to `5` and given the same `balance: null` its three siblings carry, the finding stops
+being reachable rather than being fixed in place. A migrated save arrives with no balance at all, and
+`puzzle/dispatch.ts:34` refuses `puzzle.start` with `balance-missing` before `startBilging` — so
+`tokens.ts` is never entered with a partially populated balance. The repair is one word in one line,
+and it is the same word migrations 2, 3 and 4 already use.
+
+**The alternative — migrating the balance block and supplying the key — is rejected, and not only on
+taste.** Decision 41 pins the tuning a replay was recorded under into hashed state precisely so that
+a balance edit which changes play fails loudly; a migration that backfills a value would make an old
+save silently claim it was recorded under tuning it never saw. It is also mechanically impossible
+from `packages/sim`, which cannot import `balance.json` without failing `tools/check-sim-imports.ts`
+— the same wall decision 68 hit. The review invited this stage to overturn its blocking judgement; it
+stands, but the reason is now stronger than the review's, because the fix costs one word.
+
+**What this does not fix, and is not asked to.** A migrated save remains inert — `balance: null` is
+terminal, `Sim.load` does not re-attach a balance and there is no `session.load`. That is develop's
+existing `ISSUES.md` entry *A migrated v3 save keeps a permanently inert puzzle*, it predates this
+slice, and it stays there. Its sibling — `bilge.swap` and `bilge.poke` reporting `no-puzzle-running`
+at `puzzle/dispatch.ts:45` and `:58` for what is really a missing balance — is recorded there too.
+
+#### The merge can re-create the same defect somewhere the migration never touches
+
+This is the finding that was not visible from either side alone, and it is why decision 97 keeps the
+merge inside the repair. `balance.json` **auto-merges cleanly**, so `tokenSpawnPerMille: 120` lands in
+the data file whatever else happens. But `packages/harness/src/balance.ts` conflicts, and the two
+sides are structural rewrites of each other: develop refactored to a generic `readerOf` closure
+covering nine balance blocks, while this branch kept a single-block `bilgingBalanceOf` with the
+explicit `tokenSpawnPerMille: integerOf(block, 'tokenSpawnPerMille')` at `:42`. **Develop's reader
+never reads the key.** Resolving that conflict by taking develop's side — the natural instinct, since
+it is the newer and larger rewrite — drops `tokenSpawnPerMille` out of `BALANCE` even though the JSON
+carries it, and `spawnTokens` then compares against `undefined` on a *freshly created* sim, with no
+save, no migration and no v3 fixture anywhere near it.
+
+So the blocking finding has two homes, and only one of them is the migration. The type system is the
+backstop: `BilgingBalance` must keep this branch's 22-key declaration
+(`packages/sim/src/puzzle/balance.ts:17`) rather than develop's 21-key one, and if it does, a reader
+that fails to populate the key is a `typecheck` failure rather than a silent inversion. That is the
+property to preserve when resolving conflict — not the shape of either reader.
+
+**Decisions taken on the review's behalf.**
+
+| #  | Decision                                                                                                                                                        | Rationale                                                                                                                                                                                                                                                                                                                                                                             |
+| -- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90 | Slice 2c's bump becomes `5` to `6`, not `3` to `4`                                                                                                              | `agent/develop` reached `SCHEMA_VERSION = 5` while PR 6 sat in review. Two different `3` to `4` migrations cannot coexist, and sequencing this slice's shape layer last is the only ordering that keeps "an older save migrates forward" true for saves already written under 4 and 5                                                                                                   |
+| 91 | `migrations[5]` sets `balance: null` alongside the shape layer                                                                                                  | Migrations 2, 3 and 4 all do it, every consumer already guards for null, and it makes the blocking finding unreachable instead of patched. A save written under schema 5 carries a `Balance` with no `tokenSpawnPerMille`, and no honest rule invents one                                                                                                                              |
+| 92 | Backfilling `tokenSpawnPerMille` from `balance.json` is refused                                                                                                 | Decision 41 makes recorded tuning part of the hash, so supplying a value would let an old save claim provenance it does not have. `packages/sim` also cannot reach `balance.json` without failing `tools/check-sim-imports.ts`, which is where decision 68 landed for the identical case                                                                                                |
+| 93 | A saved world replays with the tuning it was recorded under; a migration that cannot carry that tuning forward nulls it rather than substituting the current one | This is the question the review asked to have settled once rather than at every bump. Decision 41 already implies it for replays; stating it for migrations is what makes `balance: null` a rule instead of a habit repeated four times                                                                                                                                                 |
+| 94 | This branch drops its own `bilge-session-v3.json`; develop's recording — seed 20260902 at tick 120 — is canonical, and the blob is re-recorded against the merged sim | The add/add conflict is resolved by taking develop's side, but not its bytes: once `tokenSpawnPerMille` reaches `BALANCE`, `spawnTokens` draws inside the same resolve, so the tick-120 board is no longer the one on disk and develop's hash-equality test at `migration.test.ts:116` would fail against a copied file. One v3 fixture per repo, and it now exercises the whole chain 3 to 6 rather than one step |
+| 95 | A committed schema-5 fixture is added, and the new assertions are positive ones                                                                                  | The v3 fixture reaches `migrations[5]` with its balance already nulled at step 3, so it cannot witness decision 91. Only a v5 save can. The slice-3 repair's lesson applies directly: `assert.notEqual(migrated.balance, null)` passed vacuously for a whole cycle, so the tests assert `balance === null`, `puzzle.start` refused with `balance-missing`, `shapes.length === cells.length` all `NO_SHAPE`, and `maneuverBar === 0` |
+| 96 | Every hash-bearing fixture is re-recorded from live runs, each proven by rolling back across the slice-2c delta to reproduce develop's committed hash | Five blobs move, not three — the two replays, the golden, the scenario and the v3 save — because the state hash covers the whole `WorldState`, so even the marker-only replay diverges on the schema constant alone. The slice-4 physical test established this procedure, and the roll-back proof is the only thing that distinguishes a legitimate re-record from a hash that was simply overwritten |
+| 97 | The integration merge belongs to this repair, not to the test stage                                                                                             | Decision 74 gave the merge to the test stage, but there the conflict was incidental. Here the renumbering *is* the repair — decision 90 cannot be implemented except against develop's migration table — so deferring the merge would mean writing the fix twice                                                                                                                        |
+| 98 | The merged `bilgingBalanceOf` reads `tokenSpawnPerMille`, and `BilgingBalance` keeps this branch's 22-key declaration | Develop's generic `readerOf` rewrite does not read the key, so resolving `packages/harness/src/balance.ts` in its favour re-creates the identical `undefined` comparison on the fresh path, where no save and no migration are involved. Keeping the wider type makes that a `typecheck` failure instead of a silent inversion |
+
+**Numbering.** These take 90 onward because develop is at 89 and this branch at 70. That leaves this
+branch's 61 to 70 still colliding with develop's on merge, which is the review's own non-blocking
+`ISSUES.md` entry *Decision numbers now collide across concurrent slices*, and it is deliberately not
+reopened here — the new numbers are merely chosen not to make it worse.
+
+#### The slice after the merge
+
+`migrations` becomes develop's table with one entry appended, and `SCHEMA_VERSION` becomes 6:
+
+```
+  4: (save) => ({ ...save, balance: null, pirate: null, voyage: null, markets: [], ships: shipsWithCargo(save['ships']) }),
+  5: (save) => ({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) }),
+```
+
+`shapedPuzzleOf` is carried over unchanged, including its unguarded cast — that is a recorded
+non-blocking finding, and widening it here would be scope this cycle did not earn. `state.ts` keeps
+develop's `WorldState` with this branch's `board.shapes` and `maneuverBar` added to the puzzle, and
+the harness balance keeps both sides' keys with `tokenSpawnPerMille` among them.
+
+**Done when** `npm run check` is green from cold on the merged branch, the v3 and v5 fixtures both
+migrate to 6 under the assertions decision 95 names, and PR 6 is mergeable against `agent/develop`.
