@@ -9,7 +9,9 @@ import { createWorldState, type WorldState } from '../../packages/sim/src/state.
 import { cargoLotsMassKgOf } from '../../packages/sim/src/world/cargo.ts';
 import {
   COMMODITY_IDS,
+  PLUNDERABLE_COMMODITY_IDS,
   commodityOf,
+  isShipSupply,
   type CommodityId,
 } from '../../packages/sim/src/world/commodities.ts';
 import { applyWorldCommand } from '../../packages/sim/src/world/dispatch.ts';
@@ -160,6 +162,22 @@ test('plunder becomes a booty chest lot of the same mass to within the floor', (
     assert.deepEqual(ship.cargo, [], 'plunder reached the hold instead of the chest');
   }
   assert.ok(drawn.size > 1, 'the plunder stream drew a single commodity');
+});
+
+test('plunder draws every plunderable commodity and never stows a ship supply', () => {
+  const drawn = new Set<CommodityId>();
+  for (let seed = 1; seed <= PLUNDER_SEEDS; seed += 1) {
+    const [state, ship] = plunderedShipOf(seed * 7919, BOOTY_CARGO_UNITS);
+    const events = materialisePlunder(state, ship);
+    const plundered = events[0];
+    assert.ok(plundered?.type === 'cargo.plundered');
+    drawn.add(plundered.commodityId);
+
+    for (const lot of [...ship.cargo, ...ship.bootyCargo]) {
+      assert.ok(!isShipSupply(lot.commodityId), `${seed} stowed ${lot.commodityId} as a lot`);
+    }
+  }
+  assert.deepEqual([...drawn].sort(), [...PLUNDERABLE_COMMODITY_IDS].sort());
 });
 
 test('plunder merges into the booty chest and leaves it sorted by commodity', () => {

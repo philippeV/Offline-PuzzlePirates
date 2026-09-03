@@ -39,7 +39,7 @@ export const simPurityRules = {
 };
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', 'tests/gates/fixtures/**'] },
+  { ignores: ['node_modules/**', '**/dist/**', 'tests/gates/fixtures/**'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   {

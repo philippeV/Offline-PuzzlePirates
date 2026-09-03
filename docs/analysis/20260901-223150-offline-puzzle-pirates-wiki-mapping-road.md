@@ -2268,6 +2268,395 @@ asserts the status was one of two values.
 world's denomination out of the battle layer entirely. Both gates accept it and nothing is broken, but
 the dependency runs opposite to the stated intent, and slice 5 should not deepen it.
 
+### 2026-09-02 — development, slice 4b (OPP, restocking the magazine)
+
+The one piece of the port slice 4 left undone: a dock sells `small-cannon-ball`, `swill` and `grog`,
+but buying them filled the hold with inert cargo rather than stocking the ship, so decision 63's two
+placeholders still described an intention. On
+`agent/feature/20260902-151500-opp-slice-4b-port-restocking-and-charts`, branched from the slice 4
+tip `566abd3` rather than from `agent/develop`, because PR 5 is still in the test stage — the task
+sanctions the unmerged base explicitly.
+
+**The representation, decided before the buy path was written**, because the task gated the slice on
+it. The question was whether the magazine's two integer counters become cargo lots or the lots
+become counters. Three facts decided it:
+
+- `ship.cannonballs` has exactly one write site in the repo — `stepCannonLoading` at
+  `ship/meters.ts:105`, which spends one ball per cannon loaded — and balls of a ship's size are
+  fungible, so a count is the whole truth about them. The wiki agrees: shot size is "a property of
+  the ship, not a choice".
+- `ship.rum` is read in exactly one place, `battle/session.ts:166`, as `ship.rum === 0`, and is
+  decremented nowhere. Decision 58 recorded that deliberately.
+- The published rum equivalence — fine rum 100 proof, grog 60, swill 40, so 15 swill = 10 grog =
+  6 fine rum — scales *consumption time*. Mass is 1 kg per unit for every rum.
+
+**Decisions taken on the task's behalf.**
+
+| #  | Decision                                                                                            | Rationale                                                                                                                                                                                                                                                    |
+| -- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90 | The magazine stays two integer counters on `ShipState`; buying a ship supply moves units into them rather than stowing a lot | Balls of the ship's size are fungible and rum has no per-unit identity that anything reads, so counters carry everything either one is asked. It also needs no schema bump, which matters while slice 2c's schema 4 and slice 3's schema 4 are still unreconciled |
+| 91 | `freeHoldOf` counts the magazine's mass                                                             | Moving balls out of `cargo` and into a counter would otherwise make them weightless, and the wiki is explicit that stores share the hold's mass limit. Without this the slice would *introduce* a mass leak where today a bought ball correctly costs hold space |
+| 92 | Cannon ball size is matched against the ship class's existing `cannonSize`, and a mismatch is a new `wrong-cannon-ball-size` rejection | `cannonSize` already exists per class and `ballWeightMicroOf` already keys damage off it; the only thing missing was a map from a size to the commodity that supplies it. The reason is reachable from a command, which is what decision 59 requires of a new one |
+| 93 | `medium-cannon-ball` and `large-cannon-ball` join the commodity table at their published masses      | 14.2 kg and 21.3 kg are published, so they are code and not tuning, per decisions 70 and 76. Without them the size rule could only ever refuse, and eleven of the fourteen ship classes could not be restocked at all                                          |
+| 94 | The rum proof equivalence is **not** implemented in this slice, and the reason is recorded rather than the constant | Proof scales consumption time, and nothing consumes rum — decision 58. A counter that stores units carries mass truthfully but cannot carry proof; one that stores proof carries endurance but loses the 1 kg per unit mass. Only per-type lots carry both, and that is a schema change worth making *with* a consumer, not before one. A follow-up task carries it |
+| 95 | `battle.startingCannonballs` and `startingRum` keep their values and get truthful `_sources` prose   | They are already only a commissioned ship's opening stock — the brigand's at `world/encounter.ts:52` and the scenario player's at `harness/scenarios.ts:42`. Nothing in the sim reads them as a port substitute any more, so the honest fix is the sentence, not the number. `_sources` is not loaded into `Balance`, so this moves no hash |
+| 96 | `buyCommodity` and `sellCommodity` refuse a negative unit count                                     | `ISSUES.md` already records that the sim's command layer accepts one and that `market.buy` of -1000 mints PoE. This slice makes a negative buy write a negative *magazine*, so leaving the hole open would widen a recorded defect rather than merely inherit it. Two lines, and the RPC path was already safe via `requiredCount` |
+
+**What is here.** `buyCommodity` no longer stows every purchase as cargo. A cannon ball of the
+ship's own size goes into `ship.cannonballs`, rum goes into `ship.rum`, and everything else still
+stows a lot; `sellCommodity` withdraws from the same three places, so a ship can sell what it
+bought. `medium-cannon-ball` and `large-cannon-ball` join the catalogue at their published 14.2 kg
+and 21.3 kg, which is what makes the size rule bite for the eleven classes that are not small — until
+now only a sloop, cutter or longship could have been restocked at all. `cannonBallOf` maps a class's
+existing `cannonSize` to the commodity that supplies it, and a mismatch is `wrong-cannon-ball-size`
+on both the buy and the sell path.
+
+**The one thing that would have been a silent regression.** Moving balls out of `cargo` and into a
+counter takes them out of `cargoLotsMassKgOf`, so without decision 91 a bought ball would have
+weighed nothing and the hold would have gained free capacity — a mass leak this slice would have
+introduced rather than inherited. `freeHoldOf` now subtracts `magazineMassKgOf`, and
+`tests/world/soak.test.ts`'s `ladenKgOf` was counting neither the magazine nor the booty chest, so
+its overfull-hold invariant could not have caught it either. Both are fixed, and the boundary is
+pinned by a test: a sloop with 13429 kg aboard takes ten balls at 71 kg and refuses eleven at 78 kg.
+
+**A coverage hole found while writing the tests, and closed.** `market.test.ts`'s `snapshotOf`
+helper stringified `ship.cargo` alone, so every pre-existing "a rejected trade changes nothing" test
+was blind to `ship.cannonballs` and `ship.rum`. A trade that corrupted the magazine on a rejection
+would have passed all of them. It now snapshots the whole ship.
+
+**Verified.** `npm run check` green from cold at **397 tests**, up from 383 — the dependency gate,
+the import gate, three typecheck projects, lint and the suite. The soak's four assertions hold,
+including the one that matters to the task: the pillage loop stays winnable but not a guaranteed
+payout across its twelve seeds, re-run rather than assumed, and now with the magazine counted in its
+overfull-hold check. The headline acceptance criterion is a single test driven over stdio against
+the real `pp-harness`, `tests/harness/restocking.test.ts`: it opens `pillage-loop`, charts a pillage,
+fights the encounter turn by turn, and observes the magazine fall **40 to 29** through
+`stepCannonLoading` — which spends a ball at *load* time, not at fire time, so a magazine drains
+whenever gunnery runs with a slot free. It then ports, buys ten balls at the dock's 56 PoE, and
+reads back `cannonballs` at 39 and the purse at 1440 from 2000, refuses a `large-cannon-ball` on a
+sloop with `wrong-cannon-ball-size` as a per-command rejection over the wire, and charts a fresh
+voyage home.
+
+**What the numbers say about the loop.** The recorded worry that `world.startingPoe` of 2000 cannot
+buy the 40-ball opening magazine at 56 PoE a ball — 2240 — is real but does not bite a restock: a
+ship that spends eleven balls buys them back for 616 and keeps 1384. The `_sources` mismatch
+`ISSUES.md` records stands as written; this slice does not change either number.
+
+**Deviation from the task body, recorded.** The task's title carries "and charts", and its own
+second paragraph scopes charts, chart decay and memorization out as phase 2. Nothing here touches
+them, and the id keeps the misleading word.
+
+**Deferred, with the reason.** The proof-denominated rum store, and with it rum consumption and the
+`ship.rumPerPiratePerThousandTicks` key that decision 58 left unread — see decision 94. Charts,
+chart decay and league-point memorization remain phase 2, untouched by this slice despite the task
+id: the task body scopes them out in its own second paragraph.
+
+## 2026-09-02 — independent review, slice 4b (PR 7, cycle 0)
+
+Four lenses, each in its own worktree, each given the slice diff `566abd3..a125881` and decisions 90
+to 96. The review requests changes. One cluster blocks; the rest is in `ISSUES.md` under the PR 7
+heading.
+
+**Decision 90 was answered for one direction only, and that is what blocks.** The decision settles
+the representation — "buying a ship supply moves units into them rather than stowing a lot" — and the
+buy path implements it exactly. But the five ship-supply commodities still arrive aboard as *cargo
+lots* by a second route the decision never considered: `materialisePlunder`
+(`world/encounter.ts:76,83`) draws the plundered commodity uniformly from `COMMODITY_IDS` and stows a
+lot in `ship.bootyCargo`, and `divideBooty` (`world/division.ts:28`) transfers that lot into
+`ship.cargo`. `heldUnitsOf` and `withdrawUnits` (`market.ts:107-124`) read and write only
+`ship.cannonballs` and `ship.rum` for those ids, and never look at `ship.cargo`. So after this slice
+a ship can hold the same commodity in two places, and the sell path can only see one of them.
+
+Three of the four lenses reached this independently, two of them with executed transcripts on the
+project's own soak seeds:
+
+- Seed 7919: chest is 40 swill, `ship.cargo` is `[{swill,40}]` after `booty.divide`, and
+  `market.sell 40 swill` is refused `insufficient-cargo` while `ship.rum` reads 20. 40 kg of hold is
+  lost for the life of the save.
+- Seed 95028: `ship.cargo` is `[{small-cannon-ball,5}]`, magazine 33. `market.sell 5 small-cannon-ball`
+  is **accepted**, pays 210 PoE, adds 5 to the dock's stock — and takes the units out of the
+  magazine, 33 to 28, leaving the cargo lot untouched. The command sold the ammunition rather than
+  the plunder, and the plunder is now unsellable.
+- A sloop that plunders `large-cannon-ball` is refused `wrong-cannon-ball-size` on every attempt
+  forever, because the size guard sits ahead of everything: 100 units is 2130 kg of a 13500 kg hold
+  gone permanently, with no command that can free it.
+
+**It is a regression, not an inheritance, and this slice widened its own exposure.**
+`git show 566abd3:packages/sim/src/world/market.ts` sells every commodity through
+`lotOf(ship.cargo, ...)`, so before this slice all three cases above sold correctly out of the hold
+and left the magazine alone. And the slice grew `COMMODITY_IDS` from 14 to 16 by adding
+`medium-cannon-ball` and `large-cannon-ball`, so the share of plunder rolls landing in a container the
+sell path cannot reach went from 3 in 14 to 5 in 16.
+
+**What the review is not asking for.** It is not asking for the magazine representation to be
+reverted — decision 90 is sound and the buy path is right. The gap is that the sell path, and
+whatever puts plunder into the hold, need to agree about where those five commodities live. That
+reconciliation is an analysis decision, not a patch, which is why it goes back to analysis rather
+than straight to development.
+
+**The named risk of the slice is clean.** The task pointed the lenses at the mass question — balls
+left `ship.cargo`, where `cargoLotsMassKgOf` weighed them, for `ship.cannonballs`, which nothing
+weighed until decision 91 put `magazineMassKgOf` into `freeHoldOf`. `freeHoldOf` is the only capacity
+gate in the repo and every caller of it, of `cargoLotsMassKgOf` and of `holdCapacityOf` was swept:
+`takenCargoOf`, `awardBooty`, `buyCommodity` and the soak's laden-hold invariant all pass through it.
+There is no free hold space, and the double floor is conservative on the buy path — searched
+exhaustively, worst overshoot 0 kg. `npm run check` is green from cold at 397 on two independent
+worktrees.
+
+**Two claims the task asked to be attacked, upheld.** Decision 94's deferral of rum proof is right
+for a reason stronger than the one recorded: after `depositUnits` there is no per-commodity key left
+to index a proof table with, so proof genuinely needs per-type lots. And `market.test.ts`'s widened
+`snapshotOf` strengthens rather than weakens — it is an eagerly evaluated `JSON.stringify` of
+`[market, ship, pirate]`, all plain numbers, strings, `null` and arrays with no `undefined` fields, so
+it is a true deep snapshot; injecting `ship.cannonballs += 1` into the `insufficient-stock` rejection
+makes a pre-existing test fail, and the same injection under the old cargo-only snapshot does not.
+
+**Decision 96 clears decision 59, but does not say why.** `negative-units` is returnable from
+`applyWorldCommand`, which `index.ts:229` exports as public API; the RPC path refuses it earlier in
+`requiredCount` via `Number.isSafeInteger`. That is the same argument decision 92 spells out for its
+own reason, and decision 96 should carry it too.
+
+**What the mutation pass says about the tests.** Twenty-five of thirty deliberate mutations were
+killed, including every mutation of the slice's central claim. The survivors — the entire rum sell
+path, the medium cannon ball in both its mapping and its mass, and the magazine's rounding direction
+— are in `ISSUES.md`. One of them is not merely a gap: no test constructs a ship holding both a
+magazine and a `ship.cargo` lot of a magazine commodity, which is the state `booty.divide` produces
+and the reason the blocking finding survived the slice's own suite.
+
+**Practicalities for whoever picks this up.** PR 7 conflicts with `agent/develop` in
+`docs/analysis/20260901-223150-offline-puzzle-pirates-wiki-mapping-road.md` and nothing else —
+verified with `git merge-tree`; PR 5 has since merged, so the PR's own diff is now exactly the two
+slice-4b commits.
+
+## 2026-09-03 — analysis of the review finding, slice 4b (cycle 1)
+
+The review of PR 7 requested changes on one cluster: decision 90 settled where the five ship-supply
+commodities live when they are **bought**, and never answered where they live when they are
+**plundered**. This entry decides that, and only that. The non-blocking findings stay in `ISSUES.md`.
+
+### The problem, restated
+
+A ship-supply id can reach a ship by two routes that disagree about the container.
+
+The buy path deposits into the counters: `depositUnits` (`packages/sim/src/world/market.ts:95-105`)
+branches on `isCannonBall` then `isRum` and only falls through to `stowLot(ship.cargo, …)` for the
+eleven raw ids. The plunder path stows a lot with no filtering at all: `materialisePlunder`
+(`packages/sim/src/world/encounter.ts:75-84`) draws uniformly from all sixteen `COMMODITY_IDS` and
+calls `stowLot(ship.bootyCargo, …)`, and `divideBooty` (`packages/sim/src/world/division.ts:28`)
+moves that lot into `ship.cargo`. `heldUnitsOf` and `withdrawUnits`
+(`packages/sim/src/world/market.ts:107-124`) read and write only the counters for those ids.
+
+So 5 of 16 plunder rolls — 31.25% — land in a container the sell path cannot see.
+
+### Two things found while mapping the ground that decide the design
+
+**The two containers do not agree on what a cannon ball weighs.** `magazineMassKgOf`
+(`packages/sim/src/world/cargo.ts:25-31`) resolves the ball id from the **ship class**, not from
+what is stored:
+
+```ts
+const cannonBall = cannonBallOf(shipClassOf(ship.shipClass).cannonSize);
+const grams = ship.cannonballs * commodityOf(cannonBall).massGramsPerUnit + ship.rum * RUM_MASS_GRAMS_PER_UNIT;
+```
+
+while `cargoLotsMassKgOf` prices each lot by its own id. Ten `large-cannon-ball` therefore weigh
+213 kg as a lot and 71 kg as `ship.cannonballs` on a sloop. The counter is not merely
+size-agnostic — it actively re-prices whatever is put in it at the hull's own calibre.
+
+**The size guard sits ahead of the inventory read.** `sellCommodity`
+(`packages/sim/src/world/market.ts:72-81`) refuses in this order: `negative-units`,
+`unknown-commodity`, zero-unit success, **`wrong-cannon-ball-size`**, `insufficient-cargo`,
+`market-stock-full`. So a plundered `large-cannon-ball` on a sloop is unreachable by any sell
+command regardless of what `heldUnitsOf` learns to read. The same guard sits at the same relative
+position in `buyCommodity` (`market.ts:49-51`) and is pinned there by
+`tests/harness/restocking.test.ts:132-138`.
+
+### The decision
+
+**120. Plunder draws only from commodities that can be stowed as a cargo lot.** The five
+ship-supply ids are excluded from the draw; they remain in `COMMODITY_IDS`, in the catalogue and on
+every dock, because they must stay buyable.
+
+The rationale is that the two alternatives both founder on the two facts above.
+
+*Depositing plundered supplies into the counters* — the shape that best preserves the flavour —
+cannot be done without silently changing the ship's laden mass, because the counter re-prices balls
+at the hull's calibre. A sloop that plunders 10 large balls would see 213 kg of plunder become 71 kg
+of magazine, inventing 142 kg of free hold. Fixing that would mean giving the magazine a per-size
+representation, which is a much larger change than the defect warrants and one decision 90
+deliberately avoided.
+
+*Teaching the sell path to read both containers* does not reach the worst of the three measured
+cases at all, because the size guard fires first. Moving that guard behind the inventory read would
+change the buy path's refusal order too, since the guard is shared. And it would permanently
+abandon the single-container property decision 90 implies, leaving every future reader of ship
+supplies obliged to check two places.
+
+Excluding at the source is the only option that restores a hard invariant without moving a guard
+the buy path shares, and it is the smallest of the three.
+
+There is a design argument for it beyond convenience: slice 4b exists to make the dock the place you
+restock. Removing supplies from plunder makes the port the *only* source of shot and rum, which
+sharpens exactly the loop the slice was built for.
+
+**121. The excluded set is named once.** A single `isShipSupply` predicate in
+`packages/sim/src/world/commodities.ts`, defined as `isCannonBall(id) || isRum(id)`, replaces the
+open-coded cascade at its three sites in `market.ts` (`:96,100`, `:108,109`, `:114,118`) and is what
+the plunder filter tests.
+
+The set is currently decided in three places by an open-coded disjunction, and it *coincidentally*
+equals `commodityOf(id).class === 'refined'`, which `openingStockOf` (`market.ts:131-134`) uses to
+pick `refinedBasePricePoe`. Two different mechanisms selecting the same five ids for two unrelated
+reasons is how they drift apart: the day a refined commodity is added that is not a ship supply,
+pricing and stowage silently disagree. Naming the ship-supply concept once, and leaving pricing to
+`class`, decouples them before that happens.
+
+**122. The draw is uniform over a pre-filtered list, not a re-roll over sixteen.**
+`materialisePlunder` draws from a `PLUNDERABLE_COMMODITY_IDS` array of the eleven raw ids, with a
+single `nextIntInRange(0, 11)`.
+
+A re-roll on a ship-supply hit would keep the sixteen-id array but consume a variable number of
+draws from `world.plunder`, so the stream position after a plunder would depend on what was drawn.
+Every downstream hash would then vary with the draw's history rather than only its result, which is
+a worse property for a simulation whose whole promise is determinism. One draw, one advance.
+
+Both shapes change the plunder RNG consumption relative to today, so replay and snapshot hashes move
+either way. That is acceptable here — see decision 123 — and the pre-filtered form is the one that
+keeps consumption constant going forward.
+
+**123. No save migration, and no schema bump.** An existing save that already carries an orphaned
+ship-supply lot keeps it. The lot stays unsellable, and such a save should be discarded rather than
+migrated.
+
+Three reasons, in order of weight. The world subsystem is unreleased, so no save that matters exists
+outside a developer's scratch session. No committed fixture is affected: the only one that mentions
+ships is `packages/fixtures/goldens/bilge-session-idle-minute.json`, whose `ships` is `[]`, and there
+is no v4 or v5 save fixture at all. And `SCHEMA_VERSION = 6` with `migrations[5]` is **already
+claimed by slice 2c on branch `agent/feature/20260902-094000-opp-slice-2c-bilging-token-layer`**,
+whose repair task is in flight as this is written; taking 6 here would collide with an open branch
+for the sake of migrating state nobody has.
+
+A migration would also have to answer the size question in untyped `RawSave` data — deciding what a
+sloop's magazine does with plundered large shot, against exactly the mass disagreement decision 120
+exists to avoid. Writing that logic once, in a migration, to serve zero real saves is not worth it.
+
+**124. The invariant becomes a test.** No ship-supply id may appear as a lot in `ship.cargo` or
+`ship.bootyCargo`. Asserted directly, and asserted across the plunder draw over many seeds.
+
+Decision 90 was true by construction on the buy path and false on the plunder path, and the slice's
+own suite could not tell, because no test constructed a ship holding both a magazine and a lot of a
+magazine commodity. A convention that one route honoured and another ignored is what produced this
+cycle; the property is cheap to state and should stop being a convention.
+
+### What this costs, recorded rather than hidden
+
+**The plunder reward distribution changes.** The draw goes from uniform over sixteen to uniform over
+eleven, so each raw commodity's share rises from 6.25% to about 9.09%, and the expected mass and
+value of a plunder shift with it, because the excluded five had their own masses and prices. Nothing
+is retuned in this cycle; this is a note against the encounter tuning, not a constant change.
+
+**Plundered rum is a real loss, and it is temporary.** `ship.rum` folds swill and grog into one
+counter, so rum — unlike shot — has no size problem, and depositing plundered rum into the counter
+would have worked. It is excluded anyway, because one uniform rule is worth more than a special
+case that applies to two of the five ids. Decision 94 deferred rum proof, and the review upheld that
+deferral on the stronger ground that proof needs per-type lots. When proof lands, rum will need to
+be a lot again, and plundered rum can return with it. That is the moment to revisit this.
+
+### Two defects found while mapping, neither in scope
+
+Both are recorded in `ISSUES.md` under this cycle's heading and are **not** part of the development
+task below.
+
+`ship.cannonsLoaded` is a third supply store and it is weightless. `stepCannonLoading`
+(`packages/sim/src/ship/meters.ts:103-105`) moves a ball from `cannonballs` into `cannonsLoaded`, and
+`magazineMassKgOf` weighs only `cannonballs` and `rum`. Loading a cannon therefore deletes its mass
+from the laden hold, and firing never restores it.
+
+`divideBooty` never moves `bootyCargoUnits` into `cargoUnits`. It transfers lots only
+(`division.ts:28`); the counter is zeroed solely by `materialisePlunder` (`encounter.ts:82`), which
+runs only while a voyage is under way, and the `booty.divide` guard (`world/dispatch.ts:135`) checks
+`bootyPoe` and `bootyCargo.length` while ignoring `bootyCargoUnits`. An un-materialised counter can
+therefore survive a division untouched.
+
+### Decision numbering
+
+These are numbered from 120 rather than continuing 4b's 90–96, because four open branches currently
+collide on 90–100:
+
+| Branch   | PR | Decisions | Status                                          |
+| -------- | -- | --------- | ----------------------------------------------- |
+| slice 2c | 6  | 90–98     | in flight; its repair task cites these numbers  |
+| slice 4b | 7  | 90–96     | this branch                                     |
+| slice 5  | 8  | 90–100    | reviewed, cycle 1                               |
+| slice 4c | 9  | 101–103   | numbered defensively above the others           |
+
+The review of PR 8 recommends slice 5 keep 90–100 and slice 4c keep 101–103, with slice 4b
+renumbering to 104–110. Slice 2c is deliberately left alone for now: its repair task, claimed while
+this was being written, cites decisions 90 to 98 by number, and renumbering a branch mid-repair
+would invalidate an in-flight instruction.
+
+104–119 is the space those two pending renumberings need — seven numbers for slice 4b and nine for
+slice 2c — so this cycle starts at 120. That keeps it free whichever order the renumberings land in,
+and whether or not slice 2c renumbers at all.
+
+### What done means
+
+One development slice, against the existing branch and PR 7. It is done when a ship-supply id can no
+longer reach `ship.cargo` or `ship.bootyCargo` by any route, the invariant is asserted rather than
+assumed, and the rum sell path — which two independent mutations survived — is covered.
+
+## 2026-09-03 — slice 4b built the repair, cycle 1
+
+Decisions 120 to 124 are implemented on this branch, against PR 7. Nothing in the design changed
+while building it.
+
+### What was built
+
+`isShipSupply` joins `isCannonBall` and `isRum` in `packages/sim/src/world/commodities.ts`, and
+`PLUNDERABLE_COMMODITY_IDS` beside it is `COMMODITY_IDS` minus that set — the eleven raw ids, in
+catalogue order (decision 121). The three sites in `market.ts` — `depositUnits`, `heldUnitsOf`,
+`withdrawUnits` — now ask `isShipSupply` the membership question and keep their two-way branch for
+the routing, so the counter choice stays where it was and only the set is named once.
+`materialisePlunder` draws from `PLUNDERABLE_COMMODITY_IDS` with a single `nextIntInRange`
+(decisions 120 and 122). `openingStockOf`'s `class === 'refined'` is untouched.
+
+The invariant of decision 124 is asserted in two places, at two altitudes. In
+`tests/world/encounter.test.ts` the plunder draw over 60 seeds stows no ship-supply lot and covers
+every plunderable id. In `tests/world/soak.test.ts` a new run field records any ship-supply lot in
+`cargo` or `bootyCargo` on **any** ship in the final state, so the property is checked end to end
+across the soak seeds rather than only at the draw.
+
+The two coverage holes the review named are closed in `tests/world/market.test.ts`: the rum sell
+path — payment, counter withdrawal, the `insufficient-cargo` refusal, and swill and grog sharing one
+store — and a ship holding both a stocked magazine and an orphan lot of the same id, which pins that
+the sell path reads the counter only.
+
+Ten tests added; `npm run check` is green from cold at 407.
+
+### Two things worth knowing for the next stage
+
+**The pinned hashes did not move.** Decision 122 predicted that narrowing the draw would shift
+`world.plunder` consumption and with it the replay and snapshot hashes. It did not: no test pins a
+plunder-derived hash as a literal, so `tests/sim/determinism.test.ts` and
+`tests/sim/snapshot.test.ts` passed unchanged, as did the encounter and pillage-loop tests the task
+flagged as coupled. The reward distribution still shifted exactly as decision 122 described — that
+consequence is real and unretuned — but nothing had to be re-blessed, and no fixture was touched.
+
+**Every new test was checked against the defect it exists to catch.** Reverting
+`materialisePlunder` to the sixteen-id draw fails the encounter invariant, and independently fails
+the soak invariant on 4 of the 12 soak seeds. Making `withdrawUnits`' rum branch a no-op fails two
+of the new rum tests; making `heldUnitsOf`' rum branch return a large constant fails a third. The
+suite that let this defect through would have caught it in either place.
+
+### One decision taken while building
+
+**125. The branch absorbs `agent/develop` so PR 7 can merge.** PR 7 conflicted with
+`agent/develop` in `ISSUES.md` and in this document — both append-only conflicts, both resolved by
+keeping both sides. `agent/develop` had moved on by the slice-2b and slice-4 merges (PR 4 and PR 5)
+since this branch was cut. The alternative was to hand the review and test stages a PR that cannot
+merge, and the repo has done this before at the same point in the cycle. `npm run check` was rerun
+from cold on the merged tree, not only on the repair: 436 of 436, exit 0.
+
 ### 2026-09-02 — independent review of slice 2c (OPP-14), PR 6
 
 Four lenses over `af6d428..a97600f`, each an independent agent: correctness and regression, security
@@ -2433,6 +2822,707 @@ voyage, which no scenario drives. Defect 2 — a concluded battle orphaned by `b
 followed by `voyage.port` — **is reachable by ordinary play**, needs no hand-started battle, leaves a
 stale battle in hashed state for the whole time in port, and locks out `battle.start` until the next
 voyage's first tick. The queued repair task has been reordered to put defect 2 first.
+### 2026-09-02 — development, slice 5: the isometric renderer and the playable client (OPP-12)
+
+The slice that turns a simulation into a game. Two new packages — `packages/view` (PixiJS v8) and
+`packages/app` (Vite) — and the first runtime dependencies the repo has ever carried. The whole
+slice is additive: not one line of `packages/sim/src` changed to make rendering possible, which is
+the property decision 1 was bought for.
+
+**The client facade is the whole design.** `packages/view/src/client/` owns the only `Sim` instance
+in the browser and re-exports every simulation symbol the view is allowed to see. Scenes and panels
+import from `../client/rules.ts`, never from `@opp/sim`. That is not a convention — it is the gate
+below, and it is what makes "the renderer holds no game logic" a thing a machine can check rather
+than a thing a reviewer has to believe.
+
+**Decisions taken on the goal's behalf.**
+
+| #   | Decision                                                                                      | Rationale                                                                                                                                                                                                                                            |
+| --- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 90  | The layering gate slice 5 owes is `tools/check-view-boundary.ts`, wired as `npm run boundary`   | The three existing gates guard `packages/sim` only, and slice 3's review already noted nothing enforces the reverse. The gate fails on any view file outside `client/` naming `@opp/sim`, and on the sim or harness importing the view                 |
+| 91  | The gate ships with negative fixtures and a positive one, per decision 22's lesson              | `tests/gates/boundary.test.ts` asserts the leaking file is caught, the reversed import is caught, the facade itself is left alone, and the real tree passes. A gate verified only by its own green run stops guarding silently                         |
+| 92  | The balance parser moves into `packages/sim` as `balanceOf(file: unknown)`                      | The browser needs the same validation the harness has, and `loadBalance` was `readFileSync` welded to 180 lines of pure shaping. Splitting it gives both callers one implementation; the sim still cannot read a file, which is what decision 42 said  |
+| 93  | The client's opening is a command list, pinned byte-for-byte against the harness scenarios      | A view that builds its own opening drifts from the headless one. `tests/view/boot.test.ts` asserts `GameClient.create(...).save()` equals `createScenarioSim(seed, 'pillage-loop').save()`, and the same for `sea-battle`. Drift becomes a red test    |
+| 94  | The avatar's scene position is view-local and never reaches the simulation                      | The sim has no avatar and no scene. Reusing the marker placeholder would have put drift on the player. Walking is a client concern in the wiki too                                                                                                    |
+| 95  | Tile dimensions are 64x32 and the depth stride is 16                                            | The wiki map fixes neither; `06-stack-decision.md` leaves `tw`/`th` as variables. 2:1 is the conventional iso ratio, and a stride of 16 leaves room for the wiki's four layers within one tile's depth band                                            |
+| 96  | The tick budget is computed in integer tick-units, not milliseconds                             | `Math.floor(1000 / (1000 / 60))` is 59, not 60. The first frame test caught a tick lost per second; `budgetOf` now multiplies before it divides, and a thousand-frame test pins the drift at zero                                                     |
+| 97  | Panel refresh is announced on events, or every 30 ticks, not every frame                        | The panels rebuild DOM on notification. At 60 fps that is 60 rebuilds a second for a purse that changed twice. Meter bands already arrive as events; the heartbeat only covers continuous readouts like voyage progress                                |
+| 98  | `?scene=battle` opens the `sea-battle` opening rather than being refused                        | `canEnter('battle')` is false unless a battle runs, so the render smoke could not reach the battle grid at all. The client now takes an `opening`, and the two openings are exactly the harness's two scenarios                                        |
+| 99  | The canvas is inset by the panel column instead of drawing beneath it                           | The first smoke baselines showed the battle planner drawn under the chart and the Sunshine widget — half the phase rows and the submit button unreadable. `panels.css` publishes `--pp-panel-column` and the app shell insets `#stage` by it           |
+| 100 | The chat history overlays the scene translucently rather than reserving space                   | The wiki's default is a fade overlay, and reserving 150px of a 720px window for a log the player mostly ignores is worse. It is now 75% opaque, so the board reads through it                                                                         |
+
+**Dependencies added, and why.** `pixi.js@8.20.1` — the renderer decision 1 and the stack document
+both name, pinned to the exact version the stack document cites. `vite@8` — the app shell, dev
+server and bundler. `@playwright/test@1.62` — the render smoke only, and deliberately **not** part
+of `npm run check`, because CI provisions no browsers. `npx playwright install chromium` was run to
+produce the baselines; Playwright 1.62 pins a Chromium revision this machine did not already have.
+`packages/sim/package.json` still declares an empty `dependencies`, and `npm run deps` still proves
+it.
+
+**What the tests prove, and what they do not.** `tests/view/` covers what can be judged without a
+browser: the tick budget, the iso projection round trip, the four-directional viewport-clipped
+pathfinder including the hazard-adjacency rule and the portal warp, the two openings against the
+harness, and the whole pillage loop driven through `GameClient` — buy, chart, sail, a real brigand
+battle, port, divide, sell, with the purse larger at the end. The Playwright smoke asserts only that
+the four surfaces are *drawn*; it asserts no game rule, by design. Neither proves the game is
+**fun**, and neither replaces the physical test.
+
+**Verified by hand, in a browser, before the PR.** Walking, the radial menu, buying 40 sugar cane
+(purse 2000 to 1720, stock 500 to 460, logged in chat), charting a two-league pillage to Doyle, the
+deck scene with all seven stations read from `ShipClass` rather than hardcoded, taking the bilging
+station and swapping tiles. Two defects were found this way and fixed: clicking a prop's drawn body
+did nothing because only its ground tile was hit-tested, and the battle HUD was unreadable beneath
+the DOM panels.
+
+**Deviations from the stack document.** It names pnpm (the repo uses npm workspaces, per slice 1),
+`dependency-cruiser` (the repo uses scripts, per decision 20) and Q16.16 (floats are banned outright
+in the sim, and now live only in `packages/view`, which is where that document always said they
+belonged). It also suggests `packages/view/src/sprites/`; there is no art to hold, so the atlas
+draws its placeholders with `Graphics` and the directory is not created.
+
+**Not built, with the reason.** The wiki's full client surface is far larger than the loop: the Crew
+panel, the Ahoy! notification queue and the duty report are not built, because nothing in the pillage
+loop needs them — `open('duty')` is deliberately a no-op rather than a lie. Chat is a local log and
+an event feed, since decision 9 puts every multiplayer surface after the MVP. Sound, animation polish
+and art quality were out of scope by the task. `packages/view` has no owning skill beyond the render
+smoke; `pp-render-smoke` documents the smoke, not the view's architecture.
+
+### 2026-09-02 — development, slice 5 integration: merging agent/develop after PR 5 landed (OPP-12)
+
+Slices 2b and 4 reached `agent/develop` while slice 5 was being built, and the branch was left
+mid-merge when its run ended. Resumed, finished and verified. Three files conflicted; two were
+document unions, and the third needed real work.
+
+**The balance parser collided with itself.** Decision 92 moved the parser into `packages/sim` as
+`balanceOf`, leaving `packages/harness/src/balance.ts` a five-line wrapper. On the other side of the
+merge, slices 2b and 4 had extended the *harness-side* parser with the `market` and `division`
+blocks, the critter and cascade tuning, and `rumPerPiratePerThousandTicks`. Resolved by keeping the
+wrapper and carrying every field the develop-side parser had gained into
+`packages/sim/src/balanceParse.ts`; the two key sets were then compared mechanically and are
+identical.
+
+That comparison is the kind of thing that should not depend on someone remembering to do it, so
+`tests/sim/balance.test.ts` now asserts, for every block, that the set of non-underscore keys the
+file declares equals the set the parser reads. A future parser move cannot silently drop tuning, and
+a tuning key added to `balance.json` without a reader fails the suite rather than being ignored.
+
+**The view had to learn the critters.** Slice 2b's `bilge.poke`, crab, puffer and jelly arrived
+through the merge into a scene written before they existed. `packages/view/src/scenes/puzzle.ts`
+now dispatches `bilge.poke` when the clicked tile is a puffer and `bilge.swap` otherwise, draws the
+three critter cells as their own art rather than letting them fall through the colour table modulo,
+and `packages/view/src/client/log.ts` gains refusal lines for `poke-outside-board`,
+`crab-not-swappable` and `not-a-puffer`. Keyboard and pointer go through the same `performAt`, so
+the two input paths cannot diverge. No game rule moved into the view: which tiles are pokable is
+read from the board's own cell constants, and the sim decides every outcome.
+
+**A collision the next merge will have to settle.** Slice 4b, on its own branch, numbered its
+decisions 90 to 96 — and this slice numbered its own 90 to 100. Both were written against the same
+document while neither could see the other. Whichever merges into `agent/develop` second has to
+renumber, and the decisions referenced from commit messages, `ISSUES.md` entries and the two PR
+descriptions have to be renumbered with it. Nothing is wrong in either branch; they simply cannot
+both be right about what decision 92 means. Flagging it here rather than picking a winner, because
+the choice belongs to whoever integrates them.
+
+**Verified after the merge, from cold.** `npm run check` green at **453 tests** — the deps, imports
+and view-boundary gates, five typecheck projects, lint and the suite. `npm run build` succeeds. The
+four render smoke tests pass against freshly built assets: the iso port scene, the ship deck, the
+bilging board and the battle grid.
+
+### 2026-09-03 — independent review of slice 5 (OPP-12), PR 8, cycle 0
+
+Four lenses, run separately against the merged tree. All three of the slice's verification claims
+were re-run from cold rather than taken from the PR: `npm run check` green at 453 tests,
+`npm run build` green, the four render smokes green. Two findings block; everything else is in
+`ISSUES.md` under the matching dated heading.
+
+**Two blocking findings, both confirmed by executing them.**
+
+The first is a data-loss path this slice opens. `GameClient.restore` assigns `this.sim = Sim.load(text)`
+before anything validates the loaded state, and `deserialise` casts straight through — `migrate`
+checks only that `schemaVersion` is present, numeric and not newer than `SCHEMA_VERSION`. A payload
+at the current version therefore reaches the client unchecked, and the `inBattle` getter's
+`battle !== null` guard passes on `undefined`. Loading `{"schemaVersion":5}` destroys the running
+voyage, throws a `TypeError`, is caught by the Ye panel and reported as "That save be spoiled" — as
+though nothing had happened — and the render loop then dies on the next frame. The unvalidated sink
+in `save.ts` is not this slice's work; it arrived with the `agent/develop` merge. The player-facing
+button in front of it is, which is what makes it blocking here.
+
+The second is decision 90's own claim. The integration entry above states that no game rule moved
+into the view because "which tiles are pokable is read from the board's own cell constants, and the
+sim decides every outcome." Reading the constant is indeed fine; the decision built on it is not.
+The sim models a puffer as swappable — `swapRejection` rejects crabs and out-of-board only, and
+`applyBilgeSwap` falls through to `swapCells` for a puffer beside an ordinary colour — and a
+dispatched `bilge.swap` on a puffer is accepted and moves it. The view can never send that command,
+because `performAt` turns every puffer click into `bilge.poke`. A puffer can therefore only be
+walked leftward, by clicking its left-hand neighbour. That is a rule living in the view, and the
+boundary gate cannot see it because it is not an import. Either the move is restored, or the
+input-mapping decision is recorded as a decision — with a rationale on the record this would not
+have blocked.
+
+**Three claims in this document are inaccurate as written, and are corrected here.**
+
+- The puffer claim above.
+- "The deck scene with all seven stations read from `ShipClass` rather than hardcoded" — three of
+  the seven counts are invented in the view: navigation is a local constant of one, rigging aliases
+  `sailStations`, patching aliases `carpStations`. `ShipClass` carries no navigation or patching
+  complement. No behaviour differs today.
+- "`tests/view/` covers every module that does not import Pixi" — twenty of the thirty new view
+  modules are Pixi-free and the tests import five of them. Roughly 1,400 Pixi-free lines have no
+  test, including all of `panels/`, `client/log.ts`, `scenes/deck.ts`, `scenes/port.ts` and
+  `ticker.ts`.
+
+A fourth is narrower than claimed rather than wrong: "a tuning key added to `balance.json` without
+a reader fails the suite rather than being ignored" holds inside the nine known blocks, because
+`BLOCK_NAMES` is a hardcoded literal. A whole tenth block with no reader passes all seven tests —
+verified. Deriving the list from the file's non-underscore top-level keys closes it and keeps both
+sides of the comparison independent.
+
+**What the review confirms, so no later stage needs to redo it.** The balance parser merge is
+clean: all 71 `(block, reader-type, key)` triples are identical across the merge, with no
+transposition between property names and the keys they read, checked by two independent methods.
+Decision 93's pin compares two genuinely independent producers — the view's `openingCommands` and
+the harness's scenario builders, with no dependency between the packages — and it is sensitive to
+semantic drift; a commutative reorder of two opening commands passes, which is correct, because the
+pin compares resulting world state rather than the command list. Decision 96's tick fix is right,
+and the integer-division shape it fixed appears nowhere else in the view. The boundary gate's own
+fixtures assert a non-zero exit and the specific message, so decision 91 is properly met.
+
+**Decision 90's gate is narrower than decision 90's sentence.** `packages/app/src` is scanned in
+neither direction, and pointing the gate at it exits 1 on `main.ts` reaching `@opp/sim` — so the
+app shell is a violation by the gate's own definition, exempt by accident rather than by decision.
+`balanceOf` in a composition root is defensible; the exemption should be recorded or the gate's
+roots widened. Four further evasion shapes were run against the gate and all passed: a nested
+directory named `client` anywhere under the view, a relative `../../../sim/src/index.ts`, a
+non-`.ts` extension, and a template-literal dynamic import. None is used in this diff. The relative
+deep import is the one to close first, because it is the shape a developer reaches for once the
+package specifier is rejected.
+
+**Decision numbering.** Three open branches are involved, not two: slice 4b holds 90–96, slice 5
+holds 90–100, and **slice 4c (PR 9) already holds 101–103**, having deliberately numbered above
+both. The review recommends that **slice 4b renumber its decisions to 104–110**, and that slice 5
+keep 90–100 and slice 4c keep 101–103.
+
+PR 7 is `DIRTY` and must be reworked before it can merge, so the renumber rides along with work
+already queued; it carries seven decisions against slice 5's eleven, and slice 5's numbers are
+referenced across eight commits, 69 files, `ISSUES.md` and its PR body. Slice 4c is left alone
+because it is the one branch that numbered defensively.
+
+This is a recommendation to whoever integrates them, not a finding against any branch.
+
+### 2026-09-03 — analysis of review findings, slice 5 (OPP-12), PR 8, cycle 1
+
+Two findings blocked. Neither is a defect in what slice 5 set out to draw; both are about what the
+client does when something goes wrong, and about a rule the view was deciding without saying so.
+The twenty non-blocking findings stay in `ISSUES.md` and are not touched here, except where a repair
+below happens to pass through one, which is noted each time.
+
+#### Loading a spoiled save destroys the running game (blocking 1)
+
+**The cast is the defect, and it is one line.** `deserialise` ends at `save.ts:53` with
+`return current as unknown as WorldState`, and the `while` loop above it never runs for a save
+already at `SCHEMA_VERSION`. `{"schemaVersion":5}` therefore arrives as a `WorldState` whose other
+eleven fields are all `undefined`. Everything downstream is a consequence: `GameClient.restore`
+assigns it over the live `Sim`, `syncScene` reads `inBattle`, `battle !== null` passes on
+`undefined`, and the `TypeError` lands in the Ye panel's catch, which reports "That save be spoiled"
+— a sentence whose plain reading is that nothing happened, while the voyage is already gone.
+
+**The repair reaches to the sink, not to the button.** Validating inside `deserialise` fixes the
+defect for every caller at once: the client's Load button, the harness's `session.load`, the tools,
+and any future caller. Probing a locally-built `Sim` in the client would fix only the client, and
+would leave the harness accepting a save it should refuse — `session.load` on `{"schemaVersion":5}`
+currently succeeds and fails later at a hash or a step, which is the same defect wearing a different
+coat. So the guard goes in `save.ts`, and the client changes as well, for a different reason given
+below.
+
+**The validator stays shallow, deliberately.** `WorldState` has twelve top-level fields; two of them
+are expensive to check properly. `balance` is the 17KB tuning file that `balanceOf` already parses
+across 71 triples, and `rngStreams` is an open index signature whose keys are created on demand and
+cannot be enumerated. A validator that checks the twelve fields for presence and primitive kind —
+twelve tests, no recursion, constant in the size of the save — catches `{"schemaVersion":5}` and
+every truncated save, which is the depth at which the failure actually occurs. Full recursive
+validation is a much larger job for a much smaller marginal catch, and it would duplicate
+`balanceOf`. If a save is ever spoiled *below* the top level, the golden and replay fixtures are the
+instruments for it, not the loader.
+
+**No library, and none was considered for long.** `packages/sim` has an empty `dependencies` and a
+gate that keeps it that way, so a hand-written guard was the only option consistent with the repo.
+It follows `balanceParse.ts`: `isRecord`, `TypeError`, a dotted path in the message. `save.ts` today
+throws plain `Error` for its three existing checks; those are left alone rather than churned.
+
+**The client changes anyway, because validation and containment are different properties.**
+`restore` assigns `this.sim = Sim.load(text)` and only then does work that can throw, so the good
+`Sim` is unreachable before anything has judged the new one. The harness already has the right shape
+at `methods/session.ts:39-46` — build into a local, attach only on success — and the client should
+mirror it. With the validator in place this ordering catches nothing today; it is what stops the
+next unvalidated failure inside `syncScene` or `announce` from costing a voyage.
+
+**The ticker is folded in, because it is what turns a bad frame into a hang.** `ticker.ts:21-22`
+calls `step` and re-arms afterwards, unguarded, so one throw inside a frame ends the loop for good
+while `running` keeps reporting `true` off a handle that has already fired. Re-arming *before* the
+callback rather than wrapping it in `try/finally` is the smaller change and fixes more: the loop
+survives a throwing frame, `running` stops lying, and the latent mirror bug — a `stop()` called from
+inside a callback being undone by the unconditional re-arm — goes away with it, because `stop()`
+then cancels a handle that is genuinely pending. This is `ISSUES.md`'s Robustness entry, repaired
+here rather than left, because the blocking finding is only recoverable if the loop is still alive
+to show the player the refusal.
+
+#### The view removes no legal move — the original never offered it (blocking 2)
+
+**The wiki does not answer the question directly, and the reading it forces is the one already in
+the code.** `docs/wiki-map/01-duty-puzzles.md:95` gives Bilging *a two-cell horizontal cursor*,
+moved by the mouse or the arrow keys, where a left click swaps the two selected pieces; line 100
+gives the puffer *click to expand*. Nothing in `docs/` says whether a puffer may be swapped with an
+ordinary colour — the map names only the crab as immovable, and it affirms that swapping two puffers
+just swaps them. The two control sentences are in tension, and the only reading that makes both true
+at once is that the pointer sits over one cell of the selected pair and which cell it sits over
+decides the gesture: a puffer under the pointer pops, a puffer beside it is swapped and moves. That
+is exactly `performAt`, and under it a puffer moves leftward only.
+
+That reading is an inference, not a quotation, so it is taken as decision 115 rather than presented
+as a published rule. Its cost is stated plainly: the puffer-on-puffer swap the wiki does mention is
+unreachable from the pointer, because either cell of that pair pops. The alternative readings are
+worse. A modifier-click adds a gesture no version of the original had and which line 95 excludes by
+listing the whole control set. Making the puffer swap on click and pop on some other input
+contradicts line 100 outright. Both would be inventions dressed as restorations.
+
+The sim keeps the complete rule table, and that is not a contradiction: `swapRejection` refusing only
+the crab matches the wiki, and a `bilge.swap` onto a puffer stays reachable from the harness, which
+is how the puffer-on-puffer and puffer-on-colour rules remain exercised and tested. The rule table
+says what a swap does when one happens. The input scheme says which swaps a player can ask for. The
+sim is right to hold both, and the view is right to offer fewer.
+
+**What was actually wrong is the record, and the fact that the rule was anonymous.** The integration
+entry claims no game rule moved into the view. One did: the pointer-identity mapping is a rule, it
+lives at `puzzle.ts:327`, and the boundary gate cannot see it because it is not an import. The
+mapping is right; it was never written down and never tested. So it is recorded as decision 115
+below, and it is given a name and a test rather than staying a conditional buried inside a
+Pixi-importing closure. Extracting it as an exported function in a Pixi-free module is the only way
+this repo can test it at all — there is no jsdom and no DOM harness, and `tests/view/` reaches
+`grid.ts` and `walking.ts` precisely because they import no Pixi.
+
+**The keyboard clamp is repaired here, not left.** `puzzle.ts:391` clamps the cursor to
+`board.width - 2`, which is the swap partner's constraint applied to both gestures, so a puffer in
+the last column is poppable with the mouse and unreachable from the keyboard. That is the divergence
+the same entry denies. Clamping to `board.width - 1` and letting the mapping decide makes both paths
+reach the same set, which is what the claim needs in order to become true. It is listed in
+`ISSUES.md` as non-blocking and would have stayed there, but the blocking repair touches the same
+lines and leaving it would leave the corrected claim false again.
+
+**One more view-side rule goes with it.** `puzzle.ts:328` returns silently when a non-puffer click
+cannot start a swap, which is the view pre-judging a refusal the sim owns, and it is why
+`'swap-outside-board'` — "That swap falls off the board." — is dead on the pointer path. Dispatching
+and letting the sim answer removes the third re-derivation of the swap axis from the input path and
+gives the player the message that already exists. The two remaining re-derivations at `:660` and
+`:137` are cosmetic and stay in `ISSUES.md`.
+
+**The player-facing text has to move with the code**, since `puzzle.ts:137` states the defect as
+though it were intended and `:143` says Space swaps when it may pop. Both are inside the puzzle
+panel, so the committed Playwright baseline diffs and is re-blessed under `pp-render-smoke` — a text
+reflow, not a render regression.
+
+#### Two claims in the integration entry are corrected, not edited
+
+The entry of 2026-09-02 says *"Keyboard and pointer go through the same `performAt`, so the two
+input paths cannot diverge"* and *"No game rule moved into the view"*. The first is false because of
+the clamp; the second is false because the mapping is a rule. Both are corrected here and left
+standing there, which is how this document has handled its own errors before — the review entry
+above corrects three earlier claims the same way. Editing a dated entry after the fact would make
+the record less trustworthy than the errors do. Once the development task lands, both sentences
+become true of the code, and this paragraph is the bridge between the two states.
+
+#### Slicing
+
+One development task, not two. The findings are independent but both are repairs to the same open
+PR on the same branch, and splitting them would put two agents on one branch or two round trips
+where one does. The branch is
+`agent/feature/20260902-000500-opp-slice-5-renderer-and-playable-client` and the PR is 8; no second
+branch is opened.
+
+#### Decisions taken without a human, continuing the series above
+
+Numbering starts at 111. Slice 4c holds 101-103 on its own branch, and the review above recommends
+slice 4b take 104-110, so 111 is the first number free on every branch.
+
+| #   | Decision                                                                                                   | Rationale                                                                                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 111 | The structural guard goes in `deserialise`, not in `GameClient.restore`                                     | One sink serves the client, `session.load` and the tools; the harness accepts `{"schemaVersion":5}` today and is fixed by the same line                                                                 |
+| 112 | The guard checks the twelve top-level fields for presence and kind, and does not recurse                    | It catches the failure at the depth it occurs, is constant in save size, and does not duplicate `balanceOf` or try to enumerate `rngStreams`' open key set                                              |
+| 113 | `restore` builds the `Sim` into a local and assigns only on success, even with the guard in place           | Validation and containment are different properties; the harness already has this shape, and it is what stops the next unvalidated throw from costing a voyage                                          |
+| 114 | The ticker re-arms before the step callback rather than wrapping it in `try/finally`                        | Smaller change, and it also stops `running` reporting `true` off a spent handle and removes the latent `stop()`-inside-callback bug                                                                     |
+| 115 | Pointer identity decides poke from swap, and that mapping is the recorded input rule                        | The only reading that makes the wiki's two-cell cursor and its *click to expand* both true at once; the cost is that a puffer-on-puffer swap is unreachable from the pointer, and a modifier-click would add a gesture line 95 excludes |
+| 116 | The mapping is extracted as an exported function in a Pixi-free module and tested from `tests/view/`         | A rule the boundary gate cannot see needs a name and a test instead; with no jsdom this is the only shape this repo can cover                                                                           |
+| 117 | The cursor clamp becomes `board.width - 1` and the view stops pre-refusing an off-board swap                | Both input paths then reach the same set, which is what makes the corrected claim true, and the sim's existing refusal reaches the player instead of a silent return                                    |
+| 118 | The two false claims are corrected in this entry rather than edited where they stand                        | The review entry above corrected three claims the same way; rewriting dated entries would cost the record more trust than the errors do                                                                 |
+| 119 | One development task against the existing branch and PR 8, not two                                          | Both repairs are to one open PR; two tasks would put two agents on one branch or spend two round trips on one merge                                                                                     |
+| 120 | Slice 5's repair decisions are numbered from 111                                                            | 101-103 are slice 4c's and 104-110 are reserved for the slice 4b renumber the review recommends, so 111 collides with nothing on any open branch                                                        |
+
+**What done means.** `{"schemaVersion":5}` is refused by `deserialise` with a message naming the
+first bad field; the running voyage survives a refused load and the client keeps stepping; a throwing
+frame costs one frame and not the loop; a puffer in the last column is reachable from the keyboard;
+the poke-or-swap mapping is an exported function with tests; the panel text matches what the code
+does; `npm run check`, `npm run build` and the four render smokes are green with the baseline
+re-blessed.
+
+### 2026-09-03 — development of the slice 5 review repairs (OPP-12), PR 8, cycle 1
+
+Decisions 111 to 117 are built on this branch, against PR 8. Two of them were delivered differently
+from the letter of the decision and one number in the entry above is wrong; both are set out below
+rather than left for the reviewer to find.
+
+#### What was built
+
+**The guard (111, 112).** `deserialise` now ends in `worldStateOf`, which checks every top-level
+field for presence and primitive kind before the `as unknown as WorldState` cast — the cast now
+exists in exactly one place. It follows `balanceParse.ts`: `isRecord`, `TypeError`, a dotted path.
+`{"schemaVersion":5}` is refused with `save.seed must hold a number`, and `'{"schemaVersion":5}'`
+has joined `UNLOADABLE_SAVES` in `tests/harness/session-load.test.ts`, which accepted it before.
+`packages/sim` stays dependency-free.
+
+The kinds live in a `Record<keyof WorldState, FieldKind>` table, so adding a field to `WorldState`
+fails typecheck until the field is given a kind. That is the property that stops this guard rotting.
+
+The guard runs **after** migration, not before. A v2 or v3 save legitimately lacks `balance`,
+`puzzle`, `ships`, `battle`, `pirate`, `voyage` and `markets` — supplying them is what the
+registered migrations are for — so guarding first would refuse every genuine older save. Running
+after means a save is judged against the schema it claims to be at, which is exactly where
+`{"schemaVersion":5}` fails: no migration runs for it, so it reaches the guard unimproved. Both
+directions were checked, including the committed v2 fixture `saves/marker-field-v2.json`.
+
+**The extraction (115, 116).** The mapping is `gestureAt(board, position)` in
+`packages/view/src/scenes/bilgeGesture.ts`, which imports only the client facade and no Pixi, so
+`tests/view/` can reach it. `npm run boundary` sees it now: the rule the gate could not see because
+it was a conditional inside a closure is an import it can follow.
+
+**The clamp and the pre-refusal (117).** `moveCursor` clamps to `board.width - 1` and lets the
+mapping decide the gesture; `performAt` dispatches instead of returning silently, so the sim's
+`'swap-outside-board'` refusal reaches the chat log the way `planner.ts`'s refusals already do.
+
+**The panel text.** *"Click a puffer to pop it. Click any other tile to swap it with the tile on its
+right."* and *"Arrows move the cursor · Space or Enter pops or swaps · Escape leaves the duty."*
+Both were read off a running client to confirm they render and wrap inside the panel.
+
+#### Correction to the entry above
+
+That entry says `WorldState` has **twelve** top-level fields and that `{"schemaVersion":5}` leaves
+"the other eleven" undefined. It has **thirteen**: the twelve it declares plus `nextEntityId`,
+inherited from `EntityIdCounter`. The guard checks all thirteen. Leaving `nextEntityId` out would
+have admitted a save that breaks `takeEntityId` on the first entity created — the same class of
+failure the guard exists to stop, one field further along. Decision 112's substance is unchanged.
+
+Corrected here rather than edited in place, following decision 118's own reasoning about dated
+entries.
+
+#### Decision 113 was delivered by its purpose, not its letter
+
+The decision says `restore` should mirror `methods/session.ts` — build into a local, attach only on
+success. Mirroring it literally changes nothing: `this.sim = Sim.load(text)` already evaluates
+`Sim.load` before the assignment, so a save the sim refuses never reached the field even before this
+task. But the decision states its purpose plainly — to stop "the next unvalidated failure inside
+`syncScene` or `announce` from costing a voyage" — and a reordering does not deliver that, because
+those calls run *after* the swap by construction. `announce` in particular must run after the fields
+are live, since listeners read them.
+
+So `restore` swaps the session in and puts the running one back if the work that follows throws.
+That is more than the decision's letter and is what its stated purpose requires. The test that pins
+it uses a throwing subscriber; the reordering alone leaves that test red.
+
+**The cost of that shape, recorded rather than hidden.** A listener that already ran before another one threw has seen a state
+that is then rolled back, and is not told. It self-heals on the next frame, because the ticker's
+step calls `announce` again — which is only true because decision 114 landed in the same task and
+keeps the loop alive through a throwing frame. The two repairs hold each other up.
+
+#### The baseline did not diff, and that is the finding
+
+The entry above expected the panel rewrite to move the committed Playwright screenshot and be
+re-blessed. It did not move it. `MAX_DIFF_PIXEL_RATIO = 0.01` is 9216 pixels of a 1280×720 shot,
+and the bilging scene's own animation already moves 1400 to 3300 pixels between two consecutive
+frames of a settled board; two lines of 12px copy fit inside that headroom. All four smokes are
+green, `--update-snapshots` rewrote nothing because nothing failed, and forcing
+`--update-snapshots=all` would have committed a fresh animation frame rather than a re-blessing.
+No baseline is touched by this task. The gap is recorded in `ISSUES.md`.
+
+#### Two things the suite still cannot see, stated plainly
+
+**The cursor clamp has no test.** It lives inside the Pixi-importing closure and this repo has no
+jsdom. Inverting `gestureAt` fails four tests; reintroducing `board.width - 2` in `moveCursor`
+leaves all 463 green. Decision 116 moved the *rule* to where it can be tested, which is what it
+promised, but the clamp is not the rule.
+
+**The keyboard path was not exercised by hand.** Key events do not reach the app through this
+environment's browser pane — arrow presses left `Moves` at zero and the board untouched, which is a
+statement about the pane and not about the code. The panel text was confirmed visually; the last
+column's keyboard reachability is for the test stage, which drives a real browser.
+
+While fixing the clamp, `drawCursor` needed one more change: it returned early when the swap partner
+was off-board, which was harmless while the clamp kept the cursor out of the last column and would
+have made the cursor **invisible** there once it could go. The cursor cell is now always outlined and
+only the partner outline is skipped.
+
+#### Verification
+
+`npm run check` 463 of 463 exit 0 from cold, `npm run build` clean, `npm run smoke` 4 of 4.
+
+The smoke needed a second run to mean anything. `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI` on the fixed port 5178, and the first run was served by a
+**different worktree's** dev server — the slice 5 branch as it stood before these repairs. The
+reported run above is from a dev server started on a private port against this tree. That trap is
+now in `ISSUES.md`; anyone running the smoke while another checkout is up should assume the same
+until it is closed.
+
+### 2026-09-03 — independent review of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Four lenses over `358196e`, plus an independent reproduction of the claimed verification. **Approved
+with no blocking findings.** `cycle` stays 1 and the work goes to the test stage. Twenty-one
+non-blocking findings are in `ISSUES.md` under this date. What the review established that the
+design should carry forward is below.
+
+#### The three recorded deviations all survive scrutiny
+
+**Decision 113's argument is true of the code, and the shape delivered is stronger than the letter.**
+`Sim.load(text)` is `new Sim(deserialise(text))`, so the right-hand side of `this.sim = Sim.load(text)`
+is fully evaluated before the assignment — the literal build-into-a-local reordering would indeed have
+changed nothing, exactly as the developer argued. The harness shape the decision pointed at,
+`methods/session.ts`, has nothing after its assignment that can throw and therefore needs no rollback;
+`restore` does, and now has one, pinned by a throwing-subscriber test that goes red without it. The
+deviation is not a shortcut; it is the only shape that delivers the decision's stated purpose.
+
+**The thirteenth field is real and nothing else in the repo rests on twelve.** `WorldState` declares
+twelve and inherits `nextEntityId` from `EntityIdCounter`. Grepping the repository for every other
+enumeration of the type — validators, fixture writers, tests, docs — found none. `Record<keyof
+WorldState, FieldKind>` is genuinely closed: neither interface carries an index signature or an
+optional member, so a field added or removed breaks the typecheck rather than rotting the guard. That
+property is confirmed, not assumed.
+
+**The screenshot-headroom argument holds under independent arithmetic.** `MAX_DIFF_PIXEL_RATIO = 0.01`
+on a 1280×720 shot is 9,216 pixels. The panel *is* inside the capture — it is a full-page screenshot
+and at 1280 wide the panel gets its full `PANEL_INNER_WIDTH` at scale 1 — and the copy did change, so
+the question was real. Estimating the ink: the hint went from three wrapped lines to two, which also
+relocates the whole `keys` paragraph upward by a line, so both its old and new positions count —
+roughly 4,800 pixels, plus the scene's own 1,400-3,300 pixels of animation, against a 9,216 budget.
+Under it. The baselines are untouched by this commit and Playwright correctly rewrote nothing, because
+`--update-snapshots` defaults to `changed` and nothing failed. The consequence stands and is recorded:
+`puzzle.png` now depicts copy the app no longer shows, and the smoke provably cannot see
+player-facing text.
+
+#### What the review adds to the design record
+
+**The containment added to `restore` is narrower than the purpose it was added for, and that gap is
+now measured rather than suspected.** Deleting a single nested key from a real save — `puzzle.frame`,
+`puzzle.board`, or any of four `balance` blocks — produces a save that passes all thirteen top-level
+checks, loads, and returns from `restore` without throwing at all, because `syncScene` and `announce`
+between them read only shallow fields. The player is told the voyage was restored; the failure lands
+one frame later inside `sim.step` and repeats every frame after. This is not a regression — the
+behaviour is identical at `a14e78c` — and decision 112's scoping reasons still hold. But it means the
+try block covers precisely the two call sites where a shape failure will not land. Stepping a clone of
+the restored sim one tick inside that same try, before the swap, would move the realistic failure back
+inside the containment that already exists, for one tick of work and no new validation surface. That
+is the shape the next cycle should consider, and it is recorded here rather than acted on because it
+is out of this task's scope.
+
+**Decision 113's recorded cost is imprecise in one detail.** The development entry says a listener
+that saw the rolled-back state self-heals "on the next frame, because the ticker's step calls
+`announce` again". `advance` announces only when there are events or `quietTicks` reaches 30 against
+60 ticks per second. The scene listener does heal every frame — `stage.follow` is called
+unconditionally by the step as well as being a subscriber — but the DOM panel deck has only the
+subscription, so on a quiet board it waits up to half a second. The dependency on decision 114 is real
+and the heal is bounded; the interval is longer than recorded. An `announce()` on the rollback path
+would close it and remove the mutual dependency between the two repairs entirely.
+
+**The guard the whole of decision 111 was argued for is tested only through the harness.** The
+argument for putting it in `deserialise` rather than in the client was that one sink serves every
+caller. The tests added do not follow that argument down: one harness case asserts a reason code, and
+`tests/sim/` gained nothing. `balanceParse.ts`, which the guard is explicitly modelled on, has five
+message-asserting tests. The design is right; the coverage was placed at the wrong layer.
+
+#### Verification, independently reproduced, and what it changed
+
+The developer's `npm run build` claim holds outright. The other two do not hold as stated, though
+neither is a defect in this change:
+
+- `npm run check` **failed on the cold run** — 462 of 463, `tests/gates/purity.test.ts` failing
+  because a spawned gate exited non-zero with empty stdout and stderr under load. It passed on the
+  second run and passes 5 of 5 in isolation. A load-dependent flake in a file this commit does not
+  touch, but it failed the exact command the development entry claims green from cold.
+- `npm run smoke` is **4 of 4 only on a warm server**. Four full runs gave 3/4, 3/4, 4/4, 4/4, with
+  two different failures: a cold-start `render:ready` timeout on the first spec, and a `battle grid`
+  screenshot diff of 630,386 pixels — ratio 0.69, most of the frame — that did not reproduce in six
+  consecutive re-runs.
+
+**The port trap is not merely live, it is occupied.** Port 5178 is held right now by a vite process
+serving the `opp-slice5` worktree at `a14e78c`; fetching the puzzle module from it returns the *old*
+panel copy. Any default `npm run smoke` on this machine silently tests the pre-repair tree and reports
+four green. This review's smoke was run against a server on a private port whose provenance was proved
+by fetching the module and finding the new copy and none of the old. The test stage must do the same.
+
+#### No decisions taken
+
+This review takes no decision numbers. 111-120 stand as written, with the two corrections the
+development entry already recorded, plus the interval correction above.
+
+### 2026-09-03 — physical test of the slice 5 repairs (OPP-12), PR 8, cycle 1
+
+Driven by hand in a real Chrome against a dev server on a private port, from this branch's own
+worktree at `59ad59e`. **Both repairs pass, including the keyboard path nobody had been able to
+exercise.** The PR is not merged: `agent/develop` moved to schema 6 while this branch was in review,
+and PR 8 is now `CONFLICTING`. An integration development task carries it the rest of the way.
+
+#### Provenance first, because the smoke cannot be trusted without it
+
+Port 5178 was occupied throughout by a vite process serving the `opp-slice5` worktree at `a14e78c` —
+the branch as it stood *before* these repairs. Fetching the puzzle module from it returns the old
+copy. So the server for this test was started on port 5201 from this worktree, and its provenance was
+proved before anything was clicked: the module it serves contains *"Click a puffer to pop it"* and
+`board.width - 1`, and zero occurrences of *"The last column cannot start a swap"*.
+
+#### The keyboard path — the thing only this stage could establish
+
+Key events reach the app through Chrome, which is what the development environment's browser pane
+could not do. Every claim below was read off the running client.
+
+- **Arrow keys reach the last column and the cursor is visible there.** Eleven `ArrowRight` presses
+  from `x = 0` put the cursor on `x = 11` of a twelve-wide board, outlined, with no partner outline
+  drawn off the board. This is exactly what `drawCursor`'s reorder exists to guarantee, and it is
+  the claim the suite cannot make — reintroducing `board.width - 2` still leaves all 463 green.
+- **A puffer in the last column pops from the keyboard.** Space on `(11, 0)` popped it: score 0 → 4,
+  moves 1 → 2, star level 0 → 1, *"The bilge rises: star level 1."* in the chat.
+- **A puffer in the last column pops from the pointer**, on the same cell class: moves 2 → 3,
+  score 4 → 23.
+- **A plain tile in the last column refuses out loud, on both paths.** Space on a colour tile at
+  `x = 11` and a click on the same cell each produced *"That swap falls off the board."* in the chat,
+  and neither counted a move. Before this task that path returned silently.
+- **A plain tile swaps rightward on click**, moves incrementing, with the hover pair drawn.
+- **Escape leaves the duty**, landing in the battle that had begun while the duty was held.
+
+The panel copy renders and wraps inside the panel, both paragraphs, exactly as written.
+
+To reach a puffer in the last column deliberately rather than waiting for one to spawn, the running
+save was edited — the whole of column 11 set to `PUFFER_CELL`, one crab placed — and loaded back
+through the client's own Load button. That is worth recording twice over: it exercised the load path
+under test as a side effect, and it is the cheapest way to put this board in a known state by hand.
+
+#### The save guard — refused, and the voyage survived intact
+
+With a pillage voyage running and the leg advancing, `{"schemaVersion":5}` was pasted into the Ye
+panel and loaded. It was refused with **`That save be spoiled: save.seed must hold a number`** —
+the message naming the first bad field that "what done means" promised and that no test asserts. The
+running voyage was completely untouched: still at sea, same scene, purse unchanged, and the leg
+counter kept climbing straight through the refusal (247 → 494 of 5040). Loading the good save back
+restored it and announced *"Yer voyage be restored."*
+
+That is the blocking finding of cycle 0 closed, observed rather than inferred.
+
+#### Confirmations of things the review recorded as non-blocking
+
+- **The panel copy does overstate a swap.** Clicking a crab produced *"The crab will not be shoved
+  about."* and counted no move, so *"Click any other tile to swap it with the tile on its right"* is
+  false for two of the board's cell kinds. Discoverable rather than silent, which is the point of
+  removing the pre-refusal, but the sentence is wider than the rule.
+- **A throwing frame could not be provoked by hand**, so decision 114 rests on its three unit tests,
+  each of which fails against `a14e78c` for a different reason. The loop was observed to keep
+  stepping through a refused load, which is adjacent evidence and not the same claim.
+
+#### Something new, small, and not this slice's
+
+Clicking a duty station the avatar is already standing on answers *"Avast! I can't find a way to walk
+there."* rather than opening the radial menu; moving the pointer one tile and clicking the station
+again opens it. Pre-existing walking behaviour, unrelated to these repairs, recorded in `ISSUES.md`.
+
+#### Suite at the merge head
+
+`npm run check` at `59ad59e`: **463 of 463, exit 0**, from a cold `npm ci` worktree. The
+`tests/gates/purity.test.ts` flake the review hit on its cold run did not recur.
+
+#### Why this does not merge yet, and what has to happen
+
+`agent/develop` is at `80c7785` — slice 2c landed PR 6 while this branch was in review, taking
+`SCHEMA_VERSION` to **6** and adding migration 5. PR 8 reports `CONFLICTING`, and a trial merge gives
+three conflicts:
+
+- `packages/harness/src/balance.ts` — the only real code conflict. `agent/develop` still carries the
+  full parser body in the harness because slice 2c branched before decision 92 moved it into
+  `packages/sim`; this branch carries the five-line wrapper. Decision 92 already settles which side
+  wins, and `tests/sim/balance.test.ts` asserts key-set equality mechanically, so a tuning key
+  dropped in the resolution turns the suite red rather than passing silently.
+- `ISSUES.md` and this document — both document unions.
+
+**The part that could have been nasty is not.** `packages/sim/src/save.ts` auto-merges, and the
+result is sound rather than merely textual: `WorldState` has the same thirteen fields on
+`agent/develop` as here, so `Record<keyof WorldState, FieldKind>` still typechecks; `migrate` keeps
+returning `RawSave` and `deserialise` still wraps it in `worldStateOf`; and develop's migration 5,
+which nulls `balance` and shapes `puzzle`, composes with the guard because `balance` is typed
+`'an object or null'`. `{"schemaVersion":5}` on the merged tree runs migration 5 and is then refused
+by the guard exactly as it is here. Nothing about the guard's design has to change to land on schema
+6.
+
+The integration also has to settle the decision-number collision the PR description flags: slice 4b
+numbered 90-96 on its own branch while slice 5 numbered 90-100, and the cycle 0 review recommended
+slice 4b take 104-110. Slice 4b's PR 7 was still in the test stage when this was written, so whoever
+merges second owns the renumber.
+
+This goes to development rather than to analysis, and `cycle` stays 1: nothing here is an open design
+question. Decision 92 settles the parser, the guard needs no change, and the renumber is already
+recommended. The slice itself passed.
+
+## 2026-09-03 — independent review of the slice 4b repair (PR 7, cycle 1)
+
+Four lenses ran concurrently against `caf8cec`, each in its own worktree. The review approves and
+the slice goes to the test stage. `cycle` stays 1. Full findings are in `ISSUES.md` under the same
+heading; what follows is only what the review changed about the design record.
+
+**The invariant of decision 124 is closed by construction, not merely observed at two altitudes.**
+`stowLot` has exactly three production callers: the buy path, guarded by `isShipSupply`; the plunder
+path, which can now only receive a `PLUNDERABLE_COMMODITY_IDS` id; and `transferLots`, whose sole
+caller `divideBooty` can only propagate a lot some other route already stowed. `battle/booty.ts`
+moves counters, never lots, and nothing else in `packages/sim` or `packages/harness` assigns to
+`.cargo` or `.bootyCargo`. There is no fourth route. The one unguarded route is `deserialise`, which
+decision 123 already accepts.
+
+The two assertions are independent, and the review proved it in both directions rather than assuming
+it: an off-by-one on the draw bound is caught by the encounter test only, and a `stowLot` call
+injected into `divideBooty` is caught by the soak only.
+
+**Decision 122's stated rationale is not the property the code has.** The pre-filtered array was
+chosen over a re-roll to keep stream consumption constant. `nextIntInRange` rejection-samples above
+`2^32 - (2^32 % span)`, and `2^32 % 16 === 0` while `2^32 % 11 === 4` — so the old sixteen-id draw
+consumed exactly one uint32 always and the new eleven-id draw has a ~1e-9 chance of consuming more.
+Consumption became marginally *less* constant. The decision remains right — a re-roll varies with
+the draw's history, which is far worse — but for the reason that one draw beats a variable number,
+not because eleven is as clean as sixteen. Nothing to change in the code.
+
+**The narrowed draw removed a mass leak, which the cost note does not mention.** All eleven
+plunderable ids weigh 1000 g/unit, so the materialised lot's mass now equals the counter it zeroes
+exactly. Under the sixteen-id draw a heavy ball floored units down and deleted the remainder from
+the laden hold — a 40 kg chest drawn as `large-cannon-ball` became 1 unit and lost 47% of itself.
+Pillage voyages therefore come home slightly heavier, in the opposite direction to the reward shift
+the analysis did record. That reward shift is also asymmetric in a way worth stating: expected value
+*falls*, roughly 550 to 480 base PoE per plunder, because the two rum ids drew 40 units at the
+refined price and took the high-value tail with them. No spec pins either number.
+
+**The determinism suite cannot see a change to world RNG consumption.** Decision 122 predicted the
+hashes would move and the build entry correctly recorded that they did not. The structural reason:
+`tests/sim/determinism.test.ts` is entirely self-comparative, and every literal hash in the repo
+lives in the bilge and marker fixtures, whose golden has no ships. No pinned artifact covers voyage,
+encounter, plunder, market or battle. This is a standing gap, not a property of this change, and it
+is filed as a coverage rule rather than as an instance.
+
+**Every mutation claim in the build entry reproduces, including the contested one.** Reverting the
+draw to sixteen ids fails the soak invariant on exactly 4 of the 12 seeds — `7919: 2 swill`,
+`71271: 2 swill`, `79190: 2 grog`, `95028: 2 small-cannon-ball`. One lens first reported this claim
+false; that result was an artifact of the review worktrees sharing a `node_modules` whose `@opp/sim`
+resolved to a pristine checkout, so the soak never saw the mutation. It was discarded after being
+reproduced correctly. Nine further mutations were run beyond the three the task named and none
+survived. Two calibration notes for the record: the soak is non-vacuous today at 10 plunder draws
+across 12 seeds but nothing asserts that plunder fires, and four of the ten new tests bear on the
+defect while six are adjacent coverage or canaries.
+
+**Decision 125's merge is sound.** Verified by diff-of-diffs against the merge base rather than from
+the commit message: each side survives whole, differing only by a blank separator line and one
+reworded sentence, every heading in either parent is present in the result, and no conflict marker
+exists anywhere. Decisively, the merge touches no file under `packages/sim/src/world/` or
+`tests/world/`, so develop's ~1900 lines cannot interact with the repair surface. One wart it did
+leave: this document is oldest-first, and the union resolution appended develop's slice-4 physical
+test section *after* the two 2026-09-03 slice-4b sections, so the file now ends on an out-of-date
+entry. Ordering only; nothing lost.
 
 ### 2026-09-02 — development, slice 4c: the settlement guard and the division budget (OPP-11)
 
@@ -3125,3 +4215,494 @@ against the same two files, so the test stage should expect to do this again.
 `npm run check` green from cold at 437 tests, up from 435 — the two new tests, the rewrite replacing
 one in place.
 
+### 2026-09-03 — physical test of the slice 4b repair (PR 7, cycle 1)
+
+The slice was played, not asserted on. Everything below was driven over real `pp-harness` processes
+speaking stdio JSON-RPC — three independent tracks, each spawning its own child from a cold start,
+none of them calling the sim in process. `npm run check` is 459 of 459, exit 0, from cold, twice.
+The task expected 436; the merge of `agent/develop` at `9edc820` brought the suite up. One earlier
+run answered 127 immediately after `lint` with no test output at all and did not reproduce in two
+subsequent cold runs — a spawn failure under memory pressure on this machine, not a finding.
+
+**The restock loop closes over the wire, and the purse arithmetic is the other way round from the
+task's guess.** Seed 2026, `pillage-loop`: chart a pillage to doyle, meet a brigand at tick 34560,
+fight fifteen planned turns, battle ends at tick 66060, magazine 40 to 29 — four balls spent loading
+cannon before the fight, seven in it. Port at tick 66300. At the dock the purse moves by
+`sellPricePoe` on a buy and `buyPricePoe` on a sale: ten small balls cost 560 at 56 each, taking the
+purse 2000 to 1440 and `ship.cannonballs` 29 to 39; five swill then five grog cost 280 each and take
+`ship.rum` 20 to 30; selling three balls returns 126 and four swill returns 168, both at 42. Every
+counter moved by exactly the units traded and every dock stock moved with it. `voyage.chart` back to
+alkaid was accepted, and stepping 16000 ticks advanced the leg and opened a fresh encounter — the
+ship really sails again.
+
+**The repair holds under real play, and the seeds that used to break it were hit.** Sixty distinct
+seeds, 355 voyages, 421 battles, and 103 genuine plunder draws — a count corroborated twice, once
+from `cargo.plundered` events and once from the `world.plunder` cursor's own `draws`. Ten thousand
+eight hundred and forty-eight full-state scans of every ship's `cargo` and `bootyCargo` found **zero
+ship-supply lots**. All eleven plunderable ids materialised: sincosite 19, stone 12, butterfly-weed
+11, wood 11, chalcocite 8, hemp 8, iris-root 8, lily-of-the-valley 8, pokeweed-berries 8, sugar-cane
+6, iron 4. Every lot the ships actually held was sold at a dock — 102 of the 103, all forty units,
+all accepted, at 480 PoE on a scarcity island and 200 on a spawn island; the missing one sat
+undivided in `bootyCargo` on a seed that hit the tick cap, and it was `iris-root`, a plunderable id.
+The run is not vacuous and the four named seeds prove it: replaying the very same `world.plunder`
+stream through the old sixteen-id draw reproduces the cycle-0 review's findings exactly — 7919
+swill, 71271 swill, 79190 grog, 95028 small-cannon-ball — where the live eleven-id draw yields
+chalcocite, pokeweed-berries, sincosite and sincosite. These seeds hit the exact draws that used to
+land a ship supply in a container the sell path cannot read.
+
+**The oversized-ball refusal is exactly what the contract promises, and it costs nothing.** Buying
+and selling both `large-cannon-ball` and `medium-cannon-ball` on a sloop are refused
+`wrong-cannon-ball-size`; an unknown id is refused `unknown-commodity` ahead of the size check; a
+zero-unit buy succeeds with `units 0, poe 0`. Thirteen refusal probes were bracketed by
+`snapshot.take` and `state.diff`, and the patch came back empty with the hash never leaving
+`91fcf9a7753a1f98`. The one deviation from the pinned order is already recorded at decision 96: a
+negative unit count never reaches the sim, because `requiredCount` in the harness's params layer
+answers `invalid-params` (−32602) first. `negative-units` in `market.ts` is therefore unreachable
+over the protocol — confirmed live, and now recorded in `ISSUES.md` so no future test asserts it
+from outside.
+
+**The magazine's mass is real, but the hold only binds where nothing can reach it.** On a normally
+laden sloop `hold-full` cannot be provoked through `market.buy` at all: free hold is about 13,135 kg
+while a 2000 PoE purse and a 500-unit dock stock cap an order two orders of magnitude below it, and
+`buyCommodity` checks stock and purse before the hold, so the refusal is always `insufficient-poe`.
+Probed where the hold genuinely binds — once through a loaded state with a 13,000-unit lot aboard,
+once through a snapshot-scoped throwaway hull — the accounting is exact and rounding-free: 500 units
+of free hold fall to 358 after twenty small balls (142 = `floor(20 x 7.1)`) and to 308 after fifty
+grog (50); on the other track 50 falls to 15 after five balls (35). Derived free hold on a live ship,
+13500 − 30 − 80 − 255, is 13135 and matched on both sides of a save.
+
+**A stocked magazine survives a save and a reload into a different process.** Seed 2, 154,500 ticks,
+two encounters both won, plunder materialised as `sugar-cane 40` and `wood 40`, twelve balls, eight
+swill and thirty hemp bought. The save — `state.get {pointer:""}` stringified, 9,803 characters —
+loaded into a separately spawned harness reproduces `cannonballs 32`, `rum 28`, `cargo [hemp 30]`,
+`bootyCargo [sugar-cane 40, wood 40]`, `poe 670`, tick 154500 and hash `28703aa744efe5b6`; the full
+state compares byte-identical and all seven RNG cursors match element-wise. The free-hold probe run
+identically on both sides agrees exactly, and the reloaded session keeps playing — a fresh
+`voyage.chart` accepted, 600 ticks stepped, no crash. The magazine round trip the slice never
+claimed is now evidence rather than an assumption.
+
+**Determinism, over the surface the pinned hashes cannot see.** Five seeds run twice in two cold
+processes with an identical command script agreed at every single checkpoint, on the final tick, on
+the full final state and on every RNG cursor: seed 2 `8c3374bfd9d0bdef`, seed 3 `c7e03dd5d1dba588`,
+seed 2026 `14d90902a3e96984`, seed 7 `820b503b43682825`, seed 12345 `6f8796ab538a6d79` — five
+distinct hashes, so the check is not comparing a constant with itself. `world.encounter` opens on
+every seed at two draws; `world.plunder` and `booty.poe` open only where the player wins the fight.
+
+**Two things the record needs, neither of them a defect.** The player driven by
+`tests/world/loop.ts:agentPlanOf` loses most sea battles — the helper is `planBrigandTurn` pointed at
+the player, so the ship fights itself with the brigand AI — and seed 2026, the seed
+`tests/harness/restocking.test.ts` uses, is one of the losing ones. On a lost battle the plunder half
+of the loop never runs at all: `world.plunder` and `booty.poe` never open and `booty.divide` is
+refused `no-booty`. Any world replay or golden recorded later must therefore pick a winning seed —
+2 or 3 — or it will silently cover the encounter stream only. And a world golden is not cheap today:
+`tools/record-replay.ts` writes a checkpoint per tick, a pillage voyage on seed 2 is 155,100 ticks,
+and `MAX_REPLAY_ENTRIES` is 100,000, so it needs either a sparse hash trail or a short world scenario
+first. Recorded in `ISSUES.md` as the shape of the work rather than attempted here.
+
+**The reward shift was observed and is not worth retuning.** Every plunder lot was exactly forty
+units — `bootyCargoUnits` is always the brigand's base cargo and all eleven plunderable ids weigh a
+kilogram — worth 480 or 200 PoE at the dock. It plays as intended; nothing about it felt wrong.
+
+**Nothing blocked.** Seven non-blocking observations went to `ISSUES.md`. PR 7 merges into
+`agent/develop` with a merge commit rather than a squash, continuing the deviation recorded for PR 3,
+PR 4 and PR 6 and for the same reason: sibling branches have already merged `agent/develop` into
+themselves and squashing would detach the history they will merge back against.
+
+### 2026-09-03 — development, slice 5 integration: taking schema 6 from agent/develop (OPP-12), PR 8
+
+`agent/develop` moved to `80c7785` while slice 5 was in review and test, taking `SCHEMA_VERSION`
+from 5 to 6 with slice 2c's token layer and its migration 5. PR 8 was `CONFLICTING` on that alone —
+the slice itself had already passed review and physical test, and nothing about it was in question.
+This entry records the merge. `cycle` stays 1: integration debt, not a repair.
+
+#### Slice 4b had still not landed, and this merge went ahead anyway
+
+`origin/agent/develop` was `80c7785` when this ran; PR 7 was `OPEN` and `MERGEABLE` with its test
+task live. Five consecutive dispatcher runs had held this task back waiting for PR 7 to land, on the
+reasoning that merging first would go stale the moment it did. That reasoning is sound and the
+staleness is real, but a hold nobody lifts is a stall: the queue's own rule is to stop deferring at
+the third run. So the merge was taken with PR 7 outstanding, on the judgement that the durable part
+of the work is the larger part — the `balance.ts` resolution, the carried tuning key, the save-path
+confirmations and this record all survive PR 7 landing. What will not survive is the two document
+unions, which will need a second, cheap merge once PR 7 is on `agent/develop`.
+
+Per this task's own instruction for the not-landed case, **slice 5's decision numbers are left
+alone and the collision stays open**: slice 4b numbered its decisions 90-96 on its branch while
+slice 5 numbered its own 90-100, neither able to see the other. The cycle 0 review's recommendation
+that slice 4b take 104-110 stands and is still unexecuted. Whoever merges second settles it.
+
+No new decision numbers were minted here. The series already carries two live collisions and this
+is an integration rather than a design step, so the resolutions below are named rather than numbered
+so as not to widen the damage.
+
+#### The one real code conflict, and the key it nearly dropped
+
+`packages/harness/src/balance.ts` conflicted because `agent/develop` still carries the full parser
+body in the harness — slice 2c branched before decision 92 moved the parser into `packages/sim` as
+`balanceOf` — while this branch carries the five-line wrapper. **Decision 92 settles it**: the
+wrapper stays, the parser lives in `packages/sim`. Resolved to this branch's side.
+
+That resolution silently drops whatever `agent/develop`'s parser had learned to read, so the key
+sets were diffed rather than eyeballed. Develop's harness parser read 68 keys; `balanceParse.ts`
+read 83. Exactly one key was on develop's side and not the sim's: **`tokenSpawnPerMille`**, slice
+2c's token spawn rate. It is now read in `bilgingBalanceOf`.
+
+Worth recording that this was never going to pass silently: `BilgingBalance` (merged from develop)
+already declared `tokenSpawnPerMille` as required and `balance.json` already carried it at 120, so
+omitting the read is a type error, not a quiet default. The instrument the task pointed at works.
+
+#### `ISSUES.md` and this document — unions, nothing rewritten
+
+Both conflicted as single hunks where each side had appended under its own dated headings. Both
+sides kept in full; no dated entry edited, per decision 118.
+
+- `ISSUES.md` is newest-first, so develop's two slice 2c sections were spliced **above** slice 5's
+  cycle 0 review section. That keeps the file's ordering rule true and also matches wall clock: the
+  2c repair review ran 07:32 and its development 06:56, while the slice 5 cycle 0 review actually
+  ran late on 09-02 despite its 09-03 heading.
+- This document is chronological, so develop's four slice 2c entries were appended after slice 5's
+  chain. The two lineages genuinely interleave by wall clock between 06:12 and 11:42 on 09-03, and
+  entry-by-entry interleaving was rejected: heading dates stay non-decreasing either way, and each
+  lineage's narrative is more use to a later reader unbroken than minute-accurate.
+
+Both files are CRLF and stayed CRLF.
+
+#### The save path — all three prior claims confirmed, and this time by running them
+
+The previous agent established these by reading a trial merge and asked for them to be confirmed by
+running one. `packages/sim/src/save.ts` auto-merged; all three hold.
+
+1. **The field table needs no change.** `WorldState` declares twelve fields and extends
+   `EntityIdCounter` for `nextEntityId` — thirteen. `FIELD_KINDS` at `save.ts:24` has exactly those
+   thirteen names, no more and none missing, so `Record<keyof WorldState, FieldKind>` still
+   typechecks. The green typecheck is the proof.
+2. **The cast is still in one place.** `migrate(save: RawSave): RawSave` at `save.ts:55`,
+   `deserialise` is `worldStateOf(migrate(...))` at `save.ts:52`, and `as unknown as WorldState`
+   appears exactly once in the whole of `packages/sim/src`, at `save.ts:96`.
+3. **A v5 save migrates and passes; a bare schemaVersion-5 stub is still refused.** Run, not
+   reasoned: the fixture `packages/fixtures/saves/bilge-session-v5.json` deserialises to
+   `schemaVersion` 6 with `balance` nulled and a 144-cell `shapes` array built by `shapedPuzzleOf`.
+   A save carrying only `schemaVersion` 5 runs migration 5 and is then refused by the guard with
+   `TypeError: save.seed must hold a number` — the same refusal as before the merge.
+
+#### What the merge did break, and it was not in save.ts
+
+`npm run check` failed from cold on the first attempt, on a file nobody predicted:
+
+```
+tests/view/bilgeGesture.test.ts(18,3): error TS2741: Property 'shapes' is missing in type
+'{ width: number; height: number; cells: number[]; }' but required in type 'Board'
+```
+
+Develop's token layer added a required `shapes` field to `Board`. Slice 5's gesture test builds a
+`Board` literal by hand and predates that field. This is exactly the class of thing the task said to
+watch for, and it is an integration defect rather than a design question, so it was fixed here.
+
+The fix follows what the view facade already does for cell constants:
+`packages/view/src/client/rules.ts` now re-exports `NO_SHAPE` and the `BoardShape` type from
+`@opp/sim`, and the test fills `shapes` with `NO_SHAPE` the way `tests/puzzle/fixtures.ts:70` does.
+Hardcoding the sentinel in the test was rejected — it would duplicate a constant the facade exists
+to publish. **The gesture module itself, the guard, the ticker and the clamp were not touched**, as
+instructed.
+
+Noted and not fixed, because it is a feature gap rather than a regression: the renderer does not draw
+tokens. Slice 5's puzzle scene was built before tokens existed in the sim and nothing that previously
+worked is broken, so it goes to `ISSUES.md`.
+
+#### Verification
+
+- `npm run check` **green from cold, 486 of 486 tests passing**, 0 failed, and all four gates
+  (`deps`, `imports`, `boundary`, then `typecheck` and `lint`) clean. The first cold run failed on
+  the `Board` error above; green after the fix, with no flake in either run.
+- `npm run build` clean.
+- `npm run smoke` **4 of 4 on the first attempt** — no re-runs needed, contrary to the flake the
+  review saw.
+
+#### Which server served the smoke, and a correction to how provenance was meant to be proved
+
+Port 5178 was confirmed still held, by PID 10172, serving the stale `opp-slice5` worktree at
+`a14e78c`. A default smoke run here would have reused it and tested the wrong checkout. This run
+started its own server with `npx vite packages/app --port 5191 --strictPort` and pointed Playwright
+at it through a throwaway config that was deleted afterwards; the worktree carries no untracked file.
+
+**The provenance check this task prescribed does not discriminate, and anyone repeating it should
+know that.** The instruction was to fetch the puzzle module and find *Click a puffer to pop it* and
+none of the old copy. But the stale tree's hint reads *Click a tile to swap it with the tile on its
+right. The last column cannot start a swap. Click a puffer to pop it.* — it **ends** with that exact
+sentence, so a substring match succeeds against both trees. Both servers were fetched and both
+matched.
+
+What does discriminate, and what was actually used:
+
+- `SCHEMA_VERSION` — **6** from port 5191, **5** from port 5178.
+- The hint's leading text — 5191 serves `Click a puffer to pop it. Click any other tile to swap it
+  with the tile on its right.`; 5178 serves the old sentence order above.
+- 5191's `puzzle.ts` imports `bilgeGesture.ts` and calls `gestureAt`; 5178's still inlines the
+  `PUFFER_CELL` comparison.
+
+#### Correction to the section above: slice 4b landed mid-run, and was merged too
+
+The section *Slice 4b had still not landed, and this merge went ahead anyway* was true when it was
+written and is now out of date. It is left standing rather than edited, per decision 118, and
+corrected here.
+
+PR 7 merged to `agent/develop` at **16:22:55 local**, about eight minutes after this integration
+started and while its first `npm run check` was running. The predicted staleness happened exactly as
+described: the merge of `80c7785` was already behind by the time it was committed as `75ade07`.
+
+So `agent/develop` at `09fac60` was merged in as well, in the same run, rather than handing the test
+stage a `CONFLICTING` PR and queueing a third integration task. That second merge behaved precisely
+as this entry predicted — **every code file auto-merged and the only two conflicts were the same two
+document unions**, resolved the same way:
+
+- `ISSUES.md` — slice 4b's three 09-03 sections placed above slice 5's, and its 09-02 cycle 0 review
+  moved down below the remaining 09-03 sections. This has the side effect of **fixing** the
+  out-of-newest-first-order wart that develop's own slice 2c entry raised: every 09-03 section now
+  sits above every 09-02 section.
+- This document — slice 4b's physical test entry placed before this one, which is the true
+  chronological order: 4b's test concluded just before PR 7 merged, and this entry describes work
+  finishing after it.
+
+#### The second merge exposed a second integration defect, of the same kind
+
+The first merge broke a type that had gained a required field. The second broke a type that had
+gained new members, and the failure mode was identical — an exhaustive table in the view that the
+sim had outgrown:
+
+```
+packages/view/src/client/log.ts(12,7): error TS2739: Type '{ ... }' is missing the following
+properties from type 'Record<RejectionReason, string>': "wrong-cannon-ball-size", "negative-units"
+```
+
+Slice 4b added those two rejection reasons in `packages/sim/src/world/market.ts` — the first when a
+ship is offered a cannon ball its guns do not fire, the second when a trade is asked for a negative
+number of units. `REFUSALS` in the view types itself as `Record<RejectionReason, string>` precisely
+so that a new reason cannot ship without player-facing copy, so the gate did its job. Two lines of
+copy were added in the table's market cluster, in the voice of the surrounding entries:
+
+- `wrong-cannon-ball-size` — *Her guns take no ball of that size.*
+- `negative-units` — *Ye cannot trade less than nothing.*
+
+Both defects are worth naming as a pattern for later slices: **`packages/view` holds two exhaustive
+tables keyed off sim types — the save guard's field kinds and the refusal copy — and any slice that
+widens a sim type will fail the view's typecheck rather than the sim's.** That is the design working,
+but it means view work is on the critical path of every sim-side vocabulary change.
+
+#### Verification after the second merge
+
+Re-run from cold on the twice-merged tree:
+
+- `npm run check` **green, 510 of 510 tests passing**, 0 failed, all four gates clean. The first run
+  on this tree failed on the `log.ts` error above; green after the two lines of copy.
+- `npm run build` clean.
+- `npm run smoke` **4 of 4, first attempt again** — no re-runs needed on either merge, so the flake
+  the review recorded did not reproduce once here.
+
+The smoke ran against this run's own server on port 5191, and provenance was proved with a marker
+that only the twice-merged tree can carry: the string *Her guns take no ball of that size*, which
+exists nowhere before this commit. That is a stronger discriminator than the `SCHEMA_VERSION` check
+used after the first merge, and far stronger than the one the task prescribed.
+
+#### The decision renumber is now actionable, and was deliberately not done
+
+Slice 4b has landed, so by the letter of this task the renumber belongs here: slice 4b takes 104-110
+per the slice 5 cycle 0 review's recommendation, with the references carried through commit
+messages, `ISSUES.md` and both PR descriptions.
+
+It was not done, because the instruction cannot be carried out as written:
+
+1. **The commit messages cannot be changed.** Slice 4b's commits are merged into `agent/develop` and
+   pushed. Rewriting their messages means rewriting published history and force-pushing, which the
+   branch policy forbids outright. Any renumber is therefore partial by construction — the documents
+   would say 104-110 while the commits that introduced those decisions keep saying 90-96.
+2. **It collides with decision 118.** Renumbering slice 4b's decisions means editing dated entries
+   slice 4b wrote, in a document whose standing rule is that nobody rewrites anyone else's dated
+   entry. The two instructions point opposite ways, and this is not the run to settle which wins: a
+   documentation renumber is not blocking, and doing half of it would leave the series worse than
+   leaving it alone.
+
+So both numberings stand as their authors wrote them, the collision stays open, and it is raised for
+the human in `ISSUES.md` rather than half-resolved here. For the record, the live state of the
+series: slice 4b holds 90-96 and slice 5 holds 90-100 against this same document, slice 5's repairs
+hold 111-120, and slice 4c holds 101-103 and 126-131 on a branch that has not landed.
+
+#### State handed on
+
+PR 8 carries both merges — `agent/develop` at `80c7785` as `75ade07`, and at `09fac60` on top — and
+reports `MERGEABLE`. A test task follows to exercise the twice-merged tree: the suite, the build, a
+provenance-proved smoke, and one pass through the pillage loop far enough to confirm the save guard
+and the bilging duty still behave. Not the full physical pass — that is done and recorded above.
+
+`agent/develop` was at `09fac60` when this was written, with PR 9 (slice 4c) open and `MERGEABLE`
+behind it. If PR 9 lands before the test stage merges PR 8, the same two document unions will
+conflict a third time and resolve the same way. Nothing else in this integration is expected to
+recur: both defects it found were one-off consequences of sim types widening under a view that had
+already been written.
+
+### 2026-09-03 — physical test of the slice 5 integration (OPP-12), PR 8
+
+The stage the integration asked for: not a full replay of slice 5's physical pass, which review and
+the 11:42 test already did, but a confirmation that the twice-merged tree still behaves, followed by
+the merge into `agent/develop`. PR 8 arrived at `182a18b`, `MERGEABLE`, both GitHub checks green,
+with `agent/develop` still at `09fac60` and already contained in the branch — so the third merge the
+task warned about was not needed. PR 9 was still `CONFLICTING` and did not land during this run.
+
+Tested in a private worktree at `182a18b` on port **5193**, never in the main working tree, which
+was on slice 4b at `0149fcc` with the slice 4c development run live beside it.
+
+#### Provenance, proved before anything was clicked
+
+The task was right to insist on this. Two independent discriminators, both taken from the running
+server rather than from the checkout:
+
+- the served `packages/view/src/client/log.ts` carries `Her guns take no ball of that size`, which
+  `182a18b` introduced and which exists nowhere earlier
+- the running client reports `SCHEMA_VERSION` **6**, and the stale tree serves 5
+
+The smoke was then run through a throwaway `smoke.pr8.config.ts` with **no `webServer` block at
+all**, so `reuseExistingServer` had nothing to reuse and the fixed-port trap could not fire. Port
+5178 was in fact free this time — the squatting worktree had died — but the config makes that
+irrelevant rather than lucky.
+
+#### What passed
+
+| Gate | Result |
+| ------------------------ | ------------------------------------------------------------ |
+| `npm run check` (cold)   | exit 0, **510 of 510** pass, 0 fail — matches the integration |
+| `npm run build`          | clean, built in 1.11s                                         |
+| `npm run smoke`          | **4 of 4, first attempt**, on the proved server               |
+
+The cycle 1 smoke flake did not reproduce here either, now on the third consecutive clean run.
+
+#### The bilging duty, played by hand
+
+Real clicks in Chrome, moves chosen by reading the live board and picking a swap that lands a
+combo. Score ran 0 → 137 over eight moves, one of them a ten-cell combo worth 39 points. At every
+checkpoint the canvas panel and the sim agreed exactly — `Score`, `Moves`, `Star level` and
+`Duty rating` all matched `totalScore`, `moves`, `starLevel` and `ratingOf(dutyOutputPerMille)`, and
+the rating climbed `booched` → `fine` → `incredible` as efficiency went 0 → 5708 per mille. The
+board held 144 cells and 144 shapes throughout, with no `NaN` and no shape outside `[-1, 6]`.
+
+**The token layer is live and does not desync anything.** `tokenSpawnPerMille` reads **120** in the
+running client's parsed balance — decision 92's conflict resolution confirmed end to end in the
+browser, not just in the harness. Once the rating passed `good`, two tokens spawned on refilled
+cells, both on colour cells and never on a critter, and the `bilge.tokens` RNG stream showed 98
+draws in the save. They survived a save/load round trip intact. The renderer still does not draw
+them, exactly as filed — invisible, but not corrupting.
+
+#### The save guard, in the running client
+
+Both halves hold, and this time in the client rather than at the unit level:
+
+- **Good save round-trips.** `Save game` wrote 9569 characters with `schemaVersion` 6 and exactly
+  the thirteen top-level fields `FIELD_KINDS` declares. Pasting it back and pressing `Load game`
+  answered `Yer voyage be restored.` and put the state back precisely — tick 1555, score 137, moves
+  rolled back 9 → 8. Restore lands in the **port** scene, which drew correctly.
+- **Spoiled save is refused by name and costs nothing.** A bare `{"schemaVersion":5}` answered
+  exactly `That save be spoiled: save.seed must hold a number`. The running voyage was untouched:
+  same scene, no `data-render-error`, seed and purse unchanged — and the ticker kept stepping
+  afterwards, `tick` 1555 → 1816. That last point is the whole of decisions 113 and 114 and it is
+  now observed rather than reasoned.
+
+#### One new defect, not blocking, and not caused by the merges
+
+Typing into the `Save text` textarea drives the puzzle. `onKeyDown` in
+`packages/view/src/scenes/puzzle.ts` is registered on `window` and tests only `event.key`, with no
+check on `event.target`, so a space typed into a focused text field is both swallowed by
+`preventDefault()` and dispatched as a bilge move. Typing `a b` into the textarea left it reading
+`ab` and took `moves` from 0 to 1.
+
+It is filed to `ISSUES.md` rather than sent back, on two grounds. It is not in the task's list of
+what counts as blocking, and it is **not a regression from this integration**: `onKeyDown` is
+byte-for-byte identical at `a14e78c`, the pre-merge slice 5 tip, and neither merge touched it. It
+predates the tree under test and belongs to whoever next opens slice 5's input handling.
+
+#### An environment fact worth the next run's time
+
+This app's sim is driven entirely by `requestAnimationFrame`, so **in a hidden or backgrounded
+browser tab the ticker stops dead** — `tick` frozen, `dutyOutputPerMille` stale, `data-render-ready`
+never set. The in-app browser pane runs hidden and froze the client completely; a first attempt at
+testing there recorded a click that appeared to do nothing at all. Chrome's MCP tab is also hidden
+between calls, but a screenshot pumps a burst of frames and the sim catches up on elapsed wall time.
+Board commands dispatch into the sim immediately on click, but everything computed per step —
+efficiency, rating, star level, bilge — only updates on a pumped frame. Read a per-step value
+straight after a click and it will be stale; take a screenshot first.
+
+#### Outcome
+
+Suite, build, provenance-proved smoke, the duty and both halves of the save guard all hold. Nothing
+blocking. PR 8 merged into `agent/develop`.
+
+
+### 2026-09-03 — development, slice 4c integration: taking PR 8's tree into the repair (OPP-16), PR 9
+
+The repair itself was implemented and pushed at `957f44f` by an earlier run, which then merged
+`agent/develop` at `80c7785` as `b49a4a8` and died before recording a check result. Its claim was
+reaped on an expired lease. This run entered with `recovery: clean`, so it re-derived the state from
+the branch and the PR rather than trusting anything left behind, and audited `957f44f` against the
+task's four items before touching it: the predicate withdrawn and renamed, the `port()` call kept,
+the wedge test inverted, decision 88's row restored byte-for-byte with the correction standing as
+its own paragraph, both undefended-guarantee tests added, and the `ISSUES.md` count corrected.
+Nothing was missing, so nothing was re-implemented.
+
+PR 8 landed at 17:28 and moved `agent/develop` from `09fac60` to `391b93e`, which is what made PR 9
+`CONFLICTING`. Merging it in produced four conflicts.
+
+#### The two document unions
+
+`ISSUES.md` and this document, resolved the way every integration before this one resolved them:
+nothing rewritten, each side's internal order preserved, `ISSUES.md` newest-first (so PR 8's
+sections sit above slice 4c's) and this document chronological (so slice 4c's entries, which are
+older, sit above PR 8's). Completeness was checked by arithmetic against merge-base `80c7785`
+rather than by eye — 25 `##` sections at the base, 28 on the branch, 36 on `agent/develop`, 39
+merged; and 42 / 47 / 63 / 68 for this document's `###` headings. Both are exactly base plus both
+sides, so no section was dropped or duplicated.
+
+#### The real conflict: two slices changed the same hold budget
+
+`freeHoldOf` in `packages/sim/src/battle/booty.ts` was edited by both slices for different reasons.
+Slice 4c (decision 120) replaced two separately-floored lot masses with one `stowedMassKgOf` call
+that floors hold and chest **once**, so moving a lot between them cannot gain a kilogram. Slice 4b
+subtracted `magazineMassKgOf(ship)`, so ship supplies stop counting as free hold.
+
+Both intents are wanted and they compose, so the resolution keeps both:
+
+```ts
+holdCapacityOf(ship) - ship.cargoUnits - ship.bootyCargoUnits -
+  stowedMassKgOf(ship.cargo, ship.bootyCargo) - magazineMassKgOf(ship)
+```
+
+Flooring the magazine separately is deliberate and costs nothing: division moves lots between the
+hold and the chest, never into the magazine, so the single-floor guarantee decision 120 bought is
+untouched by a second floor over a quantity division cannot move.
+
+#### The integration defect the merge exposed
+
+`npm run check` came back 534 of 535 with one failure —
+`tests/world/market.test.ts`, *the one commodity that is not whole kilograms is weighed down to the
+kilogram*, expecting 21 and getting 0.
+
+Not a mis-merge. Slice 4c chose `small-cannon-ball` as its part-kilogram commodity because at 7100
+grams a unit it is one of the three commodities that are not whole kilograms. Slice 4b then made
+cannonballs ship supplies: `buyCommodity` sends a ball that **fits** the ship's cannon into
+`ship.cannonballs` (`market.ts:97`) and refuses one that does not with `wrong-cannon-ball-size`
+(`market.ts:49`). A sloop fires small balls, so the purchase now stocks the magazine and `ship.cargo`
+stays empty. **After slice 4b no cannonball can reach a hold through the market at all**, and since
+every other commodity weighs exactly 1000 grams a unit, the market can no longer put a
+part-kilogram lot in a hold. The test was asserting a path that slice 4b deliberately closed.
+
+The rounding rule itself is untouched and still worth defending, so the test keeps its property and
+loses the market: it stows the lot directly with `stowLot` and asserts the same two things, that
+three balls weigh 21 kilograms rather than 21.3, and that they exactly fill the hold. The market
+buy/sell half is dropped rather than rewritten, because slice 4b's own tests already cover both
+sides of the fitting/oversized rule and re-testing it here would duplicate them.
+
+Recorded as a limitation rather than fixed here: `stowedMassKgOf`'s actual single-floor guarantee —
+that hold and chest are floored together — is still defended by nothing. The market test never
+defended it either (it only ever exercised `cargoLotsMassKgOf` over one array), so this is a gap
+decision 120 shipped with, not one this merge created. Filed to `ISSUES.md`.
+
+#### Verification
+
+`npm run check` green from cold, exit 0, **535 of 535**, all six gates clean. `npm run build` clean.
+Worked in a private worktree; the main working tree was never touched.

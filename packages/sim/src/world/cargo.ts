@@ -1,4 +1,11 @@
-import { commodityOf, type CommodityId } from './commodities.ts';
+import { shipClassOf } from '../ship/classes.ts';
+import type { ShipState } from '../ship/state.ts';
+import {
+  cannonBallOf,
+  commodityOf,
+  RUM_MASS_GRAMS_PER_UNIT,
+  type CommodityId,
+} from './commodities.ts';
 import type { CargoLot } from './state.ts';
 
 const GRAMS_PER_KG = 1000;
@@ -13,6 +20,14 @@ export function cargoLotsMassKgOf(cargo: CargoLot[]): number {
 
 export function stowedMassKgOf(hold: CargoLot[], chest: CargoLot[]): number {
   return Math.floor((cargoLotsMassGramsOf(hold) + cargoLotsMassGramsOf(chest)) / GRAMS_PER_KG);
+}
+
+export function magazineMassKgOf(ship: ShipState): number {
+  const cannonBall = cannonBallOf(shipClassOf(ship.shipClass).cannonSize);
+  const grams =
+    ship.cannonballs * commodityOf(cannonBall).massGramsPerUnit +
+    ship.rum * RUM_MASS_GRAMS_PER_UNIT;
+  return Math.floor(grams / GRAMS_PER_KG);
 }
 
 export function lotOf(cargo: CargoLot[], commodityId: CommodityId): CargoLot | undefined {
