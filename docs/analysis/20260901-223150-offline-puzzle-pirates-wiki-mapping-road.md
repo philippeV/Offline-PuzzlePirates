@@ -4706,3 +4706,101 @@ decision 120 shipped with, not one this merge created. Filed to `ISSUES.md`.
 
 `npm run check` green from cold, exit 0, **535 of 535**, all six gates clean. `npm run build` clean.
 Worked in a private worktree; the main working tree was never touched.
+
+### 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 1
+
+Four lenses over the repair at `957f44f` and the integration at `7a58bfd`, by a run with no hand in
+either. **Approved, no blocking finding.** `cycle` stays 1. The fourteen non-blocking findings and
+the two corrections are in `ISSUES.md` under this cycle's heading. What follows is only what the
+review learned about the design.
+
+#### The verification was redone, not inherited
+
+`npm run check` was run from cold in the review's own worktree: exit 0, **535 of 535**, all six
+gates. Both GitHub checks green on `7a58bfd`, `MERGEABLE` / `CLEAN`. The two claims the task offered
+as already-established were spot-checked rather than trusted, and both hold.
+
+#### What PR 9 actually changes against the branch it merges into
+
+The most useful thing this review found, and it should shape what the test stage exercises.
+`git show 391b93e:packages/sim/src/world/session.ts` is **byte-identical to base `22ec18e`**:
+decision 102's `sailed` predicate never reached `agent/develop`. It lived only on this branch,
+between `9960292` and `957f44f`.
+
+So the wedge measured in the cycle 1 analysis — battle non-null forever, `rollEncounter` empty, the
+pillage loop dead — **did not exist on the merge target**. It was a branch-local regression that the
+repair removes, which is exactly what a repair should do; but it means landing PR 9 changes only
+three things in `packages/`:
+
+1. `world/dispatch.ts:84` — `port()` now settles a concluded battle before `state.voyage = null`
+2. `battle/booty.ts:53` — one floor over hold and chest instead of two
+3. `world/cargo.ts` — the `cargoLotsMassGramsOf` extraction, behaviour-identical
+
+Item 1 is the only user-visible behaviour change, and it fixes a strand that **is** reachable on
+`391b93e` with public commands: chart a pillage, meet a brigand, `battle.disengage` (which concludes
+without a tick), then `voyage.port` with no tick in between. On the target, `port()` passes its
+running-battle guard, nulls the voyage, and `stepWorld` returns on `voyage === null` forever after —
+the concluded battle and the orphan brigand hull ride in `state.ships`, the canonical hash and every
+save, and `battle.start` is refused `battle-already-running` for the rest of the session. That is the
+scenario worth playing physically.
+
+#### The separate magazine floor is not merely safe, it is inert
+
+The integration argued the second floor costs nothing because division never moves anything into the
+magazine. Traced against every writer of `ship.cannonballs` and `ship.rum` — `ship/state.ts`,
+`ship/meters.ts` (decrement only) and `world/market.ts` — the argument holds.
+
+It is stronger than it was stated. No public path can put a part-kilogram lot into `cargo` or
+`bootyCargo` at all: the market routes a fitting cannon ball to the magazine and refuses a
+non-fitting one, and plunder excludes ship supplies. Every commodity that can reach a hold weighs
+exactly 1000 grams a unit, so `cargoLotsMassGramsOf` is always a multiple of 1000 and
+`floor(stowed) + floor(magazine)` equals `floor(stowed + magazine)` identically on every reachable
+state. The two forms cannot diverge today; decision 120's guarantee is a claim about states only
+direct construction can build.
+
+Which is why the guarantee's test had to construct one, and does — see the `ISSUES.md` correction.
+
+#### The market is where the two floors do diverge, and it pre-dates this slice
+
+`buyCommodity` charges `massKgOf(commodityId, units)`, flooring the purchase, while
+`magazineMassKgOf` floors the running total. Buying supplies one at a time under-charges the hold by
+the remainder: a sloop laden to 13493 kg with 7 kg free accepts one more small cannon ball, charged
+7 kg, and ends at 13501 kg against a 13500 kg hull. Reproduced end to end.
+
+`world/market.ts`, `massKgOf` and `magazineMassKgOf` are untouched by `391b93e..7a58bfd`, so this is
+slice 4b's and not a reason to hold PR 9. Recorded here because it is the concrete answer to the
+question the integration asked about the two floors, and because the soak invariant that would catch
+it is itself one kilogram loose for the same reason.
+
+#### Two claims in this document overstate what the code does
+
+Both are corrections to the record, neither changes the design.
+
+**Decision 126's "byte-for-byte the predicate on base `22ec18e`"** is literally false, and is
+asserted twice. Base has no predicate function; the condition is two statements inside `stepWorld`
+reading `state.voyage`. The predicate is semantically identical on every reachable state and
+decision 126's other claim — two lines removed and one added against `9960292` — is exact. The
+predicate also now runs from a second call site, `port()`, which base did not have.
+
+**This document is no longer chronological.** The integration's rationale claims both
+order-preservation and chronological order; at this merge they were incompatible, and the resolution
+took order-preservation. Two `2026-09-02` slice 4c entries now sit below five `2026-09-03` PR 8
+entries. Both parents were date-monotonic, so the inversion is the merge's. Worth deciding
+deliberately next time a union of two long-lived document sides is resolved: preserving both sides'
+internal order and keeping the whole file sorted by date are not the same instruction, and no
+resolution can honour both once each side has interleaved dates.
+
+#### What the review confirmed, so the next stage need not
+
+Decisions 126, 127, 129, 130, 131a, 131b and 131c all conform, each checked against the code rather
+than the commit messages. Decision 131b's two mutation tests were traced against the mutations they
+name and both genuinely catch them, including partial hoists of the `port()` settle. Decision 88's
+row was restored byte-for-byte, verified by comparing against the commit that introduced it. Both
+document unions are strict supersets of both parents with **zero** deleted content lines, and the
+section arithmetic was recomputed independently: `ISSUES.md` 25 / 28 / 36 / 39 and this document
+42 / 47 / 63 / 68, exactly base plus both sides.
+
+The rewritten market test drops no coverage: the fitting and oversized ball rules, magazine stocking,
+the whole-kilogram sell round trip and the supply-lot-in-hold boundary are each covered by slice 4b's
+own tests, and the part-kilogram market round trip the old test asserted is now an unreachable state
+rather than an untested one.

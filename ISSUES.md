@@ -4,6 +4,172 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 1
+
+Four lenses over the repair at `957f44f` and the PR 8 integration at `7a58bfd`. **No blocking
+finding**; PR 9 approved. `npm run check` was re-run from cold by this review rather than taken from
+the PR — exit 0, 535 of 535, all six gates. Decisions 126 to 131 all conform, both document unions
+are strict supersets of both parents with zero deleted lines, and the `freeHoldOf` resolution's
+argument holds.
+
+The first two entries below are corrections to entries this branch itself filed. Both were proved by
+running the code, not by reading it.
+
+### Correction: the single-floor guarantee is defended, and by a test this PR already contains
+
+The entry *"`stowedMassKgOf`'s single-floor guarantee is defended by nothing"*, filed by the
+integration earlier the same day, ends with *"The test to write: a ship holding a part-kilogram lot
+in the chest and another in the hold, divided, asserting `freeHoldOf` is identical before and
+after."*
+
+That test is in the tree, in the repair commit `957f44f`: `tests/world/division.test.ts:126`, *a
+chest of cannon balls divides into the hold without gaining a kilogram* — 3 small cannon balls in the
+hold and 7 in the chest, summing to exactly a sloop's 13500 kg, divided, asserting `freeHoldOf` is
+unchanged. `tests/world/division.test.ts:136` defends the same rule a second time through
+`buyCommodity`.
+
+Proved by mutation rather than by eye. Reverting `stowedMassKgOf` to the two-floor form
+
+```ts
+return cargoLotsMassKgOf(hold) + cargoLotsMassKgOf(chest);
+```
+
+fails exactly those two tests and no others — 5 passed, 2 failed. The gap was closed by the very
+commit the entry was written against. It should be closed rather than carried, or the next person
+writes a test that already exists.
+
+It also follows that the guarantee is only reachable by direct construction: no public path can put a
+part-kilogram lot in a hold or chest, because the market routes every cannon ball to the magazine. So
+`floor(stowed) + floor(magazine)` and `floor(stowed + magazine)` agree on every state reachable
+today, and the separate floor for the magazine is inert as well as correct.
+
+### Correction: the soak-invariant entry describes code that is no longer in the tree
+
+The entry *"An invariant that drifted out from under this change"* quotes
+
+```ts
+function ladenKgOf(ship: ShipState): number {
+  return ship.cargoUnits + ship.bootyCargoUnits + cargoLotsMassKgOf(ship.cargo);
+}
+```
+
+and concludes that `ladenKgOf` *"omits `bootyCargo` entirely … cannot see chest mass at all"*. That
+was true of the branch when the entry was written. It is not true of what PR 9 ships: the merge from
+`agent/develop` brought the other side's repair, and `tests/world/soak.test.ts` now reads
+
+```ts
+ship.cargoUnits +
+  ship.bootyCargoUnits +
+  cargoLotsMassKgOf(ship.cargo) +
+  cargoLotsMassKgOf(ship.bootyCargo) +
+  magazineMassKgOf(ship)
+```
+
+so the chest and the magazine are both counted. The union therefore carries two entries about one
+function, and the newer one is the wrong one.
+
+What genuinely survives is one kilogram, not the whole chest: `ladenKgOf` floors the hold and the
+chest **separately** while `freeHoldOf` floors them **once**, and `floor(a+b) >= floor(a)+floor(b)`,
+so the `laden > capacity` breach check is up to 1 kg looser than the budget it guards. That is the
+residue of the single-floor gap above, not a blind spot. It starts to matter only if a part-kilogram
+lot ever becomes reachable in a hold.
+
+### The market over-fills a hull by up to one kilogram when supplies are bought one at a time
+
+Pre-existing and **not** this PR's — `packages/sim/src/world/market.ts`, `massKgOf` and
+`magazineMassKgOf` are all untouched by `391b93e..7a58bfd`. Recorded because the review reproduced it
+while checking the `freeHoldOf` resolution, and because it is the concrete cost of the two floors
+disagreeing.
+
+`buyCommodity` gates on `massKgOf(commodityId, units)`, which floors the **purchase** — one small
+cannon ball is `floor(7100/1000)` = 7 kg — while `magazineMassKgOf` floors the **running total**.
+Buying one at a time therefore under-charges the hold by the fractional remainder.
+
+Reproduced end to end on a sloop, whose `holdMassKg` is 13500:
+
+| step                                  | laden kg | free hold | magazine kg |
+| ------------------------------------- | -------- | --------- | ----------- |
+| 13430 hemp in the hold, 9 small balls | 13493    | 7         | 63          |
+| `market.buy {small-cannon-ball, 1}`   | 13501    | 0         | 71          |
+
+The purchase is accepted because 7 kg is charged against 7 kg free, and the magazine then gains 8 kg.
+The hull carries 13501 kg against a 13500 kg capacity. The over-fill is bounded at 1 kg because
+`freeHoldOf` recomputes from the true magazine and clamps to zero afterwards, and it is invisible to
+the soak invariant for the reason in the entry above. It starts to matter if anything ever trusts
+`ladenKgOf <= capacity` as a hard bound.
+
+### `market.buy` will load a brigand hull that settlement then deletes
+
+`packages/sim/src/world/dispatch.ts:105-106` resolves a trade's ship with `findShip` and applies no
+allegiance or ownership check, so `market.buy` against a hand-commissioned brigand is accepted and
+debits the pirate. `packages/sim/src/world/session.ts:37-39` later strikes that hull off
+unconditionally on settle, taking the cargo and the poe paid for it, with no event.
+
+The loss already exists on `agent/develop` through the tick-time settle; what PR 9 adds is a second
+trigger for it at `packages/sim/src/world/dispatch.ts:84`, port-time. Non-blocking because the state
+needs a hand-commissioned brigand — after PR 9 an *encounter* brigand can no longer be alive while
+the pirate is in port — and because the destruction itself is pre-existing rather than introduced.
+
+### `booty.overflowPolicy` is configured `truncate` but only `refuse` is implemented
+
+`packages/sim/src/battle/booty.ts:59-64` branches on `'refuse'` and otherwise returns `free`, while
+`balance.json:177` selects `truncate` and documents it at `balance.json:30` as *"takes what fits in
+descending unit value and discards the rest"*. There is no descending-value selection and no discard
+record, so `truncate` and `spill-to-sea` are the same path. A player sloop at `freeHoldOf === 0` that
+wins against a brigand carrying 40 units takes 0, and the 40 are struck off with the hull.
+Pre-existing; `freeHoldOf`'s magazine term makes the zero-free state marginally easier to reach.
+
+### Tests that do not defend what their names claim
+
+- **`tests/world/division.test.ts:71`**, *the chest and the hold draw on one mass budget, so division
+  does not change free hold*. Its lot is 40 stone at exactly 1000 grams a unit with an empty hold, so
+  one floor and two floors both give 40; it **passes unchanged** under the two-floor mutation above,
+  confirmed by running it. Pre-existing, and no longer the only defence of that rule, which is why it
+  is filed rather than blocking.
+- **`tests/world/encounter.test.ts:311`**, `assert.equal(state.pirate?.atIslandId, 'alkaid')`, cannot
+  fail: `sailingState` already sets it and nothing nulls it, so it holds whether or not `port()`
+  writes it. The real property is covered at `tests/world/dispatch.test.ts:105`.
+- **`tests/world/dispatch.test.ts:296`**, *a second voyage is refused while the first one is still
+  running*, hand-builds `state.voyage` because the guard is unreachable through public commands:
+  `charter()` nulls `pirate.atIslandId`, and the `not-in-port` check precedes the
+  `voyage-already-running` check, so a second `voyage.chart` is always refused `not-in-port`. Fine as
+  defence in depth; the name implies a scenario that cannot occur.
+
+### `FILLER_UNITS = 13429` is a load-bearing constant that says nothing
+
+`tests/world/division.test.ts:20`. The number is chosen so hold plus chest sum to exactly 13,500,000
+grams, which is exactly a sloop's capacity, which is the only reason one floor and two floors
+diverge — and that is what makes the two strongest tests in this PR work. Nothing states it, and
+under the no-comments rule nothing may. Deriving it from `holdCapacityOf` and the cannon-ball mass
+would make a balance change break loudly instead of silently turning both tests vacuous.
+
+### Smaller notes
+
+- **Helper duplication.** `chartedOf` is written twice — `tests/world/dispatch.test.ts:58` and
+  `tests/world/voyage.test.ts:53` — and inlined a third time at `tests/world/encounter.test.ts:48`;
+  the rejected-result unwrap appears as `reasonOf` plus two inline spellings in this PR alone.
+  `tests/world/loop.ts` already shows that a shared fixture module is idiomatic here.
+- **`legTicksSailedOf`** at `tests/world/voyage.test.ts:75-90` infers a leg boundary from any
+  non-empty `stepVoyage` return, so a future change to encounter spawn rates would corrupt its tick
+  counts rather than fail informatively.
+- **Recorded as an improvement, not a defect.** `tests/harness/world-commands.test.ts` replaced
+  `assert.ok(COMMAND_STATUSES.includes(status))` — which accepted every possible value and was a pure
+  did-not-throw test — with a per-command expected rejection reason.
+
+### Two overstatements in the record, worth a correction but nothing more
+
+- **"Byte-for-byte the predicate on base `22ec18e`"**, in decision 126 and repeated in the
+  development entry, is literally false: base has no predicate function at all, only an inline
+  two-statement test inside `stepWorld` over `state.voyage`. The predicate is *semantically*
+  identical on every reachable state, and decision 126's other claim — two lines removed and one
+  added against `9960292` — is exactly right. Flagged only because the claim is made twice as if it
+  were literal.
+- **The analysis document is no longer chronological.** The merge preserved each side's internal
+  order, which here is incompatible with a chronological union: two `2026-09-02` slice 4c entries now
+  sit below five `2026-09-03` PR 8 entries. Both parents were date-monotonic, so the merge introduced
+  the single inversion, while its own rationale claims chronological order *and* order preservation.
+  Either the entries move or the rationale should say which property was traded away.
+
 ## 2026-09-03 — slice 4c integration, taking PR 8's tree (OPP-16), PR 9
 
 The merge is recorded in the analysis document. Two things found doing it, neither worth stopping
