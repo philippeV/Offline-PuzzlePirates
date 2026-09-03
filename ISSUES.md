@@ -4,6 +4,135 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — physical test of UI sweep slice A, PR 10
+
+One finding. It narrows the review's decision 153 rather than overturning it, and was judged not
+blocking for the same reason 153 was.
+
+**The guard admits a save that dangles itself one tick later.** `refuseSpoiltState` checks that
+`voyage.shipId` resolves to a ship in `save.ships` (`save.ts:170`, `:182-186`) but never checks that
+ship's `allegiance`. A hand-authored save whose `voyage.shipId` names a **brigand**-allegiance hull
+that also sits in a concluded `battle` passes every check and loads — *"Yer voyage be restored."* —
+and then `settleEncounter` (`world/session.ts:37-39`) filters that very hull out of `state.ships` on
+the next tick, leaving `voyage.shipId` dangling. Reproduced in the browser against PR 10: with
+`voyage.shipId: 3` (the brigand, present in `ships`) and `battle.outcome: 'player-won'`, the load
+succeeded, one tick later `ships` held only the player hull, `sim.save()` still succeeded, and
+loading that fresh save was refused with `save.voyage.shipId must hold the id of a ship in
+save.ships`. So the review's "the sim can write a save it cannot read back" is reachable through a
+shipped button — the Ye panel's Load game — and not only through `sim.dispatch`.
+
+Not blocking. It takes hand-edited JSON, which is the adversarial input the guard exists to handle
+rather than a player flow; the resulting soft-lock (`stepVoyage` bails every tick, `atSea` stays
+true) predates PR 10 and is not a regression it introduces; and normal play cannot reach it at all —
+`voyage.chart` is only ever issued with `context.playerShip()` and settlement only ever removes
+brigand hulls, so a dangling `voyage.shipId` is unreachable through the UI proper (analysis
+decision 155). It starts to matter alongside the same triggers decision 153 names — UI ship
+commissioning, or autosave — and the cheapest repair is the one already filed there, plus a
+`refuseUnknownAllegiance` beside `refuseUnknownShipClasses` if the load path is to reject the state
+outright.
+
+## 2026-09-04 — independent review of UI sweep slice A (the deepened save guard), PR 10
+
+Twelve findings from the four-lens review of PR 10. None was judged blocking: the slice is pure
+hardening, every claim it makes about its own verification was re-run and confirmed, and nothing a
+player can reach through the shipped UI got worse. The first two are the ones that will matter first.
+
+**The sim can write a save it cannot read back.** `serialise` (`save.ts:62-64`) is unguarded while
+`deserialise` now is, so any state that violates the new guard saves cleanly and then refuses to
+load. One such state is reachable today: `CommissionShipCommand` carries a caller-supplied
+`allegiance` (`commands.ts:41-44`) and `applyCommissionCommand` (`battle/dispatch.ts:20-29`)
+validates only `shipClass`, never allegiance; `voyage.chart` (`world/dispatch.ts:50-52`) accepts any
+ship in `state.ships` with no allegiance check; and `settleEncounter` (`world/session.ts:37-39`)
+filters the brigand hull out of `state.ships` while leaving `state.voyage` untouched. Chart a voyage
+with a brigand-allegiance ship, fight the battle out, and `voyage.shipId` dangles. Before this PR
+that state was harmless — `stepVoyage` returns `[]` on a missing ship (`world/voyage.ts:58-59`) and
+the save round-tripped. After it, `sim.save()` succeeds and `Sim.load(saved)` throws
+`save.voyage.shipId must hold the id of a ship in save.ships`. Not judged blocking because the guard
+is *right* to refuse that state — the defect is upstream, in a sim that produced a dangling
+reference — and because the sequence needs the `sim.dispatch` API; no shipped-UI flow commissions a
+brigand or charts a voyage with one. It starts to matter the moment either the UI exposes ship
+commissioning, or anything begins autosaving, at which point a player can strand their own save. The
+repair belongs upstream: reject a non-player allegiance in `voyage.chart`, or clear `state.voyage`
+when its ship is removed.
+
+**`atomically()` can now lose both the rollback and the original error.**
+`harness/src/methods/sim.ts:72-79` is `try { stepping() } catch (failure) { sim.restore(before); throw failure; }`.
+`Sim.restore` throws before it assigns (`sim.ts:95-96`), so if `before` is a state the guard rejects,
+the rollback silently does not happen, the sim keeps the half-stepped state, and the `TypeError`
+replaces the original `RpcError` with no `cause` chaining. That is the worst failure mode a rollback
+primitive has, and it bites only in the failure case the function exists for. It is gated behind the
+finding above — `before` is always a clone of a state the sim was already running — so it is
+latent rather than live, which is why it is filed rather than stopped for. It starts to matter as
+soon as any new ship-removal site, balance block or schema field diverges from the guard's coverage.
+The cheap repair is to let the original error survive: catch around the rollback and rethrow
+`failure` as the `cause`.
+
+**Decision 135's "every number a safe integer" is unenforced on the load door.** `safeIntegerOf` is
+applied only to `board.width`/`height` (`save.ts:133-134`). The development entry justifies the
+narrowing on the grounds that `canonicalJson` already rejects non-safe integers and `cloneWorldState`
+runs it — true for `Sim.restore` (`state.ts:52-54`, `hash.ts:40-45`), but `Sim.load` runs no
+`canonicalJson` at all (`sim.ts:37-38`). A save carrying `"tick": 1.5` or `"seed": 1e999` passes
+every check and loads clean, then surfaces later at `sim.hash()` or `client.save()`, outside the
+load-time try. The one-line tightening is to make `holds`'s number arm (`save.ts:206`) require
+`Number.isSafeInteger`; it is safe by construction, because everything the sim writes already went
+through `canonicalJson`.
+
+**The guard stops one level short of three things that crash.** `puzzle.frame` is validated as an
+object and no further (`save.ts:128`), so `"frame": {}` passes and `performanceOf` does
+`frame.intervals.reduce(...)` on the first tick (`puzzle/frame.ts:50`). `rngStreams` is validated as
+an object and nothing inside it, so a poisoned cursor reaches `joinUint64` (`bits.ts:13-15`) and
+kills the render loop, which has no try/catch on the ticker path (`view/src/app.ts:57-61`).
+Commodity and island ids are unvalidated even though the parallel `voyage.route` league-point ids are
+checked (`save.ts:165-169`), so `commodityId: "gold-bars"` reaches a `RangeError` in `commodityOf`.
+All three are the same shape as the checks that were included and would be cheap to add; they are
+filed rather than stopped for because each is a crash on a hand-edited save, not a regression.
+
+**Four throw branches cannot ever fire.** `FIELD_KINDS` already establishes `puzzle`, `balance`,
+`voyage` and `battle` as `'an object or null'`, and each helper early-returns on null, so the
+`recordOf` calls at `save.ts:127,147,164,175` are unreachable. Harmless, but a future reader will try
+to cover them and fail.
+
+**Negative and zero board dimensions pass the arithmetic.** `width = -12, height = -12` with 144
+cells satisfies `cells.length !== width * height` (`save.ts:137`). Traced: `isInsideBoard`
+(`puzzle/board.ts:36-38`) is false everywhere, so the board goes inert rather than crashing. A
+`>= 0` check closes it if anyone is already in `safeIntegerOf`.
+
+**Migration 5 dereferences raw input before the guard runs.** `deserialise` is
+`worldStateOf(migrate(JSON.parse(text)))` (`save.ts:66-68`), so migrations are in front of the guard.
+`shapedPuzzleOf` (`save.ts:90-99`) reads `puzzle['board']['cells']` unchecked, so a v5 save with
+`"puzzle": {}` throws a raw `TypeError` before the guard is reached, and a non-array `cells` builds a
+garbage array instead of throwing. Contained — both callers convert the throw into a clean message
+(`harness/methods/session.ts:39-46`, `view/panels/ye.ts:66-71`) — so the cost is an ugly
+diagnostic, not corruption.
+
+**Test-coverage gaps, none of which invalidate the suite.** Decision 134 is pinned for
+*unconditional* normalisation but not for *conditional* normalisation of a missing field: making the
+guard default an absent balance block leaves both of the tests that claim to pin 134 green, and is
+caught only indirectly by the refusal tests. `a genuine snapshot still restores` cannot detect
+restore-path normalisation at all, because the guard runs before `cloneWorldState` and an in-place
+mutation would move both sides of its assertion. The 24 parametrised tests assert only the message,
+never the error *type*, so a plain `Error` would pass all of them. Five of the nine balance blocks
+(`brigand`, `booty`, `world`, `market`, `division`) have no test, held only by the
+`Record<keyof Balance, true>` typing. `board` missing entirely, non-array `cells`/`shapes`/`route`,
+and non-object entries in `ships`/`battle.ships` are untested. The fixtures use magic indices
+(`PLAYER_SHIP_ID = 2`, `state.ships[1]`, `route[1]`) with no precondition assert, so scenario drift
+would fail as a message mismatch that reads like a guard regression — and `route[1]` would
+silently extend the array and still pass. `tests/world/loop.ts:25-29` already exports `shipOf`, and
+`migration.test.ts:15-43` already has the fixture-path plumbing that `save.test.ts:28-31` rebuilds.
+
+**Every error the guard raises says `save.*`, including on the restore door.** `Sim.restore`
+validates a snapshot, not a save, and the confusion has already reached the tests —
+`save.test.ts:206` is titled "a save that is not an object at all" while its body calls `restore`.
+Reached only from the harness and tests today, so it is cosmetic rather than misleading to a player;
+the fix is a caller-supplied root path through the `path` parameters the helpers already take.
+
+**The nested checks are not compiler-enforced the way the top-level lists are.**
+`FIELD_KINDS: Record<keyof WorldState, FieldKind>` and `BALANCE_BLOCKS: Record<keyof Balance, true>`
+both fail to compile when their type gains a member, but the hand-picked nested checks
+(`puzzle.frame`, board dimensions, `voyage.route`/`shipId`, battle ships) have no such enforcement,
+so new fields on `PuzzleState`, `VoyageState` or `BattleState` will silently go unguarded. A known
+boundary of the guard rather than a defect in it.
+
 ## 2026-09-03 — analysis of the playable-client bug sweep, cycle 0
 
 Two findings turned up while mapping the twelve UI-sweep findings against `agent/develop` at
