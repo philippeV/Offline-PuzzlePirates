@@ -8,7 +8,7 @@ import type { ShipState } from './ship/state.ts';
 import { createRngStreams, type RngStreams } from './rng.ts';
 import type { IslandMarket, PirateState, VoyageState } from './world/state.ts';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export interface Marker {
   id: EntityId;

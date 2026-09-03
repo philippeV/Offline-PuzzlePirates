@@ -40,6 +40,7 @@ const BALANCE: Balance = {
     pufferSpawnPerMille: 25,
     crabSpawnPerMille: 15,
     jellySpawnPerMille: 10,
+    tokenSpawnPerMille: 120,
     crabPointsAtFullWater: 9,
     pufferPointsPerCell: 0,
     jellyPointsPerCell: 1,
