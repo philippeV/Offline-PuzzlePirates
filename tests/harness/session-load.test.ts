@@ -8,7 +8,7 @@ import { reasonOf, resultOf, startHarness, type Harness } from './client.ts';
 const SESSION_SEED = 0x5a7e;
 const PLAYED_TICKS = 12;
 
-const UNLOADABLE_SAVES = ['{', '{}', '{"schemaVersion":999}'];
+const UNLOADABLE_SAVES = ['{', '{}', '{"schemaVersion":5}', '{"schemaVersion":999}'];
 
 let harness: Harness;
 

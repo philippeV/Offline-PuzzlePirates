@@ -1,0 +1,77 @@
+:root {
+  color-scheme: dark;
+  --shell-ground: #0b1016;
+  --shell-ink: #d7e2ec;
+  --shell-alarm: #ff8f7a;
+  --shell-alarm-ground: #2a1210;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--shell-ground);
+  color: var(--shell-ink);
+  font: 14px/1.5 system-ui, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+#stage {
+  position: absolute;
+  inset: 0 var(--pp-panel-column, 0px) 0 0;
+}
+
+#stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#panels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#panels > * {
+  pointer-events: auto;
+}
+
+noscript {
+  display: block;
+  padding: 24px;
+}
+
+#shell-failure {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  background: var(--shell-alarm-ground);
+  color: var(--shell-alarm);
+}
+
+#shell-failure h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+#shell-failure p {
+  max-width: 60ch;
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  overflow-wrap: anywhere;
+}

@@ -9,9 +9,11 @@ import {
   rngStream,
   type BattlePhasePlan,
   type BattleShip,
+  type Command,
+  type CommandResult,
   type RngStreams,
   type ShipState,
-  type Sim,
+  type SimEvent,
   type WorldState,
 } from '@opp/sim';
 
@@ -57,12 +59,18 @@ export function agentPlanOf(state: WorldState, streams: RngStreams): BattlePhase
   );
 }
 
+export interface LoopDriver {
+  readonly state: Readonly<WorldState>;
+  dispatch(command: Command): CommandResult;
+  step(ticks: number): SimEvent[];
+}
+
 export interface SailReport {
   battles: number;
   ticks: number;
 }
 
-export function sailToDestination(sim: Sim, maxTicks: number): SailReport {
+export function sailToDestination(sim: LoopDriver, maxTicks: number): SailReport {
   const streams = createRngStreams();
   const report: SailReport = { battles: 0, ticks: 0 };
   let fighting = false;
