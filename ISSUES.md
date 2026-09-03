@@ -4,6 +4,44 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — analysis of the review finding, slice 4b (cycle 1)
+
+Two defects turned up while mapping the inventory surface to decide where plundered ship supplies
+live. Neither is part of the blocking cluster, and neither is in the development task this cycle
+produced.
+
+### Loading a cannon deletes its mass from the laden hold
+
+`ship.cannonsLoaded` is a third supply store and nothing weighs it. `stepCannonLoading`
+(`packages/sim/src/ship/meters.ts:103-105`) moves a ball out of `ship.cannonballs` and into
+`ship.cannonsLoaded`, while `magazineMassKgOf` (`packages/sim/src/world/cargo.ts:25-31`) weighs only
+`cannonballs` and `rum`. So every cannon a ship loads removes 7.1, 14.2 or 21.3 kg from what
+`freeHoldOf` counts, and `battle/gunnery.ts:56` never puts it back when the shot is fired — the mass
+is gone for the life of the ship.
+
+It is not exploitable in an interesting way today, because loading is capped at the class's cannon
+count and the freed kilograms are small against a hold. It starts to matter the moment a hull with
+many guns and large shot exists, or if anything ever lets a player load and unload deliberately: the
+loop is "load the guns, buy more cargo than the hold holds". The fix is a term in
+`magazineMassKgOf`, and `tests/world/soak.test.ts:165-173` must move with it, since `ladenKgOf`
+re-derives the same sum.
+
+### `booty.divide` can leave an un-materialised chest counter behind
+
+`divideBooty` (`packages/sim/src/world/division.ts:28`) transfers lots only. `ship.bootyCargoUnits`
+— the abstract kilograms `awardBooty` takes off the loser (`packages/sim/src/battle/booty.ts:39-40`)
+— is zeroed in exactly one place, `materialisePlunder` (`packages/sim/src/world/encounter.ts:82`),
+which runs only while `state.voyage !== null` (`packages/sim/src/world/session.ts:10`). The
+`booty.divide` guard (`packages/sim/src/world/dispatch.ts:135`) tests `bootyPoe` and
+`bootyCargo.length` and ignores `bootyCargoUnits` entirely.
+
+So a chest counter that was never materialised into a lot survives a division untouched, and keeps
+occupying hold mass through `freeHoldOf`, which subtracts `bootyCargoUnits` directly
+(`packages/sim/src/battle/booty.ts:52`). Reaching it needs a battle that concludes without a voyage
+running — a hand-started `battle.start` — so it is adjacent to the settlement questions slice 4c is
+already reworking. It starts to matter as soon as battles can conclude outside a voyage in ordinary
+play; today it is a dead corner reachable only by driving the commands by hand.
+
 ## 2026-09-02 — independent review of slice 4b (PR 7, cycle 0)
 
 A four-lens review of PR 7. One cluster blocked and went back to analysis: the sell path routes the

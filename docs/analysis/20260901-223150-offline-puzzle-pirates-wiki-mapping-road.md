@@ -2119,3 +2119,180 @@ and the reason the blocking finding survived the slice's own suite.
 `docs/analysis/20260901-223150-offline-puzzle-pirates-wiki-mapping-road.md` and nothing else —
 verified with `git merge-tree`; PR 5 has since merged, so the PR's own diff is now exactly the two
 slice-4b commits.
+
+## 2026-09-03 — analysis of the review finding, slice 4b (cycle 1)
+
+The review of PR 7 requested changes on one cluster: decision 90 settled where the five ship-supply
+commodities live when they are **bought**, and never answered where they live when they are
+**plundered**. This entry decides that, and only that. The non-blocking findings stay in `ISSUES.md`.
+
+### The problem, restated
+
+A ship-supply id can reach a ship by two routes that disagree about the container.
+
+The buy path deposits into the counters: `depositUnits` (`packages/sim/src/world/market.ts:95-105`)
+branches on `isCannonBall` then `isRum` and only falls through to `stowLot(ship.cargo, …)` for the
+eleven raw ids. The plunder path stows a lot with no filtering at all: `materialisePlunder`
+(`packages/sim/src/world/encounter.ts:75-84`) draws uniformly from all sixteen `COMMODITY_IDS` and
+calls `stowLot(ship.bootyCargo, …)`, and `divideBooty` (`packages/sim/src/world/division.ts:28`)
+moves that lot into `ship.cargo`. `heldUnitsOf` and `withdrawUnits`
+(`packages/sim/src/world/market.ts:107-124`) read and write only the counters for those ids.
+
+So 5 of 16 plunder rolls — 31.25% — land in a container the sell path cannot see.
+
+### Two things found while mapping the ground that decide the design
+
+**The two containers do not agree on what a cannon ball weighs.** `magazineMassKgOf`
+(`packages/sim/src/world/cargo.ts:25-31`) resolves the ball id from the **ship class**, not from
+what is stored:
+
+```ts
+const cannonBall = cannonBallOf(shipClassOf(ship.shipClass).cannonSize);
+const grams = ship.cannonballs * commodityOf(cannonBall).massGramsPerUnit + ship.rum * RUM_MASS_GRAMS_PER_UNIT;
+```
+
+while `cargoLotsMassKgOf` prices each lot by its own id. Ten `large-cannon-ball` therefore weigh
+213 kg as a lot and 71 kg as `ship.cannonballs` on a sloop. The counter is not merely
+size-agnostic — it actively re-prices whatever is put in it at the hull's own calibre.
+
+**The size guard sits ahead of the inventory read.** `sellCommodity`
+(`packages/sim/src/world/market.ts:72-81`) refuses in this order: `negative-units`,
+`unknown-commodity`, zero-unit success, **`wrong-cannon-ball-size`**, `insufficient-cargo`,
+`market-stock-full`. So a plundered `large-cannon-ball` on a sloop is unreachable by any sell
+command regardless of what `heldUnitsOf` learns to read. The same guard sits at the same relative
+position in `buyCommodity` (`market.ts:49-51`) and is pinned there by
+`tests/harness/restocking.test.ts:132-138`.
+
+### The decision
+
+**120. Plunder draws only from commodities that can be stowed as a cargo lot.** The five
+ship-supply ids are excluded from the draw; they remain in `COMMODITY_IDS`, in the catalogue and on
+every dock, because they must stay buyable.
+
+The rationale is that the two alternatives both founder on the two facts above.
+
+*Depositing plundered supplies into the counters* — the shape that best preserves the flavour —
+cannot be done without silently changing the ship's laden mass, because the counter re-prices balls
+at the hull's calibre. A sloop that plunders 10 large balls would see 213 kg of plunder become 71 kg
+of magazine, inventing 142 kg of free hold. Fixing that would mean giving the magazine a per-size
+representation, which is a much larger change than the defect warrants and one decision 90
+deliberately avoided.
+
+*Teaching the sell path to read both containers* does not reach the worst of the three measured
+cases at all, because the size guard fires first. Moving that guard behind the inventory read would
+change the buy path's refusal order too, since the guard is shared. And it would permanently
+abandon the single-container property decision 90 implies, leaving every future reader of ship
+supplies obliged to check two places.
+
+Excluding at the source is the only option that restores a hard invariant without moving a guard
+the buy path shares, and it is the smallest of the three.
+
+There is a design argument for it beyond convenience: slice 4b exists to make the dock the place you
+restock. Removing supplies from plunder makes the port the *only* source of shot and rum, which
+sharpens exactly the loop the slice was built for.
+
+**121. The excluded set is named once.** A single `isShipSupply` predicate in
+`packages/sim/src/world/commodities.ts`, defined as `isCannonBall(id) || isRum(id)`, replaces the
+open-coded cascade at its three sites in `market.ts` (`:96,100`, `:108,109`, `:114,118`) and is what
+the plunder filter tests.
+
+The set is currently decided in three places by an open-coded disjunction, and it *coincidentally*
+equals `commodityOf(id).class === 'refined'`, which `openingStockOf` (`market.ts:131-134`) uses to
+pick `refinedBasePricePoe`. Two different mechanisms selecting the same five ids for two unrelated
+reasons is how they drift apart: the day a refined commodity is added that is not a ship supply,
+pricing and stowage silently disagree. Naming the ship-supply concept once, and leaving pricing to
+`class`, decouples them before that happens.
+
+**122. The draw is uniform over a pre-filtered list, not a re-roll over sixteen.**
+`materialisePlunder` draws from a `PLUNDERABLE_COMMODITY_IDS` array of the eleven raw ids, with a
+single `nextIntInRange(0, 11)`.
+
+A re-roll on a ship-supply hit would keep the sixteen-id array but consume a variable number of
+draws from `world.plunder`, so the stream position after a plunder would depend on what was drawn.
+Every downstream hash would then vary with the draw's history rather than only its result, which is
+a worse property for a simulation whose whole promise is determinism. One draw, one advance.
+
+Both shapes change the plunder RNG consumption relative to today, so replay and snapshot hashes move
+either way. That is acceptable here — see decision 123 — and the pre-filtered form is the one that
+keeps consumption constant going forward.
+
+**123. No save migration, and no schema bump.** An existing save that already carries an orphaned
+ship-supply lot keeps it. The lot stays unsellable, and such a save should be discarded rather than
+migrated.
+
+Three reasons, in order of weight. The world subsystem is unreleased, so no save that matters exists
+outside a developer's scratch session. No committed fixture is affected: the only one that mentions
+ships is `packages/fixtures/goldens/bilge-session-idle-minute.json`, whose `ships` is `[]`, and there
+is no v4 or v5 save fixture at all. And `SCHEMA_VERSION = 6` with `migrations[5]` is **already
+claimed by slice 2c on branch `agent/feature/20260902-094000-opp-slice-2c-bilging-token-layer`**,
+whose repair task is in flight as this is written; taking 6 here would collide with an open branch
+for the sake of migrating state nobody has.
+
+A migration would also have to answer the size question in untyped `RawSave` data — deciding what a
+sloop's magazine does with plundered large shot, against exactly the mass disagreement decision 120
+exists to avoid. Writing that logic once, in a migration, to serve zero real saves is not worth it.
+
+**124. The invariant becomes a test.** No ship-supply id may appear as a lot in `ship.cargo` or
+`ship.bootyCargo`. Asserted directly, and asserted across the plunder draw over many seeds.
+
+Decision 90 was true by construction on the buy path and false on the plunder path, and the slice's
+own suite could not tell, because no test constructed a ship holding both a magazine and a lot of a
+magazine commodity. A convention that one route honoured and another ignored is what produced this
+cycle; the property is cheap to state and should stop being a convention.
+
+### What this costs, recorded rather than hidden
+
+**The plunder reward distribution changes.** The draw goes from uniform over sixteen to uniform over
+eleven, so each raw commodity's share rises from 6.25% to about 9.09%, and the expected mass and
+value of a plunder shift with it, because the excluded five had their own masses and prices. Nothing
+is retuned in this cycle; this is a note against the encounter tuning, not a constant change.
+
+**Plundered rum is a real loss, and it is temporary.** `ship.rum` folds swill and grog into one
+counter, so rum — unlike shot — has no size problem, and depositing plundered rum into the counter
+would have worked. It is excluded anyway, because one uniform rule is worth more than a special
+case that applies to two of the five ids. Decision 94 deferred rum proof, and the review upheld that
+deferral on the stronger ground that proof needs per-type lots. When proof lands, rum will need to
+be a lot again, and plundered rum can return with it. That is the moment to revisit this.
+
+### Two defects found while mapping, neither in scope
+
+Both are recorded in `ISSUES.md` under this cycle's heading and are **not** part of the development
+task below.
+
+`ship.cannonsLoaded` is a third supply store and it is weightless. `stepCannonLoading`
+(`packages/sim/src/ship/meters.ts:103-105`) moves a ball from `cannonballs` into `cannonsLoaded`, and
+`magazineMassKgOf` weighs only `cannonballs` and `rum`. Loading a cannon therefore deletes its mass
+from the laden hold, and firing never restores it.
+
+`divideBooty` never moves `bootyCargoUnits` into `cargoUnits`. It transfers lots only
+(`division.ts:28`); the counter is zeroed solely by `materialisePlunder` (`encounter.ts:82`), which
+runs only while a voyage is under way, and the `booty.divide` guard (`world/dispatch.ts:135`) checks
+`bootyPoe` and `bootyCargo.length` while ignoring `bootyCargoUnits`. An un-materialised counter can
+therefore survive a division untouched.
+
+### Decision numbering
+
+These are numbered from 120 rather than continuing 4b's 90–96, because four open branches currently
+collide on 90–100:
+
+| Branch   | PR | Decisions | Status                                          |
+| -------- | -- | --------- | ----------------------------------------------- |
+| slice 2c | 6  | 90–98     | in flight; its repair task cites these numbers  |
+| slice 4b | 7  | 90–96     | this branch                                     |
+| slice 5  | 8  | 90–100    | reviewed, cycle 1                               |
+| slice 4c | 9  | 101–103   | numbered defensively above the others           |
+
+The review of PR 8 recommends slice 5 keep 90–100 and slice 4c keep 101–103, with slice 4b
+renumbering to 104–110. Slice 2c is deliberately left alone for now: its repair task, claimed while
+this was being written, cites decisions 90 to 98 by number, and renumbering a branch mid-repair
+would invalidate an in-flight instruction.
+
+104–119 is the space those two pending renumberings need — seven numbers for slice 4b and nine for
+slice 2c — so this cycle starts at 120. That keeps it free whichever order the renumberings land in,
+and whether or not slice 2c renumbers at all.
+
+### What done means
+
+One development slice, against the existing branch and PR 7. It is done when a ship-supply id can no
+longer reach `ship.cargo` or `ship.bootyCargo` by any route, the invariant is asserted rather than
+assumed, and the rum sell path — which two independent mutations survived — is covered.
