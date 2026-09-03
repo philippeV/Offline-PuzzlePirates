@@ -4,6 +4,20 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — physical test of slice 4c (OPP-16), PR 9, cycle 1
+
+One finding, environmental rather than in the product.
+
+**The harness test suite starts one child process per test, and that is the first thing to fail on a
+loaded machine.** `npm run check` from cold failed once with exit 1, 534 of 536, both failures in
+`tests/harness/restocking.test.ts` and both `Error: spawn UNKNOWN` (errno `-4094`) out of
+`child_process.spawn` in `tests/harness/client.ts:31` — no assertion was involved. The machine was
+carrying a concurrent `npm ci` and 76 stray `node` processes from earlier sessions at the time.
+Re-running `node --test "tests/harness/**/*.test.ts"` alone passed 105 of 105, and a second full
+`npm run check` with nothing else in flight passed 535 of 535. It will start to matter when CI
+runs jobs concurrently on one runner, or when a developer runs the suite alongside a dev server; a
+retry, or an in-process harness for the tests that do not need a real pipe, would remove it.
+
 ## 2026-09-03 — independent review of slice 4c (OPP-16), PR 9, cycle 1
 
 Four lenses over the repair at `957f44f` and the PR 8 integration at `7a58bfd`. **No blocking

@@ -4804,3 +4804,96 @@ The rewritten market test drops no coverage: the fitting and oversized ball rule
 the whole-kilogram sell round trip and the supply-lot-in-hold boundary are each covered by slice 4b's
 own tests, and the part-kilogram market round trip the old test asserted is now an unreachable state
 rather than an untested one.
+
+### 2026-09-03 — physical test of the slice 4c repair and the PR 8 integration (OPP-16), PR 9, cycle 1
+
+PR 9 at `c5da403` against `agent/develop` `391b93e`. Review passed with no blocking finding. This
+stage found **no blocking failure** and merged.
+
+#### The wedge was reproduced on the merge target and is gone on the head
+
+The one user-visible change — `port()` settling a concluded battle before nulling the voyage — was
+tested with a control, not just an assertion. The same fifteen-line JSON-RPC script was piped into
+`packages/harness/bin/pp-harness.ts` in two detached worktrees, one at `c5da403` and one at
+`391b93e`, and the two runs diverge exactly where the repair sits.
+
+Seed `6`, scenario `pillage-loop`, `voyage.chart` to `doyle` as a `pillage`. The encounter falls on
+the **final** leg — `voyage.legReached` point 8, `encounter.spawned` ship 3, `battle.started` — at
+tick 34560, which is what makes `voyage.port` reachable at all; a mid-route encounter is refused
+`not-at-island`. Twenty-one thousand ticks later `disengageCounter` is 0 on both berths and the
+battle is still `running`. Then `battle.disengage`, then `voyage.port`, with **no tick between them**.
+
+| after `voyage.port` | `391b93e` (control) | `c5da403` (head) |
+| ------------------- | ------------------- | ---------------- |
+| `/battle`           | present, `disengaged` | `null`         |
+| `/ships`            | 2 items (orphan brigand 3 rides) | 1 item |
+| `battle.start`      | rejected `battle-already-running` | rejected `unknown-ship` |
+| state hash          | `61faf4fc81df6201`  | `5917c70be70baaa0` |
+
+Both runs are identical up to the port: hash `8c0e7ebc0ef4255b` after the disengage on each. The
+control is the wedge as the cycle 1 analysis described it — the session is dead from that point on.
+The head clears it.
+
+#### Played in the real client, not only in the harness
+
+A Vite dev server on port **5191** — deliberately not the squatted 5178 — served the same worktree;
+provenance was proved before trusting anything by reading the served module graph, which resolves to
+`/@fs/.../wt-t4c/packages/...`. Seed 6 in the browser reached the same encounter on leg 2 of 2 and
+rendered the sea battle with *Break off* ready.
+
+Because the client's ticker is `requestAnimationFrame`-driven and there is no pause control, the
+zero-tick requirement was met by issuing both commands inside **one synchronous block**:
+`client.tick` reads 57021 before the disengage and 57021 after the port. The battle cleared, brigand
+3 was struck off, the pirate stood at Doyle, and `battle.start` was rejected `unknown-ship` — which
+the UI surfaced in the message log as *"No such ship."* beneath *"The brigand slips away."* and
+*"Ported at Doyle Island."*
+
+Then, by real clicks on the chart panel — Alkaid, then *pillage* — a fresh voyage was charted and the
+ship put to sea. That is the practical value of the repair: the pillage loop survives a disengage at
+the destination.
+
+#### The two cheap passes the task asked for
+
+**A concluded battle clearing at tick time, mid-voyage.** Seed 2, driven by the repository's own
+brigand planner. `battle.ended` `player-won` at tick 98700; in that same tick `state.battle` is
+`null`, the brigand hull is off `state.ships`, and the plunder has landed in the chest —
+`bootyPoe` 373 and `bootyCargo` `wood ×40`. The voyage is still running at `legIndex` 1 and still
+running 600 ticks later. This is decision 126's path, and it is the one that pays plunder; the
+`port()` path settles a `disengaged` battle, which by construction pays none.
+
+**Save round trips across the settle.** The post-disengage save reloads byte-identical at hash
+`8c0e7ebc0ef4255b`. A stale save carrying that concluded battle settles on the **first tick** after
+loading — battle `null`, brigand struck, voyage still running. And the two routes converge: loading
+that save and porting, versus loading it, ticking once, then porting, produce an **identical** state
+facet across `battle`, every ship's `poe` / `bootyPoe` / `bootyCargo` / `cargo`, `pirate` and
+`voyage`. No double credit on either route.
+
+**Regression nearest the change.** `voyage.port` while a battle is genuinely `running` is still
+refused `battle-running`, and the state hash is unchanged by the refusal — decision 101's ordering
+holds and the command still writes nothing it might refuse.
+
+#### `npm run check` from cold, and a flake worth knowing about
+
+Run 2, in a fresh worktree with nothing else on the machine: **exit 0, 535 of 535, all six gates.**
+
+Run 1 of the same command on the same tree failed, exit 1, 534 of 536 — both failures in
+`tests/harness/restocking.test.ts`, both `Error: spawn UNKNOWN` (errno `-4094`) raised by
+`child_process.spawn` in `tests/harness/client.ts:31`, not by any assertion. Run 1 shared the machine
+with a concurrent `npm ci` and with 76 stray `node` processes left by earlier sessions.
+`node --test "tests/harness/**/*.test.ts"` immediately afterwards passed 105 of 105. Environmental,
+not the change — but the harness suite starts one child process per test, so it is the first thing to
+fail on a loaded Windows box. Filed in `ISSUES.md`.
+
+#### Not chased, deliberately
+
+Decision 129's non-goal was left alone: a concluded battle with **no voyage at all** stays uncleared,
+because `stepWorld` returns on `voyage === null`. It is documented as out of scope for this cycle and
+was not tested as a defect. The known non-blocking items already in `ISSUES.md` — the market's
+one-kilogram hull over-fill, `booty.overflowPolicy`, the misnamed tests — were not re-raised.
+
+#### One decision taken on the task's behalf
+
+The `queue-test` skill prescribes `gh pr merge --squash`. The task file instead prescribes a merge
+commit, because PRs 1 to 8 all used one and the ancestry matters to what follows. The task file wins:
+PR 9 was merged with `--merge`. A squash here would have flattened the PR 8 integration merge that
+this branch carries and made the next slice's merge base incoherent.
