@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  BILGE_CRITTER_STREAM,
   BILGE_FILL_STREAM,
   BILGE_REFILL_STREAM,
   DRIFT_STREAM,
@@ -38,6 +39,7 @@ test('stepping a bilging session draws only from the drift stream', () => {
   assert.equal(sim.state.rngStreams[DRIFT_STREAM]?.draws, 25);
   assert.equal(sim.state.rngStreams[BILGE_FILL_STREAM]?.draws, fillDraws);
   assert.equal(sim.state.rngStreams[BILGE_REFILL_STREAM], undefined);
+  assert.equal(sim.state.rngStreams[BILGE_CRITTER_STREAM], undefined);
 });
 
 test('a sim with no puzzle running leaves no bilge cursor in state', () => {

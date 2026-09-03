@@ -16,7 +16,7 @@
     "bilging.colourCountByStarLevel": "invented, anchored on the published 7 colours at star level 7",
     "bilging.comboMultiplierByLineCount": "published for 1, 2 and 3 lines; index 4 is the low end of the published range at least 4, maybe 5; index 5 is invented",
     "bilging.inflowPerMillePerThousandTicks": "invented; the bilge-to-performance coupling rate is nowhere on the wiki. An ignored board floods from empty to full in about 119 seconds",
-    "bilging.maxStarLevel": "scope decision; star levels 0-2 carry no critter, and no critter has a published score",
+    "bilging.maxStarLevel": "the star level the wiki anchors on: 7 colours, and every critter unlocked, the jellyfish last at 6",
     "bilging.pumpPerMillePerThousandTicks": "invented; the board drains at any efficiency above 467 per mille and empties from full in about 104 seconds at 100 per cent efficiency",
     "bilging.ratingBandsPerMille": "invented; the lower bound of poor, fine, good, excellent and incredible, honouring the published fine at about 100 per cent and sparkly at 4 points per move",
     "bilging.startingStarLevel": "scope decision; an offline pirate starts with no standing to draw a difficulty from",
@@ -62,7 +62,16 @@
     "world.encounterDifficultyWeightPerMille": "invented; route difficulty shifts the spawn chance by up to half of its base, so the dark end of the chart is meaningfully busier than the capital's neighbourhood without leaving the safe end empty",
     "world.pillageSpawnBonusPerMille": "invented; a pillage voyage raises the spawn chance, the direction the wiki states without a magnitude",
     "world.startingPoe": "scope decision; a pirate begins the MVP loop with enough coin to buy a magazine and a little cargo, because the shoppe labour that would otherwise earn the first purse is out of scope until a later phase",
-    "world.tradeSpawnPenaltyPerMille": "invented; a trade voyage lowers the spawn chance, the direction the wiki states without a magnitude, and 150 is set below the base chance so a trade run is quieter than a pillage everywhere on the chart without collapsing into an evade, which is what a penalty at or above the base would make it on every short route"
+    "world.tradeSpawnPenaltyPerMille": "invented; a trade voyage lowers the spawn chance, the direction the wiki states without a magnitude, and 150 is set below the base chance so a trade run is quieter than a pillage everywhere on the chart without collapsing into an evade, which is what a penalty at or above the base would make it on every short route",
+    "bilging.comboScalePerMilleByStarLevel": "invented; the wiki publishes the combo table at 7-star level and only says the multipliers are lower below it, so index 7 is 1000 to keep the published table exact",
+    "bilging.pufferSpawnPerMille": "invented; the wiki never states how often a critter appears, and the puffer is the commonest of the three",
+    "bilging.crabSpawnPerMille": "invented; rarer than the puffer because a crab denies its square until it climbs out",
+    "bilging.jellySpawnPerMille": "invented; the rarest of the three, since one jelly clears a whole colour",
+    "bilging.crabPointsAtFullWater": "invented against the published anchor that two crabs cleared at full water score between a bingo of 27 and a sea donkey of 48; 9 puts two crabs at 36",
+    "bilging.pufferPointsPerCell": "published in effect; the wiki calls the puffer score-negative, so the detonation itself pays nothing and only the chain it triggers scores",
+    "bilging.jellyPointsPerCell": "invented; a jelly sweep is worth no more per cell than a chain",
+    "bilging.aboveWaterFallTicksPerCell": "invented; the wiki says only that pieces fall more slowly below the water line, never how much",
+    "bilging.belowWaterFallTicksPerCell": "invented; twice the dry rate, the smallest ratio that reads as slower"
   },
   "bilging": {
     "boardWidth": 12,
@@ -79,7 +88,7 @@
       7,
       7
     ],
-    "maxStarLevel": 2,
+    "maxStarLevel": 7,
     "startingStarLevel": 0,
     "ticksPerStarStep": 3600,
     "comboMultiplierByLineCount": [
@@ -100,7 +109,25 @@
       1100,
       1333,
       1667
-    ]
+    ],
+    "comboScalePerMilleByStarLevel": [
+      400,
+      400,
+      500,
+      600,
+      700,
+      800,
+      900,
+      1000
+    ],
+    "pufferSpawnPerMille": 25,
+    "crabSpawnPerMille": 15,
+    "jellySpawnPerMille": 10,
+    "crabPointsAtFullWater": 9,
+    "pufferPointsPerCell": 0,
+    "jellyPointsPerCell": 1,
+    "aboveWaterFallTicksPerCell": 3,
+    "belowWaterFallTicksPerCell": 6
   },
   "ship": {
     "bilgeInflowPerMillePerThousandTicks": 28,

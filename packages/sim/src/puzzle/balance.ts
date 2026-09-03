@@ -8,8 +8,17 @@ export interface BilgingBalance {
   startingStarLevel: number;
   ticksPerStarStep: number;
   comboMultiplierByLineCount: number[];
+  comboScalePerMilleByStarLevel: number[];
   vegasMultiplier: number;
   chainPointsPerCell: number;
+  pufferSpawnPerMille: number;
+  crabSpawnPerMille: number;
+  jellySpawnPerMille: number;
+  crabPointsAtFullWater: number;
+  pufferPointsPerCell: number;
+  jellyPointsPerCell: number;
+  aboveWaterFallTicksPerCell: number;
+  belowWaterFallTicksPerCell: number;
   inflowPerMillePerThousandTicks: number;
   pumpPerMillePerThousandTicks: number;
   ratingBandsPerMille: number[];

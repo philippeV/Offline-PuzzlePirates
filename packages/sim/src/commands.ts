@@ -32,6 +32,12 @@ export interface SwapBilgeCommand {
   y: number;
 }
 
+export interface PokeBilgeCommand {
+  op: 'bilge.poke';
+  x: number;
+  y: number;
+}
+
 export interface CommissionShipCommand {
   op: 'ship.commission';
   shipClass: ShipClassId;
@@ -97,7 +103,7 @@ export interface DivideBootyCommand {
 
 export type MarkerCommand = MoveMarkerCommand | PlaceMarkerCommand;
 
-export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand;
+export type PuzzleCommand = StartPuzzleCommand | SwapBilgeCommand | PokeBilgeCommand;
 
 export type ShipCommand = CommissionShipCommand;
 
@@ -122,6 +128,9 @@ export type RejectionReason =
   | 'puzzle-already-running'
   | 'no-puzzle-running'
   | 'swap-outside-board'
+  | 'poke-outside-board'
+  | 'crab-not-swappable'
+  | 'not-a-puffer'
   | 'unknown-ship'
   | 'no-battle-running'
   | 'battle-already-running'
