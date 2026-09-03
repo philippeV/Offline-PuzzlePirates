@@ -5344,3 +5344,77 @@ fourteen tests. `Record<keyof Balance, true>` genuinely fails compilation on a n
 or rebuild anywhere, and `recordOf` returns the same reference rather than a copy — though it is
 pinned only for *unconditional* normalisation; defaulting a *missing* balance block leaves both
 tests that claim to pin 134 green. Decision 133 holds: zero files under `packages/view/` in the diff.
+
+### 2026-09-04 — physical test, UI sweep slice A (PR 10)
+
+Task `20260904-001500-test-uisweep-a-save-guard-depth`, against `2694dec` in a worktree of its own,
+`npm ci` from cold, `vite packages/app` on port 5190, driven in a real browser. **No blocking
+failure. PR 10 merged to `agent/develop`.** One non-blocking finding is in `ISSUES.md` under today's
+heading; it narrows, rather than overturns, the review's decision 153.
+
+#### What was exercised, and what it showed
+
+The suite was re-run once as confirmation, not re-litigated: combined `npm run check`, exit 0,
+**568 pass / 0 fail** in 19 seconds. That is the review's number exactly.
+
+The rest was physical. A world was played up through the shipped UI — bilging puzzle at the duty
+station (12x12, 144 cells), the player sloop (id 2, allegiance `player`), a pillage voyage charted
+to Doyle Island (`route [1,2,8]`) — and then saved from the Ye panel.
+
+- **A good save round-trips.** Page reloaded to a fresh world, save pasted back, Load game pressed:
+  *"Yer voyage be restored."* The world returned intact — at sea, leg 0 of 2, pillage, 144 cells,
+  the sloop — and kept stepping (tick 1991 to 2237 to 2423, `legTicks` 247 to 679). This is the
+  no-false-positive case and it is the one that mattered most.
+- **A mid-battle save round-trips too**, which is the heavier case: a 20 327-character save taken
+  during a live sea battle restored `battle.outcome: running`, both hulls, `turnIndex 1`, the voyage
+  and the puzzle, and rendered the sea-battle scene.
+- **Four hand-spoilt saves were refused, each with its own message**, the running world untouched
+  behind them and still ticking, and **zero uncaught console errors** across every attempt:
+  popping one cell gave *"That save be spoiled: save.puzzle.board.cells must hold width * height
+  cells"*; a nonsense `shipClass` gave *"...save.ships[0].shipClass must hold a known ship class"*;
+  `voyage.shipId: 9999` gave *"...save.voyage.shipId must hold the id of a ship in save.ships"*;
+  and `battle.ships[1].shipId: 9999` gave *"...save.battle.ships[1].shipId must hold the id of a
+  ship in save.ships"*. After three consecutive refusals the live world still read 144 cells,
+  `sloop`, `shipId 2` and was still stepping (3158 to 3402).
+- **The rollback holds.** A refused load left no half-swapped scene: `Sim.load` throws into a local
+  before anything on the client is mutated (`client.ts:114-129`), so the scene title, the panel
+  facts and the log were unchanged in every refusal.
+
+#### The review's open question, now a tested fact
+
+Decision 153 rested on an assumption: that a dangling `voyage.shipId` needs the `sim.dispatch` API
+and that no shipped-UI flow can reach it. **The assumption holds, and the reason is stronger than
+the one given.** A full audit of every command the UI can dispatch found that `voyage.chart` is
+issued from exactly one call site (`panels/minimap.ts:118-124`) and always with
+`context.playerShip()` — the ship whose allegiance is `player` (`panels/panels.ts:90-92`). There is
+no ship-selection UI anywhere; `ship.commission` appears only in `client/boot.ts` with both
+allegiances as string literals; the market sells hold goods only; and `allegiance` is written once
+at construction and never mutated. `settleEncounter` shrinks `state.ships` at the only such site in
+the sim (`world/session.ts:38`), gated on `allegiance === 'brigand'`.
+
+The corollary refutes the likelier-looking path: **the player's own hull is never removed**, on
+defeat or otherwise. `isFullyDamaged` only yields the `player-lost` outcome; nothing deletes the
+hull. So losing a battle cannot dangle the voyage either.
+
+This was checked against live state, not only source. A real encounter was fought in the UI: the
+brigand hull arrived as id 3, allegiance `brigand`, while `voyage.shipId` stayed 2 — the player's
+ship. Settlement removes 3; the voyage points at 2; nothing dangles.
+
+**155. The review's decision 153 assumption is confirmed by audit and observation: no normal-play
+UI sequence can dangle `voyage.shipId`.** The voyage ship is always the player hull and the only
+hull settlement removes is the brigand. What remains reachable is a *hand-authored* save, which is
+the guard's adversarial input class rather than a player flow.
+
+#### What could not be finished, and why
+
+The battle was **not fought through to settlement**. Break-off is gated — the UI says *"She may
+break off after 8 more turns"* — and each turn is a full ten-minute planning window. The browser
+pane renders only while a tool call is in flight, so the sim advances roughly 250 to 900 ticks per
+call; eight windows was not a sensible use of the stage. Two turns were driven to confirm the
+mechanism (`turnIndex` 1 to 3, break-off counter 10 to 7) and the grind was then stopped
+deliberately. It costs nothing: the settlement question is decided by the audit above plus the
+observed `voyage.shipId 2` against brigand id 3, and `settleEncounter` is covered by the suite.
+
+**156. A stage may stop a physical grind once the question it would answer is already decided, and
+must say so.** Driving six more planning windows would have confirmed an inference that source and
+live state had already settled from two directions. Recorded here rather than left as a silent gap.

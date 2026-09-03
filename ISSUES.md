@@ -4,6 +4,33 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — physical test of UI sweep slice A, PR 10
+
+One finding. It narrows the review's decision 153 rather than overturning it, and was judged not
+blocking for the same reason 153 was.
+
+**The guard admits a save that dangles itself one tick later.** `refuseSpoiltState` checks that
+`voyage.shipId` resolves to a ship in `save.ships` (`save.ts:170`, `:182-186`) but never checks that
+ship's `allegiance`. A hand-authored save whose `voyage.shipId` names a **brigand**-allegiance hull
+that also sits in a concluded `battle` passes every check and loads — *"Yer voyage be restored."* —
+and then `settleEncounter` (`world/session.ts:37-39`) filters that very hull out of `state.ships` on
+the next tick, leaving `voyage.shipId` dangling. Reproduced in the browser against PR 10: with
+`voyage.shipId: 3` (the brigand, present in `ships`) and `battle.outcome: 'player-won'`, the load
+succeeded, one tick later `ships` held only the player hull, `sim.save()` still succeeded, and
+loading that fresh save was refused with `save.voyage.shipId must hold the id of a ship in
+save.ships`. So the review's "the sim can write a save it cannot read back" is reachable through a
+shipped button — the Ye panel's Load game — and not only through `sim.dispatch`.
+
+Not blocking. It takes hand-edited JSON, which is the adversarial input the guard exists to handle
+rather than a player flow; the resulting soft-lock (`stepVoyage` bails every tick, `atSea` stays
+true) predates PR 10 and is not a regression it introduces; and normal play cannot reach it at all —
+`voyage.chart` is only ever issued with `context.playerShip()` and settlement only ever removes
+brigand hulls, so a dangling `voyage.shipId` is unreachable through the UI proper (analysis
+decision 155). It starts to matter alongside the same triggers decision 153 names — UI ship
+commissioning, or autosave — and the cheapest repair is the one already filed there, plus a
+`refuseUnknownAllegiance` beside `refuseUnknownShipClasses` if the load path is to reject the state
+outright.
+
 ## 2026-09-04 — independent review of UI sweep slice A (the deepened save guard), PR 10
 
 Twelve findings from the four-lens review of PR 10. None was judged blocking: the slice is pure
