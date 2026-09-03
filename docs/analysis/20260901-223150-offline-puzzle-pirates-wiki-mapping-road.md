@@ -4154,3 +4154,97 @@ behind it. If PR 9 lands before the test stage merges PR 8, the same two documen
 conflict a third time and resolve the same way. Nothing else in this integration is expected to
 recur: both defects it found were one-off consequences of sim types widening under a view that had
 already been written.
+
+### 2026-09-03 — physical test of the slice 5 integration (OPP-12), PR 8
+
+The stage the integration asked for: not a full replay of slice 5's physical pass, which review and
+the 11:42 test already did, but a confirmation that the twice-merged tree still behaves, followed by
+the merge into `agent/develop`. PR 8 arrived at `182a18b`, `MERGEABLE`, both GitHub checks green,
+with `agent/develop` still at `09fac60` and already contained in the branch — so the third merge the
+task warned about was not needed. PR 9 was still `CONFLICTING` and did not land during this run.
+
+Tested in a private worktree at `182a18b` on port **5193**, never in the main working tree, which
+was on slice 4b at `0149fcc` with the slice 4c development run live beside it.
+
+#### Provenance, proved before anything was clicked
+
+The task was right to insist on this. Two independent discriminators, both taken from the running
+server rather than from the checkout:
+
+- the served `packages/view/src/client/log.ts` carries `Her guns take no ball of that size`, which
+  `182a18b` introduced and which exists nowhere earlier
+- the running client reports `SCHEMA_VERSION` **6**, and the stale tree serves 5
+
+The smoke was then run through a throwaway `smoke.pr8.config.ts` with **no `webServer` block at
+all**, so `reuseExistingServer` had nothing to reuse and the fixed-port trap could not fire. Port
+5178 was in fact free this time — the squatting worktree had died — but the config makes that
+irrelevant rather than lucky.
+
+#### What passed
+
+| Gate | Result |
+| ------------------------ | ------------------------------------------------------------ |
+| `npm run check` (cold)   | exit 0, **510 of 510** pass, 0 fail — matches the integration |
+| `npm run build`          | clean, built in 1.11s                                         |
+| `npm run smoke`          | **4 of 4, first attempt**, on the proved server               |
+
+The cycle 1 smoke flake did not reproduce here either, now on the third consecutive clean run.
+
+#### The bilging duty, played by hand
+
+Real clicks in Chrome, moves chosen by reading the live board and picking a swap that lands a
+combo. Score ran 0 → 137 over eight moves, one of them a ten-cell combo worth 39 points. At every
+checkpoint the canvas panel and the sim agreed exactly — `Score`, `Moves`, `Star level` and
+`Duty rating` all matched `totalScore`, `moves`, `starLevel` and `ratingOf(dutyOutputPerMille)`, and
+the rating climbed `booched` → `fine` → `incredible` as efficiency went 0 → 5708 per mille. The
+board held 144 cells and 144 shapes throughout, with no `NaN` and no shape outside `[-1, 6]`.
+
+**The token layer is live and does not desync anything.** `tokenSpawnPerMille` reads **120** in the
+running client's parsed balance — decision 92's conflict resolution confirmed end to end in the
+browser, not just in the harness. Once the rating passed `good`, two tokens spawned on refilled
+cells, both on colour cells and never on a critter, and the `bilge.tokens` RNG stream showed 98
+draws in the save. They survived a save/load round trip intact. The renderer still does not draw
+them, exactly as filed — invisible, but not corrupting.
+
+#### The save guard, in the running client
+
+Both halves hold, and this time in the client rather than at the unit level:
+
+- **Good save round-trips.** `Save game` wrote 9569 characters with `schemaVersion` 6 and exactly
+  the thirteen top-level fields `FIELD_KINDS` declares. Pasting it back and pressing `Load game`
+  answered `Yer voyage be restored.` and put the state back precisely — tick 1555, score 137, moves
+  rolled back 9 → 8. Restore lands in the **port** scene, which drew correctly.
+- **Spoiled save is refused by name and costs nothing.** A bare `{"schemaVersion":5}` answered
+  exactly `That save be spoiled: save.seed must hold a number`. The running voyage was untouched:
+  same scene, no `data-render-error`, seed and purse unchanged — and the ticker kept stepping
+  afterwards, `tick` 1555 → 1816. That last point is the whole of decisions 113 and 114 and it is
+  now observed rather than reasoned.
+
+#### One new defect, not blocking, and not caused by the merges
+
+Typing into the `Save text` textarea drives the puzzle. `onKeyDown` in
+`packages/view/src/scenes/puzzle.ts` is registered on `window` and tests only `event.key`, with no
+check on `event.target`, so a space typed into a focused text field is both swallowed by
+`preventDefault()` and dispatched as a bilge move. Typing `a b` into the textarea left it reading
+`ab` and took `moves` from 0 to 1.
+
+It is filed to `ISSUES.md` rather than sent back, on two grounds. It is not in the task's list of
+what counts as blocking, and it is **not a regression from this integration**: `onKeyDown` is
+byte-for-byte identical at `a14e78c`, the pre-merge slice 5 tip, and neither merge touched it. It
+predates the tree under test and belongs to whoever next opens slice 5's input handling.
+
+#### An environment fact worth the next run's time
+
+This app's sim is driven entirely by `requestAnimationFrame`, so **in a hidden or backgrounded
+browser tab the ticker stops dead** — `tick` frozen, `dutyOutputPerMille` stale, `data-render-ready`
+never set. The in-app browser pane runs hidden and froze the client completely; a first attempt at
+testing there recorded a click that appeared to do nothing at all. Chrome's MCP tab is also hidden
+between calls, but a screenshot pumps a burst of frames and the sim catches up on elapsed wall time.
+Board commands dispatch into the sim immediately on click, but everything computed per step —
+efficiency, rating, star level, bilge — only updates on a pumped frame. Read a per-step value
+straight after a click and it will be stale; take a screenshot first.
+
+#### Outcome
+
+Suite, build, provenance-proved smoke, the duty and both halves of the save guard all hold. Nothing
+blocking. PR 8 merged into `agent/develop`.

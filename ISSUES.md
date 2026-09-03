@@ -4,6 +4,42 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-03 — physical test of the slice 5 integration (OPP-12), PR 8
+
+The test itself is recorded in the analysis document. Suite, build, smoke, the bilging duty and both
+halves of the save guard all held, and PR 8 merged. Two things found on the way, neither worth
+stopping for.
+
+### Typing into a text field drives the puzzle
+
+`onKeyDown` in `packages/view/src/scenes/puzzle.ts` is registered on `window` and switches on
+`event.key` alone, with no check on `event.target`. While the puzzle scene is open, every keystroke
+reaches it — including keystrokes aimed at a focused input. Typing `a b` into the Ye panel's
+`Save text` textarea left the field reading `ab`: the space was swallowed by `preventDefault()` and
+dispatched as a bilge move, taking `moves` from 0 to 1. `Enter` and the arrow keys go the same way.
+
+Not a regression, and not from the two merges — `onKeyDown` is byte-for-byte identical at `a14e78c`,
+the pre-merge slice 5 tip. It is judged not worth stopping for because the only text field on the
+puzzle scene today is the save box, and the damage is one stray move on a board the player is
+already playing.
+
+It starts to matter the moment a save is pasted rather than typed by hand, because a pasted save is
+one keystroke away from a field that also steals `Escape` and leaves the duty. The fix is a guard on
+`event.target` — ignore the key when it came from an `input`, `textarea` or anything
+`contenteditable` — and it belongs with whoever next opens slice 5's input handling.
+
+### The sim stops in a hidden browser tab
+
+Not a product defect at all, but it has now cost two test runs their first attempt, so it is written
+down here. The client's ticker is driven by `requestAnimationFrame`, so a hidden or backgrounded tab
+freezes the sim outright: `tick` stops, `data-render-ready` is never set, and clicks appear to do
+nothing. The in-app browser pane runs hidden and is unusable for this app without pumping frames; a
+screenshot pumps a burst and the sim catches up on elapsed wall time.
+
+Board commands still dispatch on click, but every per-step value — `dutyOutputPerMille`, the rating,
+star level, bilge — updates only on a pumped frame, so a reading taken straight after a click is
+stale. Screenshot first, then read.
+
 ## 2026-09-03 — slice 5 integration, taking schema 6 from agent/develop (OPP-12), PR 8
 
 The merge itself is recorded in the analysis document. Three things found while doing it, none of
