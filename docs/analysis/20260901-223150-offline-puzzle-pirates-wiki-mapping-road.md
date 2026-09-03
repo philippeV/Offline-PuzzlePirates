@@ -2669,3 +2669,74 @@ asserts that a fixture named for a version still reaches the step it was created
 `tests/sim/migration.test.ts:58` already carries the false name that mistake produces. Decision 93's
 standing rule has the same shape: it is honoured by every migration and enforced by nothing. None of
 this is blocking, and all of it is one table-driven test away.
+
+### 2026-09-03 — physical test of the slice 2c repair (OPP-14), PR 6, cycle 1
+
+The system was played, not asserted on. There is no renderer in this slice, so the real interface is
+`pp-harness` over stdio, driven the way a session would be driven: roughly 700 hand-played moves
+across five seeds, plus a save-and-reload scenario and a hostile-input pass, each in its own
+worktree. The suite was run once as a gate and is the least interesting thing here.
+
+**The token layer does what the document says, and every load-bearing claim was seen rather than
+inferred.** Shapes spawn onto refilled colour cells and only from the `bilge.tokens` stream. Two
+matching halves of one symbol clear when adjacent while both underlying pieces survive — observed
+directly, with the state diff showing `/puzzle/board/shapes/32` and `/44` going to `-1` while cells
+3 and 0 stayed put and `maneuverBar` went 0 to 1. The meter takes one point per completed symbol,
+was walked to the gold 6 on four separate seeds, and then sat at 6 for another 260 moves while pairs
+kept resolving. Over those 700 moves no invariant broke: `shapes.length === cells.length` always,
+every shape in 0 to 7 or `NO_SHAPE`, no shape ever rode a crab, puffer, jelly or empty cell, and no
+adjacent matching pair was ever left standing after a settle.
+
+**Decision 66's correction is itself corrected.** The development entry recorded the performance
+gate as "an opening delay rather than a throttle", measured over sessions that were played well. It
+is a real brake in both directions: after ninety deliberately wasted moves dropped
+`dutyOutputPerMille` to 756, twelve consecutive *clearing* swaps produced zero token draws, and
+spawning resumed on the move duty crossed 1100 — the `good` band. Shapes already on the board fell
+from eight to four during the drought as existing ones were consumed. The gate stops spawning
+outright rather than slowing it, so the wiki's "slows or stops" is implemented as the stop, which is
+what the document already says.
+
+**A behaviour worth writing down, because nobody had.** A swap that clears nothing is accepted, costs
+a move, and runs no settle — so it can park two matching halves side by side and leave them standing
+until the next clearing move resolves them. That follows from resolving once per settle and
+contradicts nothing, but it means the meter is not "adjacency is consumed instantly": a player can
+stage a pair and bank it. It is also what made the core rule cleanly observable.
+
+**The repair's own distinction holds in both directions.** A save taken at the current schema
+reloads at the identical tick and hash (`tick 65`, `68735ae3bdfb5a26`), keeps its balance —
+`tokenSpawnPerMille` still 120 — and keeps playing: further swaps accepted, a genuine `bilge.poke`
+at star level 3, score and moves advancing. The save round trip is byte-identical across two
+independent reloads, and `snapshot.restore` returns the hash exactly. Both committed fixtures
+migrate to schema 6 into a fully inert world: `balance` null, 144 shapes all `NO_SHAPE`,
+`maneuverBar` 0, `puzzle.start` refused `balance-missing`, `bilge.swap` and `bilge.poke` refused
+`no-puzzle-running` with the state hash unchanged, and `bilge.tokens` never appearing in
+`rngStreams`. The shapes distinction is not vacuous: a live save demonstrably carries non-`NO_SHAPE`
+shapes that survive the round trip byte-identically.
+
+**Determinism survived the merge.** Two cold processes on seed 20260903 agreed on the opening hash
+`0ca982849bdeab3e` and on `a5778dd5b88d6824` after sixty ticks; a thirty-command replay on seed 4242
+agreed at every intermediate hash. All three committed replays verify from a cold harness:
+`marker-drift` and `bilge-session` `ok true` at `c9bb1c3d8d9e4f43` and `3c9406489de6557d`, and
+`marker-drift-diverged-at-tick-5` still `ok false` with `divergedAtTick` 5 and
+`finalHash == expectedHash`. `npm run check` is 435 of 435, exit 0, in 25.8 seconds.
+
+**Nothing blocked.** The hostile-input pass confirmed, from outside at the protocol level, the two
+save defects already recorded as non-blocking: `{"schemaVersion":5}` and a save with `puzzle` removed
+answer `internal-error` rather than `invalid-params` and leak a permanently broken registered
+session — provable because the session ids skip one — and a save hand-forged at schema 6 is accepted
+whole. One new instance of the same known class: a save whose `board.cells` is `{"length":1000}` is
+accepted silently and builds a 1000-entry `shapes` array on a 144-cell board. All three are the
+unguarded cast the analysis deliberately declined to widen this cycle, and all three are closed by
+the shallow top-level guard the slice 5 repair puts in `deserialise`. The harness never hung, never
+crashed, and served a fresh playable session after every hostile input.
+
+**Coverage this test could not reach**, stated rather than glossed: no crab spawned in any session,
+so the shape-never-rides-a-critter invariant is verified against puffers only, and the crab and jelly
+interactions with shapes went unexercised. The crab spawn rate is a recorded slice 2b issue, not a
+regression here.
+
+**The merge.** PR 6 goes into `agent/develop` with a merge commit rather than a squash, continuing
+the deviation recorded for PR 3 and PR 4 and for a reason that is now stronger: three sibling
+branches have already merged `agent/develop` into themselves, and squashing would detach exactly the
+history they will merge back against. It stays raised for the human in `ISSUES.md` rather than
+settled quietly.
