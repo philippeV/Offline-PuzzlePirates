@@ -11,7 +11,7 @@ import { stepPuzzle } from './puzzle/session.ts';
 import { stepShips } from './ship/session.ts';
 import { applyWorldCommand } from './world/dispatch.ts';
 import { stepWorld } from './world/session.ts';
-import { deserialise, serialise } from './save.ts';
+import { deserialise, refuseSpoiltState, serialise } from './save.ts';
 import { cloneWorldState, createWorldState, type WorldState } from './state.ts';
 
 export interface SimOptions {
@@ -92,6 +92,7 @@ export class Sim {
   }
 
   restore(snapshot: Snapshot): void {
+    refuseSpoiltState(snapshot);
     this.#state = cloneWorldState(snapshot);
   }
 }

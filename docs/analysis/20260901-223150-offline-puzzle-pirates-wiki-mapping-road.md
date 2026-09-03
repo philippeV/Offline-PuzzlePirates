@@ -5175,3 +5175,72 @@ port 5178 is still held by a dead worktree while `playwright.config.ts` sets
 test somebody else's checkout — prove the server's provenance before believing it. And the repo
 carries roughly eighteen orphaned worktrees, one of which holds a stale branch checked out; push with
 `HEAD:refs/heads/<branch>` rather than checking a branch out if one collides.
+
+### 2026-09-03 — development, UI sweep slice A: giving the save guard depth, PR pending
+
+Task `20260903-235500-uisweep-a-save-guard-depth`, branch
+`agent/feature/20260903-235500-uisweep-a-save-guard-depth` from `82e019c`. First of the four slices
+in the entry above.
+
+#### What was built
+
+`worldStateOf` checked thirteen top-level keys against four coarse kinds and then cast. Everything
+below depth 1 was unexamined, so a save with `puzzle: {}`, or with `balance.bilging` deleted, passed,
+loaded, told the player *"Yer voyage be restored."* and killed the render loop one frame later inside
+`sim.step`, outside any `try`.
+
+The guard now refuses, in the one shared sink decision 111 named: `puzzle.frame` present and
+`puzzle.board` measurable, `cells.length === width * height` and one shape per cell, `balance` either
+null or carrying all nine of its blocks, every `ships[].shipClass` a known class, `voyage.route`
+entries known league points, and `voyage.shipId` / `battle.ships[].shipId` resolving to a ship that
+is actually in `ships`.
+
+`Sim.restore` was the second unvalidated door — it took a snapshot and cloned it with no checks at
+all — and now runs the same refusal. Both callers were checked first: `snapshot.restore` once per
+RPC, and `atomically()` only on its catch path. The validator is O(cells + ships) with no allocation
+in front of a `cloneWorldState` that already does a full JSON round trip, so it is strictly cheaper
+than the work it precedes.
+
+Decision 133 held on inspection: `client.ts:114-129` already builds the `Sim` into a local and rolls
+back `{sim, lines, scene}`. It is not in this diff.
+
+#### Decision 134 in practice
+
+The guard is a `void` refuser. It throws or it returns; it never writes, never fills a default and
+never rebuilds the object. Two tests pin that directly — a voyage-in-battle save round-trips
+`deepEqual` against `JSON.parse(saved)`, and the committed v3 fixture's cells, frame, markers and
+`rngStreams` deep-equal the raw JSON after loading. The ten `migration.test.ts` `deepEqual` cases the
+decision was written to protect all still pass.
+
+#### One thing worth recording for later
+
+`BALANCE_BLOCKS` is typed `Record<keyof Balance, true>`. Adding a block to `Balance` now fails to
+compile here rather than silently leaving the new block unchecked. That was a deliberate choice over
+listing the four blocks `ISSUES.md` happened to name: the four were the ones someone had observed
+crashing, not the ones that can crash.
+
+Two things were deliberately left alone. `nextEntityId: 0` minting colliding ids is a separate
+`ISSUES.md` finding and corrupts silently rather than throwing, so decision 135's boundary excludes
+it — still open. And `safeIntegerOf` is applied only to `board.width` and `board.height`, because
+`canonicalJson` already throws on any non-safe-integer and `cloneWorldState` runs it, so the
+`restore` door was already covered on that axis; duplicating it everywhere would have been a check
+the existing code already makes.
+
+#### Verification, run by this stage rather than inherited
+
+`npm run build` clean, exit 0. All five non-test gates — `deps`, `imports`, `boundary`, `typecheck`,
+`lint` — exit 0. Tests **568 pass, 0 fail**, every segment exit 0: sim 95, view 39, battle 65, puzzle
+64, ship 40, world 148, gates 12, harness 105. Baseline on `82e019c` was 535, so this slice adds 33.
+
+Red-before was proved rather than asserted: with `save.ts` and `sim.ts` reverted to `HEAD` and the
+new tests kept, `tests/sim/save.test.ts` fails with `ERR_ASSERTION`, `operator: 'throws'` — the guard
+does not throw. Restored, 37 of 37 pass.
+
+**The suite had to be run per directory, and that is worth knowing.** The combined
+`npm run check` reached the test phase, then aborted four `tests/view` **files** at file level with
+no per-test assertion detail, reporting 546 of 550. A second combined `npm test` hung and was killed
+at ten minutes. Both are the flake already filed in `ISSUES.md` — the harness suite starts one child
+process per test, and this machine is carrying 76 stray `node` processes from earlier sessions.
+Nothing in `tests/view` imports `save.ts` or the restore path, and those files pass 39 of 39 both in
+isolation and by directory. The killed run orphaned three of its own `node` children; they were
+identified by command line and killed, leaving the machine at the 76 it started with.
