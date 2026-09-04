@@ -5498,3 +5498,82 @@ all proved red-before by mutation), and `tests/view/log.test.ts` pins the three 
 including that the lost line asserts no sinking. `OUTCOME_TEXTS` is module-private inside a
 pixi-dependent scene and was left to the physical stage rather than contorting the source to reach
 it.
+
+### 2026-09-04 — independent review, UI sweep slice B (PR 11)
+
+Task `20260904-020000-review-uisweep-b-battle-screen-truthfulness`, reviewing
+`agent/feature/20260903-235501-uisweep-b-battle-screen-truthfulness` at `5e7112f` against
+`agent/develop` at `0222630`. Four lenses run concurrently. **No blocking finding.** Forwarded to
+the test stage; sixteen non-blocking findings appended to `ISSUES.md`.
+
+#### Verification re-run rather than inherited
+
+`npm run check` from cold in a fresh worktree: **exit 0, all six gates, 578 pass / 0 fail in 22.5s**,
+and unlike slice A there was no flake — the combined run completed in one pass. `npm run build`
+exit 0. GitHub CI green on both check runs; note that `.github/workflows/ci.yml` runs `npm run check`
+only, so **CI never exercises the smoke suite** and the screenshot evidence rests entirely on local
+runs and on reading the baseline.
+
+The re-blessed `battle.png` was inspected against its predecessor image rather than accepted as
+"changed". It is correct, not merely different: before, `Set the turn`, `Break off` and the
+break-off note sit at y 572-622 against a chat top edge at 573; after, they sit at 448-486, clear of
+it, and the sloop's four phase rows carry `—`, `◄`, `▲`, `►` and no Rest. The panel's measured chat
+footprint in that render is about 147px, which independently corroborates `CHAT_FOOTPRINT = 150`.
+The layout arithmetic reproduces exactly: `contentHeight` is 648, `downScale` was 1.0006 capped to 1
+before and is 0.76852 after, and at 1920x1080 `Math.min(1, …)` makes it a no-op.
+
+#### 160. The boundary gate does not protect decision 136, and never could
+
+Decision 136 requires `dispatch.ts:63-66` to remain the single definition of affordability. The slice
+entry justifies keeping `affordable`'s `hull` parameter on the grounds that it "keeps
+`npm run boundary` green". That reason is a non-sequitur and is corrected here: `check-view-boundary.ts`
+extracts import *specifiers* and flags any file outside `packages/view/src/client/` naming
+`@opp/sim`. It never looks at symbols or logic. `planner.ts` imports from `'../client/rules.ts'`, a
+relative path, so the gate would have stayed green for any signature — and a hand-rolled copy of the
+affordability loop pasted into the planner would import nothing new (`heldTokensOf` is already
+imported there for the token tally) and the gate would print success. It is a dependency-*direction*
+gate, not a rule-*location* gate. The conclusion the slice reached — mirror the sim exactly — is
+right; the reason given for it is not.
+
+The consequence is structural and outlives this slice: `planner.ts:257-258` is now a literal copy of
+the sim's composition, no test binds the two (the planner imports `pixi.js` and is unreachable from
+`node --test`), and no gate can. Adding a third gate to `plan()` would silently desynchronise the
+two. **The durable repair is a single exported composite** — `planRefusalOf(pool, hull, plan)` in
+`dispatch.ts`, called by both sides — which would also shrink the facade surface from two symbols to
+one. Recorded for whichever slice next touches battle planning; not imposed on this one, whose
+mirror is presently exact.
+
+#### 161. Slice B's two Rest defects are latent, and what makes them live
+
+Ten of the fourteen classes in `ship/classes.ts` are three-movers; only sloop, cutter, dhow and
+longship are four-movers. On a three-mover `planRejectionOf` demands *exactly* one rest, so Rest is
+the single mandatory control — and this slice moved it to the last index, and the fresh `idlePlan()`
+draft opens turn 1 refused with `She cannot move that far in a turn.`, telling a player who has
+planned nothing that they planned too much. Neither reaches a player today: the shipped client
+commissions `'sloop'` at both openings (`client/boot.ts:30,43`) and nothing else in `packages/view`
+commissions a ship, so only the harness can put the player on a three-mover. **Both become live the
+moment the player can own or buy a second ship**, and whichever slice adds that must fix the
+`plan-move-budget` wording — `plan.ts:38` collapses "too many rests" and "too few" into one reason,
+so no correct message is currently reachable — and reconsider the button order for classes where
+Rest is required rather than optional. Filed rather than fixed here because the analysis's own exit
+criterion for finding 8 was narrowed to the affordance alone; the spec had named both the affordance
+and the wording, and **that narrowing was never recorded by any stage** until now.
+
+#### 162. Decision 158 is upheld
+
+The scope extension into `scenes/battle.ts`'s `OUTCOME_TEXTS` was challenged as unrequested scope
+and is judged correct. The exit criterion is written about *a lost battle's message*, not about
+`log.ts`, and the spec's own preamble says each finding names the file to start *from*. The battle
+scene's veil carried the identical false promise, drawn larger, at the same moment; fixing only
+`log.ts` would have satisfied the letter and failed the criterion. The reverse — fixing one of the
+two — is what would have warranted a finding.
+
+#### What the review did not settle, and handed to the test stage
+
+The four lenses agreed on every question they overlapped on, so nothing needed adjudicating between
+them; the one figure needing correction was a lens's "12 of 14" three-movers, which is 10 of 14 by
+the class table. What remains genuinely unverifiable by reading is physical: that the hidden Rest
+button cannot be reached by click or keyboard on a real sloop, that the refusal text is readable
+with the chat overlay actually present rather than merely computed to be clear of it, that an empty
+token pool at turn 1 disables submit rather than refusing after the click, and that a lost battle
+shows the corrected message on both surfaces. Those are the test stage's.

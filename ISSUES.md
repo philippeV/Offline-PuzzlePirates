@@ -4,6 +4,127 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of UI sweep slice B, PR 11
+
+Four lenses, no blocking finding. The verification below was re-run from cold rather than inherited:
+`npm run check` exit 0, all six gates, 578 pass / 0 fail in 22.5s with no flake; `npm run build`
+exit 0; GitHub CI green on both runs. The re-blessed `battle.png` was compared against its
+predecessor image and is correct rather than merely different — before, `Set the turn`, `Break off`
+and the break-off note sat at y 572-622 against a chat top edge at 573; after, they sit at 448-486,
+clear of it, and the sloop's four phase rows carry no Rest button.
+
+**The two Rest defects are latent, not live, because the player is always a sloop.** Ten of the
+fourteen classes in `ship/classes.ts` are three-movers — fanchuan, baghlah, junk, merchant-brig,
+war-brig, merchant-galleon, war-galleon, xebec, war-frigate, grand-frigate — and only sloop, cutter,
+dhow and longship are four-movers. On a three-mover `planRejectionOf` demands *exactly* one rest, so
+Rest is the one mandatory control, and this slice moved it from index 1 to index 4, the far right of
+the row past three arrows. Worse, the fresh `idlePlan()` draft has zero rests, so such a ship opens
+its first turn with submit disabled and the refusal `She cannot move that far in a turn.` — the
+player has planned nothing and is told they planned too much, because `plan.ts:38` collapses "too
+many rests" and "too few" into one `plan-move-budget` reason. Neither is reachable today: the
+shipped client commissions `'sloop'` at both openings (`client/boot.ts:30,43`) and nothing else in
+`packages/view` commissions a ship, so only the harness can put the player on a three-mover. Both
+start to matter the moment the player can own a second ship. Note also that the spec's finding 8
+named *both* the affordance and the wording as misleading; the analysis narrowed the exit criterion
+to the affordance alone, and no stage recorded the narrowing.
+
+**`restAvailable` reads a required quantity as an available one.** `scenes/planner.ts:246` is
+`restsRequiredBy(shipClass.movesPerTurn) > 0`, but the sim's rule is `!==`, not "at least one": a
+three-mover must rest exactly once. The view therefore renders Rest as an ordinary optional button
+in all four phases, and a player may select it four times and be refused. Equivalent by luck for the
+shipped data, where `movesPerTurn` is only ever 3 or 4 so the value is only ever 0 or 1. It stops
+being equivalent for any class with `movesPerTurn <= 2`.
+
+**`affordable`'s name inverts its return value, and it is now public.** It returns
+`RejectionReason | null`, so `null` means the plan *is* affordable. That was safe while the function
+was module-private with one caller inside an `??` chain; exported through the sim index and the view
+facade, the obvious-looking `if (affordable(pool, hull, plan)) submit()` submits precisely the
+unaffordable plans. The sibling it composes with, `planRejectionOf`, names its shape correctly, and
+the repo's convention for genuine booleans is `isFullyDamaged` / `blocksFire`. The new test file
+already writes the double negative to read correctly. `unaffordableReasonOf` would remove the trap.
+`restsRequiredBy` has the milder version of the same problem: it is now public taking a bare
+`number`, and `shotsPerSidePerPhase`, `gunStations` and `pirateCap` all type-check and all return a
+plausible integer.
+
+**The sim's refusal composition is duplicated in the view, and nothing binds the two copies.**
+`scenes/planner.ts:257-258` is a literal copy of `battle/dispatch.ts:63-65`. Add a third gate to
+`plan()` — a grapple-range check, an outcome guard, a resubmit limit — and the planner silently
+diverges: `Set the turn` enables for a plan the sim then refuses, and this slice's exit criterion
+regresses with no test going red. `tests/battle/plan.test.ts` pins the two predicates individually
+and never the composition, and `planner.ts` imports `pixi.js` so it is unreachable from the
+`node --test` suite. `npm run boundary` does not help and was never going to:
+`check-view-boundary.ts` matches import specifiers, not logic, so it enforces dependency *direction*,
+not rule *location* — a hand-rolled copy in the view would import nothing new and the gate would
+print success. Conformance to decision 136 therefore rests on human review permanently. The durable
+repair is one exported composite called by both sides, which would also shrink the facade surface
+from two symbols to one.
+
+**`CHAT_FOOTPRINT = 150` corresponds to no single number in the CSS it mirrors.** The real values
+are `.pp-chat-history`'s `height: 84px`, `.pp-chat`'s `padding: 8px`, `border: 1px` and `gap: 6px`,
+and a derived input row of about 29px — roughly 137px for the chat box, or about 157px counting the
+`.pp-overlay` gap and bottom padding. 150 sits between the two and equals neither. It is right
+today: the rendered footprint measured off the new baseline is about 147px. The drift hazard is
+already filed by the development stage; what is added here is that the constant is a hand-tuned
+figure rather than the derivation the entry implies, and that the repo does have a single-source
+pattern for a cross-boundary layout value — `--pp-panel-column` in `panels.css:2`, consumed by
+`app.css:28` — which this is the first layout number to duplicate instead.
+
+**The panel backdrop was not brought inside the new height budget.** `scenes/battle.ts:177` still
+draws `createPanelBackdrop(panelWidth, sceneHeight - SCENE_MARGIN * 2)`. At 1280x720 the content now
+stops around y 495 while the painted panel still runs to about y 700, so roughly 200px of empty
+backdrop remains under the chat and every panel label shrank from 12-13px to about 9-10px effective
+to buy clearance a shorter backdrop would have given free. Cosmetic, no truth defect, and visible in
+the re-blessed baseline.
+
+**The `Math.max(0.4, ...)` floor re-admits the overlap on very short viewports.** `battle.ts:168`.
+The floor engages below about 481px of height and the content bottom then lands at about 295 while
+the chat top is at height minus 150, so the overlap returns below about 445px — a 900x420 window.
+The reservation is not unconditional as written. Extreme viewport; noted for completeness.
+
+**A refusal can still arrive after clicking an enabled button.** `planner.ts:257-258` evaluates
+affordability per frame while `client.advance` mints, ages and spends tokens between frames, so the
+button can be enabled on frame N and the dispatch rejected on frame N+1. The sim re-validates at
+`dispatch.ts:63-66` before writing, so nothing corrupts — the symptom is a refusal line, not a bad
+plan. The plan-shape half of this predates the slice; the affordability half is newly exposed
+because the token pool changes far more often than the plan does.
+
+**Test observations.** The `> 0` in `restAvailable` and the three-way `visible` / `setEnabled` /
+`setSelected` at `planner.ts:268-274` have no coverage at all: mutate `> 0` to `>= 0` and all 578
+tests pass. `panelScaleOf` is a closure over three numbers and is mechanically extractable as a pure
+function — and the repo already establishes exactly that pattern, with `scenes/bilgeGesture.ts`,
+`scenes/grid.ts` and `scenes/walking.ts` living Pixi-free under `scenes/` and unit-tested — so
+"left to the physical stage" understates what was available; the screenshot at
+`maxDiffPixelRatio: 0.01` is the only backstop. In `tests/view/log.test.ts`, the substring loop at
+:31-38 and the distinctness check at :46 are both logically subsumed by the exact-equality
+assertions that precede them, so two of the ten new tests are documentation rather than
+verification. More usefully, that loop bans `'lost'` and `'nothing'`: the battle genuinely *was*
+lost, so an honest future rewrite — "Ye lost the day." — fails CI with the misleading message
+`loss text claimed "lost"`. Those two entries are a booby trap and `'sunk'` / `'ashore'` already
+carry the real intent. Minor: `MILLI_PER_TOKEN` in `tests/battle/plan.test.ts` duplicates
+`PER_MILLE`, and about half the new assertions restate coverage
+`tests/harness/battle.test.ts:217,222-225` already had.
+
+**The vocabulary the new test bans is still shipped by a sibling surface.**
+`scenes/battle.ts:334` labels a fully-damaged hull `band N/10 · facing · sunk`. The slice's premise
+is that the sim never sinks the player's ship, so the log must not say "sunk" — yet the ship roster
+on the same screen still does. Predates this PR and may be deliberate, since the roster describes
+the brigand too, but the two surfaces now disagree under a rule only one of them is tested against.
+
+**Recording defects in the slice B entry, not code defects.** Its `What was built` section has
+headed paragraphs for findings 2, 8 and 4 and none for finding 7, whose repair appears only as
+decision 157 under `Two deviations` — a reader would reasonably conclude finding 7 was dropped, and
+it was not. The slice table named CSS as slice B's layer and no CSS was touched, which is the right
+call on the merits but an unrecorded deviation. Decision 136's stated reason for keeping
+`affordable`'s `hull` parameter — that it keeps `npm run boundary` green — is a non-sequitur, since
+the gate would have stayed green for any signature; the conclusion is right, the reason is not. The
+`MOVE_OPTIONS` reorder changes the layout for every three-mover and got a prose aside where 157, 158
+and 159 got numbered decisions. And the claim that the change means "the planned turn is no longer
+lost" describes a data loss that never existed: `submit()` never cleared `draft`, and a rejected
+dispatch only appends a log line.
+
+**Dead export, pre-existing.** `movedPhasesOf` in `battle/plan.ts:45` has no callers anywhere and is
+not re-exported from the sim index.
+
 ## 2026-09-04 — development of UI sweep slice B, PR pending
 
 **`CHAT_FOOTPRINT` duplicates a CSS value into a Pixi constant, and the two can drift.**
