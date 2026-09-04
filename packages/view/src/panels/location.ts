@@ -120,7 +120,7 @@ function vesselActions(context: PanelContext, ship: ShipState): HTMLElement {
   }
   const moored = element('div', 'pp-vessel-actions');
   moored.append(
-    note('Chart a course on the map to set sail.'),
+    note('Chart a course on the map, then set sail at the helm.'),
     actionRow([
       button('Disembark', 'pp-disembark', () => {
         client.enterScene('port');

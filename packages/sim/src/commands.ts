@@ -78,6 +78,14 @@ export interface CharterVoyageCommand {
   voyageType: VoyageType;
 }
 
+export interface SailVoyageCommand {
+  op: 'voyage.sail';
+}
+
+export interface AbandonVoyageCommand {
+  op: 'voyage.abandon';
+}
+
 export interface PortVoyageCommand {
   op: 'voyage.port';
 }
@@ -112,6 +120,8 @@ export type BattleCommand = StartBattleCommand | PlanBattleTurnCommand | Disenga
 export type WorldCommand =
   | StartWorldCommand
   | CharterVoyageCommand
+  | SailVoyageCommand
+  | AbandonVoyageCommand
   | PortVoyageCommand
   | BuyCommodityCommand
   | SellCommodityCommand
@@ -147,6 +157,7 @@ export type RejectionReason =
   | 'not-in-port'
   | 'voyage-already-running'
   | 'no-voyage-running'
+  | 'voyage-already-under-way'
   | 'not-at-island'
   | 'no-route'
   | 'unknown-voyage-type'

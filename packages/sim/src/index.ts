@@ -15,9 +15,11 @@ export type {
   RejectedCommand,
   RejectionReason,
   BuyCommodityCommand,
+  AbandonVoyageCommand,
   CharterVoyageCommand,
   DivideBootyCommand,
   PortVoyageCommand,
+  SailVoyageCommand,
   SellCommodityCommand,
   ShipCommand,
   StartBattleCommand,
@@ -310,12 +312,15 @@ export {
   type TradeOutcome,
 } from './world/market.ts';
 export {
+  VOYAGE_PHASES,
   VOYAGE_TYPES,
+  isVoyagePhase,
   isVoyageType,
   type CargoLot,
   type IslandMarket,
   type MarketStock,
   type PirateState,
+  type VoyagePhase,
   type VoyageState,
   type VoyageType,
 } from './world/state.ts';

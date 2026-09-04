@@ -48,6 +48,7 @@ const STATION_COUNTS: Record<StationSlot, (shipClass: ShipClass) => number> = {
 
 const PLAY_ACTION = 'play';
 const CHART_ACTION = 'chart';
+const SAIL_ACTION = 'sail';
 const VESSEL_ACTION = 'vessel';
 const HOW_ACTION = 'how';
 const YE_ACTION = 'ye';
@@ -64,6 +65,7 @@ const DECK_INTENTS: Record<string, Intent> = {
 const BILGING_ACTIONS: ObjectAction[] = [{ id: PLAY_ACTION, label: 'Play Bilging' }];
 const NAVIGATION_ACTIONS: ObjectAction[] = [
   { id: CHART_ACTION, label: 'Chart a course' },
+  { id: SAIL_ACTION, label: 'Set sail' },
   { id: VESSEL_ACTION, label: 'Vessel' },
 ];
 const CREWED_ACTIONS: ObjectAction[] = [{ id: HOW_ACTION, label: 'How to play' }];
@@ -84,6 +86,10 @@ export function createDeckScene(context: SceneContext): Scene {
   const labels = new Map(stations.map((slot) => [stationIdOf(slot), STATION_FITTINGS[slot].label]));
 
   function act(targetId: string, actionId: string): void {
+    if (actionId === SAIL_ACTION) {
+      context.client.dispatch({ op: 'voyage.sail' });
+      return;
+    }
     const intent = DECK_INTENTS[actionId];
     if (intent !== undefined) {
       context.emit(intent);
@@ -116,7 +122,7 @@ export function createDeckScene(context: SceneContext): Scene {
 }
 
 function moored(state: Readonly<WorldState>): boolean {
-  return state.pirate !== null && state.pirate.atIslandId !== null && state.voyage === null;
+  return state.pirate !== null && state.pirate.atIslandId !== null;
 }
 
 function stationsOf(shipClass: ShipClass): StationSlot[] {

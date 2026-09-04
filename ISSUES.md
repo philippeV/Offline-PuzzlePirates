@@ -4205,3 +4205,19 @@ follows is what the lenses substantiated and judged not worth stopping for.
   save correctly changed the heading and correctly changed nothing else. Not a defect in anything
   shipped — the class simply has no geometric consequence yet — but the counts read as live inputs
   and are not, which is the kind of dead expressiveness a later reader trusts.
+
+- **`Set sail` at an empty helm answers with the wrong sentence.** `voyage.sail` with no course
+  charted is refused as `no-voyage-running` (`world/dispatch.ts`), whose copy is
+  `'Ye be not at sea.'` (`view/src/client/log.ts`). That reads correctly as an answer to
+  `voyage.port`, which shares the reason, but as an answer to "set sail" it states the opposite of
+  the player's situation — they are being told they are not at sea by way of refusing to send them
+  there. The fix is a distinct reason (`no-course-charted`) rather than new copy, because the string
+  is shared with `voyage.port` and cannot serve both. Left alone deliberately in slice B: splitting
+  the sim's rejection vocabulary is scope the slice did not ask for, and under the queue's blocking
+  test copy is not blocking.
+
+- **The road document's decision 154 is now stated too narrowly.** It says the `atomically()`
+  rollback flaw is "gated behind decision 153's state" — a dangling `voyage.shipId`. Since slice B,
+  `save.voyage.phase` is a second persisted field with its own validator, so a throwing `restore` no
+  longer needs decision 153's state to happen. The flaw and its filed-not-fixed disposition are
+  unchanged; only the gating sentence should read "gated behind any throwing `restore`."

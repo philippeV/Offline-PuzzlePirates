@@ -4,6 +4,7 @@ import { NO_SHAPE, type BoardShape } from './puzzle/board.ts';
 import { SHIP_CLASS_IDS, type ShipClassId } from './ship/classes.ts';
 import { SCHEMA_VERSION, type WorldState } from './state.ts';
 import { LEAGUE_POINT_IDS, type LeaguePointId } from './world/leaguePoints.ts';
+import { isVoyagePhase } from './world/state.ts';
 
 type RawSave = Record<string, unknown>;
 type Migration = (save: RawSave) => RawSave;
@@ -22,6 +23,7 @@ const migrations: Record<number, Migration> = {
     ships: shipsWithCargo(save['ships']),
   }),
   5: (save) => ({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) }),
+  6: (save) => ({ ...save, voyage: departedVoyageOf(save['voyage']) }),
 };
 
 const FIELD_KINDS: Record<keyof WorldState, FieldKind> = {
@@ -98,6 +100,11 @@ function shapedPuzzleOf(puzzle: unknown): unknown {
   };
 }
 
+function departedVoyageOf(voyage: unknown): unknown {
+  if (voyage === null || typeof voyage !== 'object') return voyage;
+  return { ...voyage, phase: 'under-way' };
+}
+
 function schemaVersionOf(save: RawSave): number {
   const version = save['schemaVersion'];
   if (typeof version !== 'number') throw new Error('save carries no schemaVersion');
@@ -167,6 +174,9 @@ function refuseSpoiltVoyage(voyage: unknown, ships: unknown[]): void {
       throw new TypeError(`save.voyage.route[${index}] must hold a known league point`);
     }
   });
+  if (!isVoyagePhase(fields['phase'])) {
+    throw new TypeError('save.voyage.phase must hold a known voyage phase');
+  }
   refuseUnknownShipId(fields['shipId'], ships, 'save.voyage.shipId');
 }
 

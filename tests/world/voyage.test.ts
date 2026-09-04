@@ -61,10 +61,19 @@ function chartedOf(
   return charted;
 }
 
+function sailingOf(
+  state: WorldState,
+  ship: ShipState,
+  toIslandId: IslandId,
+  voyageType: VoyageType,
+): VoyageState {
+  return { ...chartedOf(state, ship, toIslandId, voyageType), phase: 'under-way' };
+}
+
 function ticksToFirstLeg(speedPerMille: number): number {
   const state = seaState(SEED);
   const ship = crewedSloop(state, speedPerMille);
-  state.voyage = chartedOf(state, ship, 'doyle', 'evade');
+  state.voyage = sailingOf(state, ship, 'doyle', 'evade');
   for (let tick = 1; tick <= LEG_TICK_BUDGET; tick += 1) {
     state.tick = tick;
     if (stepVoyage(state).length > 0) return tick;
@@ -75,7 +84,7 @@ function ticksToFirstLeg(speedPerMille: number): number {
 function legTicksSailedOf(toIslandId: IslandId): number[] {
   const state = seaState(SEED);
   const ship = crewedSloop(state, 1000);
-  const voyage = chartedOf(state, ship, toIslandId, 'evade');
+  const voyage = sailingOf(state, ship, toIslandId, 'evade');
   state.voyage = voyage;
   const sailed: number[] = [];
   let legTicks = 0;
@@ -93,7 +102,7 @@ function legTicksSailedOf(toIslandId: IslandId): number[] {
 function sailedEventsOf(seed: number, ticks: number): SimEvent[] {
   const state = seaState(seed);
   const ship = crewedSloop(state, 1000);
-  state.voyage = chartedOf(state, ship, 'mcguffins-isle', 'pillage');
+  state.voyage = sailingOf(state, ship, 'mcguffins-isle', 'pillage');
   const events: SimEvent[] = [];
   for (let tick = 1; tick <= ticks; tick += 1) {
     state.tick = tick;
@@ -173,6 +182,7 @@ test('a charted voyage opens on the first leg of a route out of the pirate islan
 
   assert.equal(voyage.shipId, ship.id);
   assert.equal(voyage.type, 'trade');
+  assert.equal(voyage.phase, 'charted');
   assert.equal(voyage.legIndex, 0);
   assert.equal(voyage.legTicks, 0);
   assert.equal(voyage.encounters, 0);
@@ -215,7 +225,7 @@ test('charting from the open sea is refused because the pirate is at no island',
 test('reaching a league point announces its id and its difficulty', () => {
   const state = seaState(SEED);
   const ship = crewedSloop(state, 1000);
-  const voyage = chartedOf(state, ship, 'doyle', 'evade');
+  const voyage = sailingOf(state, ship, 'doyle', 'evade');
   state.voyage = voyage;
   voyage.legTicks = voyage.legTicksRequired - 1;
   const events = stepVoyage(state);
@@ -227,10 +237,22 @@ test('reaching a league point announces its id and its difficulty', () => {
   assert.equal(legReached.difficultyPerMille, 125);
 });
 
+test('a charted voyage sails nowhere until it is under way', () => {
+  const state = seaState(SEED);
+  const ship = crewedSloop(state, 1000);
+  const voyage = chartedOf(state, ship, 'doyle', 'evade');
+  state.voyage = voyage;
+
+  for (let tick = 0; tick < PAUSED_TICKS; tick += 1) assert.deepEqual(stepVoyage(state), []);
+
+  assert.equal(voyage.legTicks, 0);
+  assert.equal(voyage.legIndex, 0);
+});
+
 test('a running battle pauses the voyage', () => {
   const state = seaState(SEED);
   const ship = crewedSloop(state, 1000);
-  state.voyage = chartedOf(state, ship, 'doyle', 'evade');
+  state.voyage = sailingOf(state, ship, 'doyle', 'evade');
   state.battle = createBattle([], false);
 
   for (let tick = 0; tick < PAUSED_TICKS; tick += 1) assert.deepEqual(stepVoyage(state), []);
@@ -244,7 +266,7 @@ test('a running battle pauses the voyage', () => {
 test('a voyage that has run out of route waits in place rather than clearing itself', () => {
   const state = seaState(SEED);
   const ship = crewedSloop(state, 1000);
-  const voyage = chartedOf(state, ship, 'doyle', 'evade');
+  const voyage = sailingOf(state, ship, 'doyle', 'evade');
   state.voyage = voyage;
   voyage.legIndex = voyage.route.length - 1;
 

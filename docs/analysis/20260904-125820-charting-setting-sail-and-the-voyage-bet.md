@@ -325,3 +325,59 @@ remain from earlier runs. This document was committed to local `agent/develop` w
 pathspec. It was **not pushed**, because pushing requires first merging `origin/agent/develop`, and
 that merge would overwrite the other agent's uncommitted `puzzle.png`. Reconciling that divergence is
 left to the human or to whichever run owns those baselines.
+
+### 2026-09-04 — development, slice B (OPP-20)
+
+Charting and departure are now two acts. `VoyageState` carries `phase: 'charted' | 'under-way'`
+(decision L3); `chartVoyage` returns `'charted'` and no longer nulls `pirate.atIslandId`;
+`stepVoyage` refuses to advance anything not under way; `voyage.sail` and `voyage.abandon` join
+`voyage.chart` and `voyage.port`. `SCHEMA_VERSION` is 7, migrated from 6 by marking every existing
+voyage `'under-way'` (decision L4), with `refuseSpoiltVoyage` extended to the new field.
+
+Decisions taken during development, in this lineage's register:
+
+| #   | Decision                                                                        | Rationale                                                                                                                        |
+| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| L17 | Branched from slice A's feature branch, not `agent/develop`                      | PR 14 was open and unmerged; the task's own precondition prescribes this, and slice A's chart fix is what makes charting testable. |
+| L18 | Two fixtures committed, not one: `voyage-under-way-v6` and `voyage-charted-v7`   | The v6 one is what actually exercises the migration; the v7 one pins the new shape, which is what the task and OPP-20 asked for.   |
+| L19 | Both fixtures generated from running code, the v6 one before any edit was made   | A hand-written "old" save proves only that the migration handles what its author imagined. The v6 artefact predates the change.    |
+| L20 | `client.atSea` redefined as `phase === 'under-way'` rather than `voyage !== null` | Otherwise charting alone flips `atSea`, `syncScene` evicts the player from port and `canEnter('port')` locks them aboard.          |
+| L21 | `deck.moored()` reduced to `pirate.atIslandId !== null`                          | The old third clause `voyage === null` would hide the gangplank the moment a course was charted. Only `voyage.sail` nulls the id.  |
+| L22 | The helm control is an `ObjectAction`, statically present, refused by the sim     | The deck is PIXI and is not rebuilt after a dispatch, so a conditionally-present action would go stale. The rule stays in the sim. |
+| L23 | `voyage.abandon` calls `settleConcludedEncounter` before clearing the voyage      | Exactly what `voyage.port` does. Without it, abandoning with a concluded battle standing would widen decision 129's hole.          |
+| L24 | The wrong-facing `no-voyage-running` copy at an empty helm went to `ISSUES.md`    | The string is shared with `voyage.port`; the real fix is a new rejection reason, which is scope this slice was not given.          |
+
+**The road document audit the task required, restated rather than assumed.** Decisions 153 and 154
+rest on `voyage.chart` having exactly one call site (confirmed by decision 155). That premise was
+never the bare count but the property it established: the voyage ship is always the player hull.
+`voyage.chart` still has exactly one production dispatch site, still passing `context.playerShip()`.
+**The two new commands cannot weaken it, because neither carries a `shipId`** — `sail(state)` and
+`abandon(state)` take only state, and the harness parses both as a bare `{ op }`. `sail` reads
+`voyage.shipId` off the voyage `charter` already created, so no new path can put a brigand hull
+there. **Decision 153 holds.** Decision 154 is unaffected in substance but its gating sentence is now
+too narrow, and is filed in `ISSUES.md` (see L24's neighbour entry).
+
+**A state combination that could not exist before.** A pirate may now hold a voyage *and* be at an
+island simultaneously. `trade` and `divide` guard only on `atIslandId`, so a charted-but-moored
+pirate can still trade — judged correct and intended, since the ship has not left. `charter` refuses
+a second course with `voyage-already-running`, so `voyage.abandon` is the only exit from that
+window, which is precisely why decision L5 required it.
+
+**Verification.** `npm run check` green from cold, 607 tests. `npm run smoke` 4 passed with
+`tests/e2e/__screenshots__` untouched — no baseline was re-taken, and none needed to be, because the
+chooser is collapsed at rest on the `port` baseline and the helm menu is closed. The golden, the
+scenario fixture and the three replays were re-blessed through the repo's own tooling; the change is
+schema-version-only, proven by the golden's two-line diff (`schemaVersion` and its dependent
+`stateHash`) and by every changed line in both replays being a hash field.
+
+**Driven physically in a browser** on `?seed=12648430&scene=port`, because the helm control has no
+automated coverage — the deck is PIXI and the radial menu is not reachable from a DOM test. A real
+pointer click selected Doyle and opened the chooser (slice A's fix still holds); `Chart course` left
+the pirate at Alkaid in phase `charted` with `canEnter('port')` still true; 600 ticks moved the
+voyage not at all; the Navigation station's radial menu offered `Set sail`; clicking it set
+`under-way`, nulled `atIslandId` and logged "Lines cast off, bound for Doyle Island."; 600 further
+ticks advanced `legTicks` to 600. `Abandon course` cleared the voyage, left the pirate at Alkaid and
+allowed an immediate re-chart.
+
+The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
+voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.

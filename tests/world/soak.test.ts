@@ -83,6 +83,7 @@ function runVoyage(seed: number): SoakRun {
     }).status,
     'accepted',
   );
+  assert.equal(sim.dispatch({ op: 'voyage.sail' }).status, 'accepted');
 
   const sailed = sail(sim);
   if (sailed === null) {

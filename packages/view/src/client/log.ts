@@ -36,6 +36,7 @@ const REFUSALS: Record<RejectionReason, string> = {
   'unknown-commodity': 'No such commodity.',
   'not-in-port': 'Ye must be in port for that.',
   'voyage-already-running': 'Ye be at sea already.',
+  'voyage-already-under-way': 'She be under way already.',
   'no-voyage-running': 'Ye be not at sea.',
   'not-at-island': 'Ye be not at an island.',
   'no-route': 'No route runs there.',
@@ -72,6 +73,10 @@ function textOf(event: SimEvent): string | null {
       return `Ye wake in ${islandOf(event.islandId).name}.`;
     case 'voyage.charted':
       return `Course set for ${islandOf(event.toIslandId).name}, ${event.legs} leagues.`;
+    case 'voyage.sailed':
+      return `Lines cast off, bound for ${islandOf(event.toIslandId).name}.`;
+    case 'voyage.abandoned':
+      return `Course struck. Ye bide at ${islandOf(event.islandId).name}.`;
     case 'voyage.legReached':
       return `League ${event.legIndex + 1} astern.`;
     case 'voyage.ported':

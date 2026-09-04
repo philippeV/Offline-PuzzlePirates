@@ -8,7 +8,7 @@ import { ISLAND_IDS, type IslandId } from './islands.ts';
 import { leaguePointOf } from './leaguePoints.ts';
 import { buyCommodity, createMarkets, marketOf, sellCommodity } from './market.ts';
 import { settleConcludedEncounter } from './session.ts';
-import { isVoyageType } from './state.ts';
+import { isVoyageType, type VoyageState } from './state.ts';
 import { chartVoyage } from './voyage.ts';
 
 export function applyWorldCommand(state: WorldState, command: WorldCommand): CommandResult {
@@ -16,6 +16,8 @@ export function applyWorldCommand(state: WorldState, command: WorldCommand): Com
   if (command.op === 'voyage.chart') {
     return charter(state, command.shipId, command.toIslandId, command.voyageType);
   }
+  if (command.op === 'voyage.sail') return sail(state);
+  if (command.op === 'voyage.abandon') return abandon(state);
   if (command.op === 'voyage.port') return port(state);
   if (command.op === 'market.buy' || command.op === 'market.sell') {
     return trade(state, command.op, command.shipId, command.commodityId, command.units);
@@ -54,7 +56,6 @@ function charter(
   if (typeof charted === 'string') return refused(charted);
 
   state.voyage = charted;
-  pirate.atIslandId = null;
 
   return accepted([
     {
@@ -65,6 +66,48 @@ function charter(
       legs: charted.route.length - 1,
     },
   ]);
+}
+
+function sail(state: WorldState): CommandResult {
+  const pirate = state.pirate;
+  if (pirate === null) return refused('world-not-started');
+
+  const voyage = state.voyage;
+  if (voyage === null) return refused('no-voyage-running');
+  if (voyage.phase === 'under-way') return refused('voyage-already-under-way');
+
+  const toIslandId = destinationOf(voyage);
+  if (toIslandId === null) return refused('unknown-island');
+
+  voyage.phase = 'under-way';
+  pirate.atIslandId = null;
+
+  return accepted([
+    { type: 'voyage.sailed', tick: state.tick, shipId: voyage.shipId, toIslandId },
+  ]);
+}
+
+function abandon(state: WorldState): CommandResult {
+  const pirate = state.pirate;
+  if (pirate === null) return refused('world-not-started');
+
+  const voyage = state.voyage;
+  if (voyage === null) return refused('no-voyage-running');
+  if (voyage.phase === 'under-way') return refused('voyage-already-under-way');
+
+  const islandId = pirate.atIslandId;
+  if (islandId === null) return refused('not-at-island');
+
+  const settled = settleConcludedEncounter(state);
+  state.voyage = null;
+
+  return accepted([...settled, { type: 'voyage.abandoned', tick: state.tick, islandId }]);
+}
+
+function destinationOf(voyage: VoyageState): IslandId | null {
+  const pointId = voyage.route[voyage.route.length - 1];
+  if (pointId === undefined) return null;
+  return leaguePointOf(pointId).islandId;
 }
 
 function port(state: WorldState): CommandResult {

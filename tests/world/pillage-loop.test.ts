@@ -43,6 +43,10 @@ test('the whole pillage loop runs end to end and survives a save and a reload', 
     voyageType: 'pillage',
   });
   assert.equal(charted.status, 'accepted');
+  assert.equal(stateOf(sim).pirate?.atIslandId, HOME_ISLAND);
+
+  const sailed = sim.dispatch({ op: 'voyage.sail' });
+  assert.equal(sailed.status, 'accepted');
   assert.equal(stateOf(sim).pirate?.atIslandId, null);
 
   sailToDestination(sim, MAX_VOYAGE_TICKS);
@@ -110,6 +114,7 @@ function pillageUntilWon(): { sim: Sim; ship: ReturnType<typeof shipOf> } | null
       toIslandId: DESTINATION,
       voyageType: 'pillage',
     });
+    sim.dispatch({ op: 'voyage.sail' });
     sailToDestination(sim, MAX_VOYAGE_TICKS);
     if (ship.bootyPoe > 0) return { sim, ship };
   }
