@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { Window } from 'happy-dom';
 
@@ -9,6 +11,10 @@ import { createMinimap } from '../../packages/view/src/panels/minimap.ts';
 import type { PanelContext } from '../../packages/view/src/panels/panels.ts';
 
 const SEED = 12648430;
+const PANELS_STYLESHEET = fileURLToPath(
+  new URL('../../packages/view/src/panels/panels.css', import.meta.url),
+);
+const CHART_CLASS_PATTERN = /\.pp-chart[\w-]*/g;
 
 before(() => {
   const window = new Window();
@@ -56,6 +62,31 @@ function abandonRow(host: HTMLElement): HTMLElement {
   const row = abandonControl(host).parentElement;
   if (row === null) throw new Error('the abandon control sits in no row');
   return row;
+}
+
+function chartClassesIn(host: HTMLElement, into: Set<string>): Set<string> {
+  for (const node of host.querySelectorAll('*')) {
+    for (const className of node.classList) {
+      if (className.startsWith('pp-chart')) into.add(className);
+    }
+  }
+  return into;
+}
+
+function renderedChartClasses(): Set<string> {
+  const { host, refresh } = mountChart();
+  const rendered = chartClassesIn(host, new Set());
+  islandCell(host, 'Doyle Island').click();
+  chartClassesIn(host, rendered);
+  chartCourse(host);
+  refresh();
+  return chartClassesIn(host, rendered);
+}
+
+function styledChartClasses(): Set<string> {
+  const stylesheet = readFileSync(PANELS_STYLESHEET, 'utf8');
+  const selectors = stylesheet.match(CHART_CLASS_PATTERN) ?? [];
+  return new Set(selectors.map((selector) => selector.slice(1)));
 }
 
 test('an island cell survives the simulation running under the pointer', () => {
@@ -161,4 +192,15 @@ test('a charted course can be abandoned without leaving the island', () => {
 
   assert.equal(context.client.state.voyage, null);
   assert.equal(context.client.state.pirate?.atIslandId, 'alkaid');
+});
+
+test('the stylesheet renders the chart state the chooser toggles', () => {
+  const rendered = renderedChartClasses();
+
+  for (const className of styledChartClasses()) {
+    assert.ok(
+      rendered.has(className),
+      `panels.css styles .${className}, which the chart no longer renders`,
+    );
+  }
 });

@@ -357,6 +357,21 @@
   text-transform: capitalize;
 }
 
+.pp-chart-voyage-chosen {
+  background: var(--pp-gold);
+  border-color: var(--pp-gold);
+  color: #201a10;
+  font-weight: 600;
+}
+
+.pp-chart-confirm {
+  width: 100%;
+  border-color: var(--pp-gold);
+  background: linear-gradient(180deg, #4a3a18, #2b2317);
+  color: var(--pp-gold);
+  font-weight: 600;
+}
+
 .pp-chat {
   display: flex;
   flex-direction: column;

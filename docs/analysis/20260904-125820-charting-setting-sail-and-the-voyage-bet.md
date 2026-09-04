@@ -254,6 +254,70 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — development, slice B merged onto agent/develop (OPP-20)
+
+Integration only. **No sim code was touched** — the abandon guard is correct and proven, and this
+slice's behaviour is unchanged. This entry exists because the integration itself carried a defect
+that no gate in the repository could see.
+
+**The task asked for a rebase; a rebase is not performable here.** Rebasing a branch that is already
+pushed rewrites published history and therefore requires a force-push, which `autonomous-queue` and
+`queue-development` both forbid outright. The permitted equivalent was used instead: `agent/develop`
+was **merged into** the feature branch, which resolves the same conflicts, makes PR 15 mergeable and
+pushes as a fast-forward. It is also this repository's established pattern (`a134c3b`, "merge
+agent/develop into slice 5b"). Only the mechanism changed; the substance of the task did not.
+
+**The predicted hazard was confirmed live, and it was worse than the hand-off assumed.** The merge
+conflicted in exactly four files — `ISSUES.md`, this document, `minimap.ts` and `minimap.test.ts` —
+while **`panels.css` auto-merged with no conflict at all**. Nobody resolving this merge would have
+been forced to open the stylesheet. It silently acquired slice A's `.pp-chart-sail` rule, which
+after the merge matched nothing, because slice B renders `pp-chart-confirm`. The confirm control
+would have shipped unstyled with every gate green.
+
+**Resolutions.** Both documentation conflicts kept both sides in full; the two branches had no
+overlapping changelog headings, so nothing was lost and nothing duplicated (13 entries).
+`minimap.ts` resolved to HEAD on the merits hunk by hunk: slice B branched **from** slice A's
+branch, so both sides already carry slice A's build-once-repaint-in-place refactor identically and
+`diff develop head` shows develop contributes nothing HEAD lacks — the resolution preserves slice A's
+repaint discipline rather than discarding it (`abandonRow.hidden` is toggled, not rebuilt).
+`minimap.test.ts` took HEAD except for slice A's stylesheet guard, which was re-added and rewritten.
+
+**`.pp-chart-sail` renamed to `.pp-chart-confirm`** in `panels.css`. No reference to the old class
+survives anywhere in the repository.
+
+**Slice A's guard was replaced, because it stayed green through exactly the rename that breaks the
+UI** — it only asserted that the substring `.pp-chart-sail {` still appeared in the file, driven by a
+hand-maintained constant. The replacement derives from the rendered DOM instead: it mounts the chart,
+walks it through three states, and asserts every `.pp-chart*` rule in the stylesheet is actually
+rendered. **Deviation recorded honestly:** this is the *stylesheet → DOM* direction, not the
+*DOM → stylesheet* direction the task asked for. The forward direction cannot be made green without
+inventing rules for `pp-chart-status`, `pp-chart-course` and `pp-chart-abandon`, which are
+structural or default-styled — or without reintroducing the very allowlist being removed. The
+consequence, filed in `ISSUES.md`, is that "a new control ships with no rule at all" is still
+uncaught. The guard was proved to bite: renaming the rule back makes it fail with
+`panels.css styles .pp-chart-sail, which the chart no longer renders`, and restoring makes it pass.
+
+**Verified in a real browser, because this defect is invisible to every other gate.** Dev server on
+port 5191 (5178 was already held by another session's server — deliberately not disturbed). Selecting
+Doyle Island reveals the confirm control, and its *computed* style carries the rule: border
+`rgb(255, 212, 121)`, `linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))`, weight 600, full width
+270.4px. Zero `.pp-chart-sail` nodes in the DOM. Slice A's `.pp-chart-voyage-chosen` also resolves
+correctly post-merge (gold background on the selected voyage type). The whole slice B loop then ran:
+charting logged "Course set for Doyle Island, 2 leagues", the status became "Yer course be charted.
+Set sail at the helm", the abandon control appeared, and abandoning logged "Course struck. Ye bide at
+Alkaid Island."
+
+**Gates:** `npm run check` exit 0, **609 pass / 0 fail** — the expected 608 plus the one new guard
+test. `npm run smoke` 4 passed with all four baseline PNGs md5-identical; nothing re-blessed. One
+TypeScript fix was needed en route, in the new test only: `matchAll` destructuring produced
+`Set<string | undefined>` under the repo's strict indexed access, rewritten as `match()` + `slice(1)`.
+
+**A trap worth knowing about, filed in `ISSUES.md`:** the first smoke run reported 4 failures that
+had nothing to do with this change. A dev server for the *main* working tree was listening on 5178
+and Playwright's `reuseExistingServer` screenshotted that app — including unpushed slice-5b art. It
+was proved unrelated by reverting the merge's view changes and re-running to byte-identical failure
+counts, then avoided by running on another port under `CI=1`.
+
 ### 2026-09-04 — test, slice B repair (OPP-20), PR 15, cycle 1
 
 **Testing passes. No blocking failure.** The guard does what the repair claims, it does not
@@ -323,6 +387,138 @@ it asserts the invariant rather than a substring, and has a failure mode no auto
 repository detects. Doing it here would put an unreviewed production change straight onto
 `agent/develop`, which is what the review stage exists to prevent. Testing passes on the branch as it
 stands; the merge waits on that separate, reviewed change.
+### 2026-09-04 — analysis, slice A (OPP-19), cycle 1
+
+**Scope.** Only the one blocking finding from the cycle 0 review is re-analysed here: `minimap.ts:155`
+toggles `pp-chart-voyage-chosen` and `:167` applies `pp-chart-sail`, while `panels.css` on this branch
+defines neither — its `pp-chart` block ends at `.pp-chart-voyage` (`:356`). The nine non-blocking
+findings stay in `ISSUES.md` where the review put them, and the sibling-panel 60 Hz defect in
+`market.ts`, `location.ts` and `booty.ts` stays there too rather than widening this slice.
+
+**The repair is two CSS rules; the only real question was where to get them.** The naive answer — write
+them fresh — and the careful answer turn out to be the same two rules, and the reason is worth
+recording, because it also disposes of the duplicate-implementation worry that prompted this cycle.
+
+**Decision L17: slice A takes both rules verbatim from slice 5b commit `53b5dd5`.** Three facts settled
+it. First, they are self-contained: both are bare single-class selectors of specificity (0,1,0), with no
+compounding, no parent qualification, and no dependency on 5b's flex layout of `.pp-chart`; the only
+token either references is `--pp-gold`, defined identically at `panels.css:11` on this branch, on the
+`.pp-overlay` scope the chart is mounted inside. Second, `.pp-chart-voyage-chosen` is a character-for-
+character copy of `.pp-tab-active` (`:113`), which is this stylesheet's *only* existing expression of a
+selected control — and it is driven by the identical pattern, `panels.ts:117-118` setting an ARIA
+attribute plus toggling a class that carries the whole visual weight. So verbatim adoption is
+simultaneously the answer to "match the surrounding style", not merely the answer to "minimise the
+future merge". Third, textual identity means the two implementations converge on these rules instead of
+diverging, so when slice 5b reaches a PR the `.pp-chart*` block conflicts nowhere.
+
+The two rules, exactly as they stand at `53b5dd5:packages/view/src/panels/panels.css:367-380`:
+
+```css
+.pp-chart-voyage-chosen {
+  background: var(--pp-gold);
+  border-color: var(--pp-gold);
+  color: #201a10;
+  font-weight: 600;
+}
+
+.pp-chart-sail {
+  width: 100%;
+  border-color: var(--pp-gold);
+  background: linear-gradient(180deg, #4a3a18, #2b2317);
+  color: var(--pp-gold);
+  font-weight: 600;
+}
+```
+
+**Verified rather than assumed that they transplant.** This branch builds its buttons with the same
+`dom.ts:25-30` helper as 5b, byte-identical, so the markup the selectors must match — `class="pp-button
+pp-chart-voyage"` with `pp-chart-voyage-chosen` toggled on, and `class="pp-button pp-chart-sail"` — is
+the same on both sides. `.pp-actions` (`:165-170`) is character-identical too, so `width: 100%` on the
+confirm control behaves as it does in 5b, the sail row holding that button alone. Placed after
+`.pp-chart-voyage` the rules sit later in the sheet than `.pp-button` (`:94`) at equal specificity, so
+they override the base recipe as intended. Nothing else in 5b's `pp-chart` block comes with them: its
+`display: flex` / `max-height: 48vh` on `.pp-chart` and the matching `min-height` / `overflow` moves are
+layout coupled to 5b and are deliberately left behind.
+
+**Decision L18: the duplicate chooser is not reconciled here; the obligation is recorded in `ISSUES.md`
+on this branch.** Reconciling would mean touching the divergence between local and
+`origin/agent/develop`, which the task guardrails forbid and which has been a standing human decision
+for thirteen dispatcher runs. `ISSUES.md` is the right home because it travels with the branch into
+`agent/develop`, so whoever brings 5b to a PR meets the note in the repository rather than in a queue
+log they have no reason to read. What that entry has to say is narrow and factual: `53b5dd5` already
+contains an equivalent chooser — `selectedVoyageType`, `voyageTypeButton`, `setSailButton` — so
+`minimap.ts` will conflict in substance even though `panels.css` now will not, and the resolution is to
+keep this branch's idempotent-repaint structure, which 5b's rebuild-per-refresh `courseSection` does not
+have.
+
+**Decision L19: a one-assertion regression guard goes in with the fix.** The review established that
+neither suite could have caught this — the smoke suite screenshots the canvas and never asserts on panel
+DOM, and the development stage's live browser check confirmed dispatch while knowing which button it had
+clicked. `tests/view/minimap.test.ts` already names both classes (`:69,:113`), so the cheap guard is to
+assert that `panels.css` carries a rule for each class the component toggles. It is scoped to these two
+names on purpose: `.pp-chart-status` and `.pp-chart-course` are also ruleless, but they are unstyled
+containers rather than state the player is meant to see, so a general "every class has a rule" test
+would fail for the wrong reason.
+
+**Baseline risk, and what it would mean.** `npm run smoke` should be unaffected, since its screenshots
+are of the PIXI canvas and these rules touch only overlay DOM. That expectation is worth treating as a
+check rather than an assumption: if a baseline does move, it means the smoke suite captures panel DOM
+after all, which would contradict the review's finding and change what the suite is good for. The
+development task is told to stop and report in that case rather than re-bless the images.
+
+**Emitted.** One development task,
+`20260904-153900-opp19-slice-a-repair-chooser-rendered-state`, against the existing branch
+`agent/feature/20260904-132300-opp17-slice-a-chart-is-usable-again` and PR 14. It opens no second
+branch: this is a repair to an open PR, not a new slice. Decision L15 stands unchanged and was judged
+correct by the review; this cycle only pays the cost it left unrecorded. Note for future readers that
+the decision table above stops at L14 and that L15 onward live in changelog prose — a convention this
+entry continues rather than fixes.
+
+### 2026-09-04 — independent review, slice A (OPP-19), cycle 0
+
+Four-lens review of PR 14. The core refactor was verified rather than taken on trust: no node a player
+can press is re-created on the repaint path, every property the old `cellOf` set at construction is
+updated in the repaint, and the cached cells cannot go stale because `LEAGUE_POINTS` and `ISLANDS` are
+module constants independent of seed, save and scene. The `hidden` toggling the refactor newly relies on
+was checked specifically, since it is the classic way this pattern breaks: `.pp-overlay [hidden]`
+(`panels.css:34`) outranks `.pp-actions { display: flex }` and the chart is mounted inside `.pp-overlay`,
+so it holds. Rejecting the `marker.drifted` suppression as the fix was the right call. Security,
+sim-purity and the `ISSUES.md` cherry-pick all came back clean.
+
+**One blocking finding: the chooser ships with no rendered state.** `minimap.ts:155` toggles
+`pp-chart-voyage-chosen` and `:167` builds the confirm control with `pp-chart-sail`; `panels.css` on this
+branch defines neither, having only `.pp-chart-voyage` at `:356`. The selected voyage type is therefore
+conveyed only by `aria-pressed`, invisible to a sighted mouse user, and `DEFAULT_VOYAGE_TYPE` is
+`pillage` (`:23,46`) — so a player who never touches the type row sails a combat voyage that nothing on
+screen announced, and a player who does click Trade gets no confirmation it took. This slice replaced
+one-click-dispatch, where the type in force was never ambiguous, with select-then-confirm, and shipped
+the select half without its visual state. Requirement 1 asks for the chooser *and* the confirm control;
+a chooser that cannot show what is chosen half-delivers it.
+
+**Why it happened, which the repair must take into account.** The unpushed local `agent/develop` already
+contains this same chooser — `selectedVoyageType`, `voyageTypeButton`, `setSailButton` and the identical
+`pp-chart-voyage-chosen` toggle — from slice 5b commit `53b5dd5`, *together with* both CSS rules. The
+TypeScript half was carried onto the `origin/agent/develop` base chosen by decision L15; the stylesheet
+half was not. Decision L15 itself remains correct — basing on the unpushed local branch would have pulled
+another work item's unreviewed art atlas into this PR — but its cost was never recorded: PR 14 and the
+unpushed slice 5b work now hold **two independent implementations of the same chooser**, which will
+conflict in both `minimap.ts` and the `.pp-chart*` block of `panels.css` whenever 5b reaches a PR. That
+reconciliation is a design decision, not a patch, which is why this returned to analysis rather than
+being fixed inline.
+
+**Also established, and material to slices B–D.** The 60 Hz clear-and-rebuild is not confined to the
+chart: `market.ts`, `location.ts` and `booty.ts` re-create their buttons on the same subscription, so
+`Buy`, `Sell`, `Board the ship`, `Disembark` and `Divide the booty` are unpressable by the identical
+mechanism. Scoping slice A's fix to the chart was right, but the analysis had recorded the root cause as
+a chart problem; it is a panel-deck problem. Filed in `ISSUES.md` with the other eight non-blocking
+findings, among them that test 6 cannot fail (optional chaining over a control it never asserts) and
+that the changelog's stated reason for test 6 passing against pre-fix code is wrong — the real reason is
+that the base had no sail control and its type buttons dispatched directly.
+
+Requirement 5 is confirmed undeliverable on this base, as the development stage honestly stated, with one
+correction: of the two forward-compatible lines, `flex: 0 0 auto` is genuinely inert but `overflow-y:
+auto` is not — it establishes a scroll container and a block formatting context. No visual change was
+observed and no baseline moved, so nothing is broken; the record was simply overstated.
 
 ### 2026-09-04 — development, slice A (OPP-19)
 
@@ -749,3 +945,196 @@ rule for `.pp-chart-sail`. There is no textual conflict, because slice B is base
 that rule matches nothing and the confirm control silently loses its primary styling, which is the
 same defect class the repair exists to fix. Slice B has no stylesheet guard to catch it. Whoever
 performs that merge must rename the rule and extend slice A's guard to the new class name.
+### 2026-09-04 — development, slice A repair (OPP-19), cycle 1
+
+The cycle 1 analysis had already settled every question, so this stage installed its three decisions
+and verified them rather than re-deriving anything.
+
+**L17 — the two rules are in.** `.pp-chart-voyage-chosen` and `.pp-chart-sail` were taken from
+`53b5dd5:packages/view/src/panels/panels.css:367-380` and placed immediately after `.pp-chart-voyage`.
+Byte-identity was checked by diffing the installed block against `git show` of the source rather than
+by eye: the diff is empty.
+
+**L19 — the guard is in, and it was proved to fail without the fix.** `tests/view/minimap.test.ts`
+asserts `panels.css` carries a rule for each of the two classes the component toggles, scoped to
+exactly those two names. Reverting only the stylesheet and re-running produced
+`panels.css carries no rule for .pp-chart-voyage-chosen, so the chart toggles a class that draws
+nothing` — so the guard genuinely closes the hole the review found, rather than passing vacuously.
+
+**L18 — the obligation is recorded** in `ISSUES.md`, naming `53b5dd5`'s equivalent chooser and
+stating that the resolution is to keep this branch's idempotent-repaint structure, because 5b's
+`courseSection` rebuilds per refresh and adopting it would reintroduce the very defect slice A fixes.
+
+**Confirmed by eye, which is what made this blocking.** Before any voyage type is clicked, `pillage`
+— the silent default at `minimap.ts:23` — now renders filled `--pp-gold` with `#201a10` text at
+weight 600, while `trade` and `evade` keep the plain `--pp-raised` recipe at weight 400. Clicking
+`trade` moved the gold to it and returned `pillage` to plain. `Set sail` renders full width
+(270.4px, the whole row) with a gold border and gold text at weight 600, so it reads as the primary
+action rather than a fourth peer of the three type buttons. Computed styles were read back to confirm
+the screenshot: chosen `rgb(255, 212, 121)` on `rgb(32, 26, 16)`, unchosen `rgb(43, 35, 23)` on
+`rgb(232, 226, 208)`. The gradient shows as a transparent `background-color` because it lives in
+`background-image`; that is expected and not a defect.
+
+**The baseline risk resolved the way the analysis predicted.** `npm run smoke` passed with
+`tests/e2e/__screenshots__` untouched, confirming the review's finding that the suite screenshots the
+PIXI canvas and never captures panel DOM. Nothing was re-blessed and nothing needed to be.
+
+**Verification.** `npm run check` green, 591 tests. `npm run smoke` 4 passed, baselines untouched.
+
+**Discovered, and it affects slice B rather than this repair.** Slice B renames `pp-chart-sail` to
+`pp-chart-confirm` (its confirm button charts a course; departure moved to the helm). This repair
+correctly styles `.pp-chart-sail`, which is the class on *this* branch — but once slice B is brought
+onto the repaired slice A, that rule will match nothing and the confirm control will lose its primary
+styling, silently, exactly as it was lost the first time. Slice B's own `STATEFUL_CHART_CLASSES`
+guard will not catch it either, because slice B did not add one. Whoever merges the two must rename
+the CSS rule alongside the class and extend the guard. Recorded here rather than pre-emptively fixed:
+this branch has no `pp-chart-confirm` to style, and slice B is a separate open PR.
+
+### 2026-09-04 — physical test, slice A repair (OPP-19), cycle 1
+
+**Passed. Merged to `agent/develop`.** The repair does on screen exactly what it claims.
+
+This stage mattered more than usual here: no automated suite in the repo can see this fix. The unit
+tests never load the stylesheet, and the Playwright suite screenshots `#stage canvas`, a sibling of
+`#panels`, so no panel DOM ever enters a baseline — which is precisely how the original defect
+shipped. Everything below was observed in a real browser at `http://localhost:5178/?seed=12648430`,
+with computed styles read back to corroborate each screenshot rather than trusting the image.
+
+**The pre-click default state — the load-bearing case — is correct.** On first opening the chooser
+(click any island other than the pirate's own; the chart panel itself is already mounted at cold
+load), `pillage` is visibly chosen with nothing yet clicked:
+
+| Button    | `background-color`   | `color`            | `font-weight` | `aria-pressed` |
+| --------- | -------------------- | ------------------ | ------------- | -------------- |
+| `pillage` | `rgb(255, 212, 121)` | `rgb(32, 26, 16)`  | 600           | `true`         |
+| `trade`   | `rgb(43, 35, 23)`    | `rgb(232, 226, 208)` | 400         | `false`        |
+| `evade`   | `rgb(43, 35, 23)`    | `rgb(232, 226, 208)` | 400         | `false`        |
+
+That is `--pp-gold` filled with `#201a10` text against the plain `--pp-raised` recipe, exactly as the
+review predicted. The silent default is no longer silent.
+
+**Transitions are correct on every step, driven with a real pointer** rather than a synthetic
+`.click()`. Clicking `trade` moved the gold to `trade` and returned `pillage` to plain; clicking
+`evade` did the same again. Exactly one button carried `aria-pressed="true"` at every observation —
+the radio invariant holds.
+
+**`Set sail` reads as the primary action, not a fourth peer.** Measured `270.4px` wide against
+`270.4px` for its row — full width — while a voyage-type button is `58.9px`. Gold border
+(`rgb(255, 212, 121)`), gold text, weight 600. Its `background-color` computes to `rgba(0, 0, 0, 0)`
+because the gradient lives in `background-image`
+(`linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))`); that is the expected shape and not a defect.
+
+**Two checks beyond the brief, both clean:**
+
+- **The chosen state survives the repaint.** After 2.5s of the client's 60 Hz refresh, and again
+  after changing destination island, `evade` was still gold and still the only chosen button. The
+  idempotent-repaint structure this branch was originally about holds under the new rules.
+- **The highlight is truthful, not decorative.** With `evade` chosen, `Set sail` produced a voyage
+  carrying `type: 'evade'` and the log line "Course set for Sayers Rock, 4 leagues." The gold marks
+  the state the sim actually receives.
+
+**The original subject of the branch has not regressed.** A real pointer press and release on a grid
+island cell still lands on the same element and synthesises a click — the 60 Hz repaint that made the
+grid unclickable is gone. Selecting Sayers Rock re-titled the course and recomputed it to 4 leagues.
+
+**Gates, run from cold in a clean worktree at `ec6d600`:**
+
+- `npm run check` — **exit 0, 591 pass / 0 fail**, all six gates, 20.9s.
+- `npm run smoke` — **4 passed**. Baselines **untouched**: all four `__screenshots__` PNGs are
+  md5-identical before and after, and the working tree is clean. Nothing was re-blessed.
+
+The `tests/gates/purity.test.ts` child-spawn flake recorded in `ISSUES.md` did **not** fire, at 518 MB
+free physical and 86 `node.exe` processes. Worth recording because it settles a reporting gap
+`ISSUES.md` raised against this very commit: the changelog's "591 tests" is confirmed on this machine,
+so the earlier `580/1` was the flake shape and not a different suite. The blanket claim that this box
+cannot run its own gates remains withdrawn.
+
+**Nothing blocking was found, so nothing goes back to analysis.** The seven non-blocking findings
+already in `ISSUES.md` stand, including the substring-matching guard; none were re-raised here.
+
+**Carried forward, still not fixable from either branch alone.** Slice A is now on `agent/develop`
+with `.pp-chart-sail` styled. Slice B renames that class to `.pp-chart-confirm` and is based on
+`ae8edbd`, which predates this repair, so there is still no textual conflict — the rule will simply
+stop matching and the confirm control will silently lose its primary styling. Whoever brings slice B
+onto the repaired slice A **must** rename the rule and extend the stylesheet guard. The guard asserts
+a substring in `panels.css` and was proven not to catch exactly this rename, so it will not warn.
+
+### 2026-09-04 — independent review, slice A repair (OPP-19), cycle 1
+
+Four lenses over `5454fd2` alone; `ae8edbd` and earlier were passed at cycle 0 and were not
+re-reviewed. **Approved — no blocking findings.** Forwarded to the test stage.
+
+**The blocking cycle 0 finding is genuinely closed.** Verified rather than accepted:
+
+- **L17's byte-identity claim holds.** Both rule blocks were extracted from
+  `53b5dd5:packages/view/src/panels/panels.css` and from `5454fd2` and compared as UTF-8 bytes —
+  identical through indentation, property order, colour literals, gradient argument spacing and
+  trailing whitespace. The cited source range `:367-380` is also correct.
+- **The rules actually select the elements the component classes.** `dom.ts:25-30` builds every
+  button as `pp-button <className>`; the three voyage buttons carry `pp-chart-voyage` plus the
+  toggled `pp-chart-voyage-chosen`, and Set sail carries `pp-chart-sail`. All selectors are
+  specificity (0,1,0), so source order decides, and both new rules sit after `.pp-button` (`:94`) and
+  `.pp-chart-voyage` (`:356`) — correct. `.pp-chart-voyage` sets only `text-transform`, so there is
+  no property collision at all. The two higher-specificity button rules in the file are scoped to
+  `.pp-td`, which `minimap.ts` never creates.
+- **No element can carry both new classes**, so the `background` shorthand cannot collide:
+  `paintVoyageTypes` iterates only `voyageTypeControls`, and the sail button is never in that map.
+- `--pp-gold` and `--pp-raised` are declared on `.pp-overlay` and genuinely inherit into the chart.
+  Contrast is 12.3:1 for the chosen button and 7.8–11.0:1 across the sail gradient — all AAA.
+- **No regression anywhere.** Both class names occur only in `minimap.ts`, `panels.css`,
+  `minimap.test.ts` and prose; no class name is dynamically constructed with a `pp-chart-` prefix;
+  `panels.css` is 15 insertions and 0 deletions, a pure insertion. Baselines cannot move, because
+  the smoke suite screenshots `#stage canvas` and `#stage` is a sibling of `#panels`.
+- **Every class the component emits was inventoried against the stylesheet.** Only `pp-chart-status`
+  and `pp-chart-course` lack rules, and the "deliberately unstyled container" claim was checked
+  rather than accepted: both are plain divs created and appended once, never toggled, hidden or
+  conditionally classed, so neither encodes state, and their children carry their own styling. There
+  is no state of the chooser in which the defect survives.
+- **The guard is not vacuous.** `9ea910b`'s stylesheet contains neither class name, so reverting
+  only the CSS fails at the first entry with exactly the message the changelog quotes.
+- Scope was exactly the one blocking finding: four files, additions only, and three known
+  non-blocking defects in the very test file being edited were correctly left alone.
+- No dependency movement, no `eval`/dynamic import/`innerHTML`, and no `url()`, `@import` or
+  `@font-face` anywhere in the stylesheet. The test's `fileURLToPath(new URL(…, import.meta.url))`
+  is cwd-independent and is the established idiom in eight other test files; the repo's purity gate
+  is scoped to `packages/sim/src/**` and gate fixtures, not to test hermeticity — it performs
+  filesystem I/O and spawns processes itself — so the new read violates nothing.
+
+**The principal non-blocking finding, recorded because it will matter soon.** The guard asserts that
+the string `.<class> {` appears in `panels.css`, where the invariant that broke is "the chosen
+voyage renders differently from an unchosen one". Five reintroductions of the original defect were
+confirmed **by execution** to leave it green: an empty rule, a commented-out rule, a rule stripped to
+an irrelevant declaration, a later equal-specificity `.pp-chart-voyage` override that computes the
+chosen button back to the unchosen appearance, and a rename of the class in the component with the
+stylesheet untouched. The last is the one that matters: this commit's own changelog records that
+slice B renames `pp-chart-sail` to `pp-chart-confirm` and that this guard will not catch it. So the
+repair ships with a written admission that its guard does not survive the next merge, against the
+defect it exists to prevent.
+
+Judged not blocking under the contract's test — the fix itself is correct, CI is green, and
+returning a cycle for test quality is precisely the loop the queue is built to avoid — but the guard
+should be re-pointed before slice B lands. Two mechanisms are already within reach and about the
+same size: injecting `panels.css` into the `<style>` of the happy-dom `Window` the test file's
+`before()` hook already builds and comparing computed styles between a clicked and an unclicked
+button (the cascade was verified to resolve correctly under happy-dom 20.14.0 in this repo), or a
+`tools/check-view-state-classes.ts` alongside `check-view-boundary.ts` deriving the class list from
+`classList.toggle('pp-…')` literals, which would cover all five conditionally-toggled classes rather
+than two. Related and recorded with it: `STATEFUL_CHART_CLASSES` is misnamed, because
+`pp-chart-sail` is applied once at construction and is not toggled at all.
+
+**A correction to L17 and to the `ISSUES.md` entry L18 required.** Both claim the `.pp-chart*` block
+will not conflict when slice 5b reaches a PR — L17 says it "conflicts nowhere". Diffing the whole
+`.pp-chart {` to `.pp-chat {` region between `53b5dd5` and `5454fd2` leaves four divergences inside
+that exact block: `.pp-chart` (`display: flex` / `max-height: 48vh` against `overflow-y: auto`),
+`.pp-chart-grid` (`min-height: 0; overflow-y: auto` against `flex: 0 0 auto`), `.pp-chart-choice`
+(`flex: 0 0 auto` on 5b only) and `.pp-cell-island:disabled` (here only). The true claim is the
+narrower one: *the two new rules* will not conflict. Whoever merges 5b will hit a `.pp-chart*`
+conflict regardless. Separately, that entry was appended at the bottom of `ISSUES.md` under a
+heading belonging to PR 12, against the file's own newest-first rule.
+
+**The merge hazard is confirmed from this side too**, and is now recorded on both branches, in both
+PRs and in this document. Slice B renames `.pp-chart-sail` to `.pp-chart-confirm`; this repair
+correctly styles `.pp-chart-sail`, the class on *this* branch. Neither branch is wrong alone and
+there is no textual conflict, because slice B is based on slice A at `ae8edbd`, which predates this
+repair. Whoever brings slice B onto the repaired slice A must rename the rule and extend the guard,
+or the confirm control silently loses its primary styling.
