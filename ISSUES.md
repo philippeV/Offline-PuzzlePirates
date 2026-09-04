@@ -3870,3 +3870,26 @@ they are now recorded in the analysis document instead.
 - `rng.cursors` requires a `session` and returns the full `{hi, lo, draws}` cursor rather than a draw
   count per stream.
 - `sim.runUntil` makes `equals` required and implements no `exists` predicate.
+
+### From UI sweep slice C (2026-09-04)
+
+- **The puzzle scene can be entered, and now restored into, on a world with no puzzle.**
+  `syncScene` has three rules and none of them consults `state.puzzle`, which is legally `null` —
+  the v2 save migration mints `puzzle: null` outright. `canEnter('puzzle')` does not check it
+  either, so this is reachable two ways: click **Play Bilging** on a puzzle-less world, or, since
+  decision 141 let the scene survive a restore, load a foreign or legacy save while bilging. Either
+  way `createPuzzleScene.render` hits its `puzzle === null || board === null` guard, clears all three
+  graphics and returns — a blank board with a frozen info panel and only **Leave duty** working. Not
+  a crash, and not reachable from any save this app produces, because both openings dispatch
+  `puzzle.start` at boot and there is no `puzzle.stop` command. One line in `syncScene` closes both
+  doors at once: `if (this.current === 'puzzle' && this.sim.state.puzzle === null) this.current = 'deck';`
+- **`packages/view/src/panels/` has no automated coverage at all and the repo has no DOM test
+  environment.** All five of slice C's repairs are verifiable only through a browser, which is why
+  slice C ships with no new tests and a physical verification record instead. Standing up a DOM test
+  environment is a larger decision than any one slice and is deliberately not taken here — but until
+  it is, every panel repair costs a manual play-through, and a regression in these files is invisible
+  to all six gates.
+- **The game clock cannot run in an unattended browser pane.** `createTicker` drives everything from
+  `requestAnimationFrame`, and a hidden pane never fires it. Any queue stage that tries to verify
+  time-dependent view behaviour by waiting will silently measure nothing, and will report a pass it
+  did not earn. Drive real `dispatch` events instead, or front the pane.

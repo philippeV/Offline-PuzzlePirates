@@ -5671,3 +5671,107 @@ orphaned `node.exe` processes, and `node --test` children died with `spawn UNKNO
 subtest, with zero assertion failures among them. GitHub CI ran `npm run check` on `323594e` twice,
 both success. That is the measurement of record for this merge. The orphaned processes were left
 untouched: they belong to other sessions and reaping them is the human's call, not an agent's.
+
+### 2026-09-04 — development, UI sweep slice C: the panels report what is actually there
+
+Task `20260903-235502-uisweep-c-panels-report-what-is-there`, branch
+`agent/feature/20260903-235502-uisweep-c-panels-report-what-is-there` from `26ae1a7`, which is
+`agent/develop` with slice B merged. Third of the four slices. Five view repairs, one commit each,
+no sim change and no schema change.
+
+#### What was built
+
+| Finding | Commit    | The lie the player was told                                              |
+| ------- | --------- | ------------------------------------------------------------------------ |
+| 3       | `365baf3` | A hold of 0 units printed directly above the list of goods in that hold  |
+| 6       | `c642455` | The Units field destroyed twice a second, mid-keystroke                  |
+| 11      | `e4e1052` | A save taken while bilging reopened in port                              |
+| 10      | `01c4dfa` | `Isle of Keris` rendered as `Isle`                                       |
+| 9       | `ac84a95` | The radial drew the object's own name a second time, 54px below the first |
+
+Findings 3, 10 and 9 landed as decisions 139, 142 and 143 describe them. Finding 11 is decision 141
+exactly: one deleted line in `restore`, no `SceneId` in `WorldState`, no migration, and the
+candidate-then-swap rollback still captures and restores the scene. Finding 6 is decision 140: the
+build-once, refresh-in-place shape `ye.ts` and `chat.ts` already use.
+
+#### Decisions taken without a human, continuing the series
+
+**167. `shortNameOf` drops generic words; it does not show the whole name.** Decision 142's heading
+says names are "no longer truncated to their first word" and notes the CSS already wraps, which
+reads as showing the full name — but 142's own exit list, and the spec, both require `Isle of Keris`
+to read as `Keris`. Dropping `isle`, `island`, `rock` and `of` satisfies both: `Keris` is what the
+tile shows, and the four names that were already correct are unchanged. There are seven islands, not
+the five a first grep suggests — `Edgar's Choice` and `McGuffin's Isle` carry apostrophes. Both are
+improved by the rule: `McGuffin's Isle` reads as `McGuffin's`, and `Edgar's Choice` now keeps both
+words where it used to read `Edgar's`. That second case is the one 142's wrapping note was for.
+
+**168. `avatarLabel` is removed with the title it fed.** Decision 143 records that the title
+parameter "has no other use". `IsoSceneDefinition.avatarLabel` had no other use either — the avatar
+sprite draws no label of its own, so the field existed solely to be passed to `radial.show`. Leaving
+it would have left dead state behind this slice's own change.
+
+**169. The market panel's variable row set is reconciled positionally, not by hiding rows.**
+`market.ts` skips a commodity whose stock is `undefined`, so the row set is nominally variable —
+something neither `ye.ts` nor `chat.ts` has to handle, because their variable regions hold nothing
+focusable. Marking absent rows `hidden` would have left extra `<tr>` elements in the DOM and broken
+the identical-output constraint, so `fillRows` compares the wanted rows against `body.children`
+positionally and calls `replaceChildren` only when they genuinely differ. In practice it never fires
+after the first refresh: `createMarkets` builds a stock for every `COMMODITY_ID`.
+
+**170. The refresh path no longer re-stamps the input's value, and that is a deliberate behaviour
+change.** The old code re-derived `units.value` from `wantedUnits` on every refresh, so emptying the
+field stamped `0` back into it a moment later. That stamping *is* the defect — it is what destroyed
+the caret — so it was not preserved. The value is written once at build time; thereafter the field
+and the map are the same value by construction, because only the input's own listener writes the
+map. No `activeElement` check and no caret save/restore is needed, because nothing overwrites it.
+
+**171. A `puzzle` scene can now survive a restore onto a world with no puzzle. Filed, not fixed.**
+`syncScene`'s three rules cover every *legality* violation — `battle` without a battle, `port` while
+at sea — but none consults `state.puzzle`, which is legally `null` (the v2 migration mints
+`puzzle: null`). A foreign or legacy save loaded while bilging therefore keeps the puzzle scene with
+no board: `render` clears its graphics and returns, leaving a blank board and a frozen info panel.
+It is not blocking and it is not new — `canEnter('puzzle')` never checked `state.puzzle` either, so
+clicking **Play Bilging** on a puzzle-less world already reaches the same dead scene — and every
+save this app produces carries a live puzzle, because both openings dispatch `puzzle.start` at boot
+and no `puzzle.stop` command exists. The one-line fourth rule that would close both is named in
+`ISSUES.md` rather than taken here, because it is a pre-existing hole this slice merely walks past.
+
+**172. Verification was physical and driven through the real dispatch path, because the clock does
+not run in an unattended pane.** `createTicker` is `requestAnimationFrame`-driven and the browser
+pane in a queue run is hidden, so rAF never fires and the game clock is stopped. A first attempt to
+hold focus "through ten seconds of running clock" was therefore vacuous and was discarded rather
+than reported. Refreshes were instead driven by firing real `click` events at a Buy button, which
+runs the same `dispatch` then `refresh` path the clock would run, while leaving focus where it was.
+Five dispatches moved iron stock 500 to 495, proving the refreshes happened.
+
+**173. The environment advisory's premise did not survive being tested.** The advisory raised at
+03:18 states this box cannot install or run the suite. Half an hour later `npm install` completed in
+two minutes with `package-lock.json` untouched, `npm run check` ran all six gates green from cold in
+one pass (exit 0, 578 pass, 0 fail, 22.9s), and `npm run build` was exit 0 — with the commit charge
+still about 96%. Four orphaned `vite` servers left by earlier queue runs were killed first; those
+are the queue's own leavings and the contract requires an agent not to leave them. The roughly 90
+orphaned `desktop-commander` MCP servers were left alone, as they belong to other sessions and
+reaping them is the human's call.
+
+#### Verification, run by this stage rather than inherited
+
+All six gates from cold, one pass: `npm run check` exit 0, 578 pass, 0 fail. `npm run build` exit 0.
+`578` is exactly the post-slice-B baseline; this slice adds no tests, which is the constraint the
+slice C entry records — every file it touches has zero automated coverage and the repo has no DOM
+test environment, and adding one is a larger decision than this slice.
+
+Physically, in a real headless Chromium at 1280x720 against a Vite server on port **5197** — not the
+default 5178, which is still squatted by a dead worktree and would have served another checkout:
+
+- **Finding 3.** Bought 1 Hemp for 16 PoE; the purse fell 2000 to 1984 and the Cargo hold read
+  `1 units`. It read `0` before.
+- **Finding 10.** All seven island tiles read correctly: `Alkaid`, `Doyle`, `Edgar's Choice`,
+  `Keris`, `Marlowe`, `McGuffin's`, `Sayers`.
+- **Finding 9.** Opening the radial on the Bilging station shows `Play Bilging` and exactly one
+  `Bilging` label, at the station. No centre title.
+- **Findings 6 and 11 were proved red-before and green-after** with the same probe run against a
+  build of the pre-fix file, which is the only evidence that separates a fix from a coincidence.
+  Finding 6 pre-fix: the Units input is removed from the document, focus is lost, and the row is a
+  new element. Post-fix: same row, same input, focus retained, typed value `37` intact across five
+  dispatches. Finding 11 pre-fix: save while bilging, load, and the client lands in the port scene.
+  Post-fix: it stays in the puzzle, board restored, `Yer voyage be restored.` in the chat.
