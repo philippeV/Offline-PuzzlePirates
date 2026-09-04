@@ -254,6 +254,93 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — analysis, slice A (OPP-19), cycle 1
+
+**Scope.** Only the one blocking finding from the cycle 0 review is re-analysed here: `minimap.ts:155`
+toggles `pp-chart-voyage-chosen` and `:167` applies `pp-chart-sail`, while `panels.css` on this branch
+defines neither — its `pp-chart` block ends at `.pp-chart-voyage` (`:356`). The nine non-blocking
+findings stay in `ISSUES.md` where the review put them, and the sibling-panel 60 Hz defect in
+`market.ts`, `location.ts` and `booty.ts` stays there too rather than widening this slice.
+
+**The repair is two CSS rules; the only real question was where to get them.** The naive answer — write
+them fresh — and the careful answer turn out to be the same two rules, and the reason is worth
+recording, because it also disposes of the duplicate-implementation worry that prompted this cycle.
+
+**Decision L17: slice A takes both rules verbatim from slice 5b commit `53b5dd5`.** Three facts settled
+it. First, they are self-contained: both are bare single-class selectors of specificity (0,1,0), with no
+compounding, no parent qualification, and no dependency on 5b's flex layout of `.pp-chart`; the only
+token either references is `--pp-gold`, defined identically at `panels.css:11` on this branch, on the
+`.pp-overlay` scope the chart is mounted inside. Second, `.pp-chart-voyage-chosen` is a character-for-
+character copy of `.pp-tab-active` (`:113`), which is this stylesheet's *only* existing expression of a
+selected control — and it is driven by the identical pattern, `panels.ts:117-118` setting an ARIA
+attribute plus toggling a class that carries the whole visual weight. So verbatim adoption is
+simultaneously the answer to "match the surrounding style", not merely the answer to "minimise the
+future merge". Third, textual identity means the two implementations converge on these rules instead of
+diverging, so when slice 5b reaches a PR the `.pp-chart*` block conflicts nowhere.
+
+The two rules, exactly as they stand at `53b5dd5:packages/view/src/panels/panels.css:367-380`:
+
+```css
+.pp-chart-voyage-chosen {
+  background: var(--pp-gold);
+  border-color: var(--pp-gold);
+  color: #201a10;
+  font-weight: 600;
+}
+
+.pp-chart-sail {
+  width: 100%;
+  border-color: var(--pp-gold);
+  background: linear-gradient(180deg, #4a3a18, #2b2317);
+  color: var(--pp-gold);
+  font-weight: 600;
+}
+```
+
+**Verified rather than assumed that they transplant.** This branch builds its buttons with the same
+`dom.ts:25-30` helper as 5b, byte-identical, so the markup the selectors must match — `class="pp-button
+pp-chart-voyage"` with `pp-chart-voyage-chosen` toggled on, and `class="pp-button pp-chart-sail"` — is
+the same on both sides. `.pp-actions` (`:165-170`) is character-identical too, so `width: 100%` on the
+confirm control behaves as it does in 5b, the sail row holding that button alone. Placed after
+`.pp-chart-voyage` the rules sit later in the sheet than `.pp-button` (`:94`) at equal specificity, so
+they override the base recipe as intended. Nothing else in 5b's `pp-chart` block comes with them: its
+`display: flex` / `max-height: 48vh` on `.pp-chart` and the matching `min-height` / `overflow` moves are
+layout coupled to 5b and are deliberately left behind.
+
+**Decision L18: the duplicate chooser is not reconciled here; the obligation is recorded in `ISSUES.md`
+on this branch.** Reconciling would mean touching the divergence between local and
+`origin/agent/develop`, which the task guardrails forbid and which has been a standing human decision
+for thirteen dispatcher runs. `ISSUES.md` is the right home because it travels with the branch into
+`agent/develop`, so whoever brings 5b to a PR meets the note in the repository rather than in a queue
+log they have no reason to read. What that entry has to say is narrow and factual: `53b5dd5` already
+contains an equivalent chooser — `selectedVoyageType`, `voyageTypeButton`, `setSailButton` — so
+`minimap.ts` will conflict in substance even though `panels.css` now will not, and the resolution is to
+keep this branch's idempotent-repaint structure, which 5b's rebuild-per-refresh `courseSection` does not
+have.
+
+**Decision L19: a one-assertion regression guard goes in with the fix.** The review established that
+neither suite could have caught this — the smoke suite screenshots the canvas and never asserts on panel
+DOM, and the development stage's live browser check confirmed dispatch while knowing which button it had
+clicked. `tests/view/minimap.test.ts` already names both classes (`:69,:113`), so the cheap guard is to
+assert that `panels.css` carries a rule for each class the component toggles. It is scoped to these two
+names on purpose: `.pp-chart-status` and `.pp-chart-course` are also ruleless, but they are unstyled
+containers rather than state the player is meant to see, so a general "every class has a rule" test
+would fail for the wrong reason.
+
+**Baseline risk, and what it would mean.** `npm run smoke` should be unaffected, since its screenshots
+are of the PIXI canvas and these rules touch only overlay DOM. That expectation is worth treating as a
+check rather than an assumption: if a baseline does move, it means the smoke suite captures panel DOM
+after all, which would contradict the review's finding and change what the suite is good for. The
+development task is told to stop and report in that case rather than re-bless the images.
+
+**Emitted.** One development task,
+`20260904-153900-opp19-slice-a-repair-chooser-rendered-state`, against the existing branch
+`agent/feature/20260904-132300-opp17-slice-a-chart-is-usable-again` and PR 14. It opens no second
+branch: this is a repair to an open PR, not a new slice. Decision L15 stands unchanged and was judged
+correct by the review; this cycle only pays the cost it left unrecorded. Note for future readers that
+the decision table above stops at L14 and that L15 onward live in changelog prose — a convention this
+entry continues rather than fixes.
+
 ### 2026-09-04 — independent review, slice A (OPP-19), cycle 0
 
 Four-lens review of PR 14. The core refactor was verified rather than taken on trust: no node a player
