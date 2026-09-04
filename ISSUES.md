@@ -4,6 +4,28 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — analysis, charting and the voyage between league points (OPP-17)
+
+One non-blocking finding, split off from the root cause of the reported chart defect. The defect
+itself is blocking and is being fixed in slice A; this is the sim-side half that is not.
+
+**The simulation emits a `marker.drifted` event every tick, whether or not anything drifted.**
+`driftMarkers` (`packages/sim/src/marker.ts:47-56`) returns an event unconditionally on every call.
+`GameClient.advance` (`packages/view/src/client/client.ts:96-106`) calls `announce()` whenever the
+tick produced any event, so at `TICKS_PER_SECOND = 60` every panel's `refresh` subscription
+(`packages/view/src/panels/panels.ts:87,125`) runs 60 times a second forever, redrawing panels whose
+content has not changed. This is what made the chart unusable: `minimap.ts` rebuilds its 36 cell
+buttons on each refresh, so a real pointer's press and release land on different element objects and
+no `click` is ever synthesised. Judged not blocking, and deliberately **not** the fix for the chart,
+for two reasons. First, suppressing the event changes the event stream that goldens, replays and
+state hashes in `packages/fixtures/` were recorded against, so it would churn determinism artefacts
+across the repository for a defect that has a local view-side fix. Second, it would not actually make
+the chart safe — any other event arriving mid-press would rebuild the grid just the same, so the
+grid has to become idempotent regardless. It starts to matter as a performance and battery cost as
+soon as panels grow heavier, and as a correctness trap the next time someone reasonably assumes an
+emitted event means something happened. The fix is to emit `marker.drifted` only when a marker
+actually moved, and to re-record the affected fixtures deliberately in the same commit.
+
 ## 2026-09-04 — physical test of UI sweep slice D, PR 13
 
 Every item of the test task driven in a real browser at 1280x720, in an **isolated worktree** with
