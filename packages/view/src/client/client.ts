@@ -2,7 +2,14 @@ import { Sim } from '@opp/sim';
 
 import { DEFAULT_OPENING, openingCommands, type Opening } from './boot.ts';
 import { linesOf, refusalOf, type LogLine } from './log.ts';
-import type { Balance, Command, CommandResult, SimEvent, WorldState } from './rules.ts';
+import type {
+  Balance,
+  BilgingBalance,
+  Command,
+  CommandResult,
+  SimEvent,
+  WorldState,
+} from './rules.ts';
 
 export type SceneId = 'port' | 'deck' | 'puzzle' | 'battle';
 
@@ -56,6 +63,10 @@ export class GameClient {
 
   get epoch(): number {
     return this.worldEpoch;
+  }
+
+  get bilging(): BilgingBalance {
+    return this.balance.bilging;
   }
 
   get log(): readonly LogLine[] {

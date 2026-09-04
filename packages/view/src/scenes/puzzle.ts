@@ -83,8 +83,6 @@ const CELL_MARKERS: MarkerShape[] = [
   'star',
 ];
 
-const DEFAULT_BOARD_WIDTH = 12;
-const DEFAULT_BOARD_HEIGHT = 12;
 const SEA_BACKDROP = 0x0a1219;
 
 const CRITTER_ART: Record<number, { fill: number; shape: MarkerShape }> = {
@@ -203,8 +201,8 @@ export function createPuzzleScene(context: SceneContext): Scene {
 
   function layout(): void {
     const board = boardOf();
-    const columns = board?.width ?? DEFAULT_BOARD_WIDTH;
-    const rows = board?.height ?? DEFAULT_BOARD_HEIGHT;
+    const columns = board?.width ?? client.bilging.boardWidth;
+    const rows = board?.height ?? client.bilging.boardHeight;
     const panelWidth = Math.max(
       160,
       Math.min(PANEL_INNER_WIDTH + PANEL_PADDING * 2, sceneWidth * 0.34),

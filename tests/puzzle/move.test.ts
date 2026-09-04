@@ -91,8 +91,8 @@ test('crabs freed by a swap at full water add their bonus to the scored move', (
   puzzle.bilgePerMille = PER_MILLE;
   puzzle.waterLineRow = FLOOD_WATER_LINE;
   paintComboSwap(puzzle.board);
-  puzzle.board.cells[flatIndexOf(puzzle.board, 8, 3)] = CRAB_CELL;
-  puzzle.board.cells[flatIndexOf(puzzle.board, 10, 3)] = CRAB_CELL;
+  puzzle.board.cells[flatIndexOf(puzzle.board, 0, 3)] = CRAB_CELL;
+  puzzle.board.cells[flatIndexOf(puzzle.board, 2, 3)] = CRAB_CELL;
 
   const events = acceptedEventsOf(sim, { op: 'bilge.swap', ...COMBO_SWAP });
   const cleared = clearedEventsOf(events);
@@ -100,8 +100,8 @@ test('crabs freed by a swap at full water add their bonus to the scored move', (
   assert.equal(cleared.length, 1);
   assert.equal(cleared[0]?.points, 16 + 36);
   assert.deepEqual(cleared[0]?.crabs, [
-    flatIndexOf(puzzle.board, 8, 2),
-    flatIndexOf(puzzle.board, 10, 2),
+    flatIndexOf(puzzle.board, 0, 2),
+    flatIndexOf(puzzle.board, 2, 2),
   ]);
   assert.equal(scoredPointsOf(events), 52);
   assert.equal(puzzle.board.cells.includes(CRAB_CELL), false);
@@ -112,9 +112,9 @@ test('poking a puffer clears its nine cells, pays nothing and costs a move', () 
   const puzzle = puzzleOf(sim);
   puzzle.starLevel = PUBLISHED_STAR_LEVEL;
   paintQuietBoard(puzzle.board);
-  puzzle.board.cells[flatIndexOf(puzzle.board, 5, 5)] = PUFFER_CELL;
+  puzzle.board.cells[flatIndexOf(puzzle.board, 3, 5)] = PUFFER_CELL;
 
-  const events = acceptedEventsOf(sim, { op: 'bilge.poke', x: 5, y: 5 });
+  const events = acceptedEventsOf(sim, { op: 'bilge.poke', x: 3, y: 5 });
   const cleared = clearedEventsOf(events);
 
   assert.equal(events[0]?.type, 'bilge.poked');
@@ -130,14 +130,14 @@ test('swapping a jelly onto a colour scores one point for every cell it sweeps',
   const puzzle = puzzleOf(sim);
   puzzle.starLevel = PUBLISHED_STAR_LEVEL;
   paintQuietBoard(puzzle.board);
-  puzzle.board.cells[flatIndexOf(puzzle.board, 5, 5)] = JELLY_CELL;
-  const colour = quietCellAt(6, 5);
+  puzzle.board.cells[flatIndexOf(puzzle.board, 2, 5)] = JELLY_CELL;
+  const colour = quietCellAt(3, 5);
   const painted = puzzle.board.cells.filter((cell) => cell === colour).length;
 
-  const events = acceptedEventsOf(sim, { op: 'bilge.swap', x: 5, y: 5 });
+  const events = acceptedEventsOf(sim, { op: 'bilge.swap', x: 2, y: 5 });
   const cleared = clearedEventsOf(events);
 
-  assert.equal(painted, 36);
+  assert.equal(painted, 18);
   assert.equal(cleared[0]?.cells.length, painted + 1);
   assert.equal(cleared[0]?.points, painted + 1);
   assert.equal(puzzle.moves, 1);

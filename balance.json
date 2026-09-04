@@ -11,7 +11,7 @@
     "battle.tallRockCount": "invented; the wiki publishes the tile kinds but never how a sea battle board is laid out, and 6 tall rocks on 576 tiles give the board enough cover to break a line of fire without turning it into a maze",
     "battle.windTileCount": "invented; wind is published as a tile that pushes a resting ship one square to leeward, and 4 tiles keep it an occasional surprise rather than a current that dominates navigation",
     "bilging.boardHeight": "invented; the wiki only requires at least 3 water rows and at least 3 dry top rows, so the height must be at least 6",
-    "bilging.boardWidth": "invented; the wiki never states the grid dimensions",
+    "bilging.boardWidth": "researched; the wiki text never states the grid dimensions, but the official YPPedia Bilge.png measures 6 cells across its 273px interior at 45.5px a cell, and two independent community solvers agree at 6 (hrt/Bilger BOARD_WIDTH, jmitash/BilgeBot PIECES_PER_ROW)",
     "bilging.chainPointsPerCell": "published; a chain is worth no more than 1 point per block cleared",
     "bilging.colourCountByStarLevel": "invented, anchored on the published 7 colours at star level 7",
     "bilging.comboMultiplierByLineCount": "published for 1, 2 and 3 lines; index 4 is the low end of the published range at least 4, maybe 5; index 5 is invented",
@@ -75,7 +75,7 @@
     "bilging.belowWaterFallTicksPerCell": "invented; twice the dry rate, the smallest ratio that reads as slower"
   },
   "bilging": {
-    "boardWidth": 12,
+    "boardWidth": 6,
     "boardHeight": 12,
     "colourCountByStarLevel": [
       4,
