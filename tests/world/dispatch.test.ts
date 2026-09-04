@@ -391,6 +391,16 @@ test('abandoning a voyage already under way is refused rather than teleporting i
   assert.equal(state.pirate?.atIslandId, null);
 });
 
+test('abandoning a charted course during a running battle is refused, so the battle is never stranded', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'pillage');
+  state.battle = createBattle([], false);
+
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.abandon' })), 'battle-running');
+  assert.notEqual(state.voyage, null);
+  assert.notEqual(state.battle, null);
+});
+
 test('a voyage of a type the world does not sail is refused by name', () => {
   const [state, ship] = startedWorldOf();
 

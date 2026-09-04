@@ -94,6 +94,7 @@ function abandon(state: WorldState): CommandResult {
   const voyage = state.voyage;
   if (voyage === null) return refused('no-voyage-running');
   if (voyage.phase === 'under-way') return refused('voyage-already-under-way');
+  if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
 
   const islandId = pirate.atIslandId;
   if (islandId === null) return refused('not-at-island');

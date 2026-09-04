@@ -384,6 +384,64 @@ allowed an immediate re-chart.
 The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
 voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.
 
+### 2026-09-04 — development, slice B repair (OPP-20), cycle 1
+
+Repaired on the existing branch so PR 15 updates in place — no second branch, no second PR, no
+rebase, as the task specified.
+
+**The blocking finding is closed by one line**, at `packages/sim/src/world/dispatch.ts:97`, placed
+per decision L28 immediately after `abandon()`'s existing `under-way` refusal:
+
+```ts
+if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
+```
+
+No new refusal reason and no new message: `battle-running` and "Not while the guns are out." already
+existed. One test added to `tests/world/dispatch.test.ts`, mirroring the shape of the existing
+"porting out of a running battle is refused, so the world is never stranded".
+
+**The test was proved red before it was allowed to pass.** With the guard reverted and the test in
+place, it failed — and so did the L29 test — while the pre-existing `port()` battle-running test
+still passed, which is what makes this a guard and not a decoration.
+
+**Decision L29 is withdrawn. It was wrong, and the error was mine at the analysis step.** The
+analysis claimed the `port()` phase check was "verified safe" because every existing test expecting
+an accepted `voyage.port` operates on an under-way voyage. That verification was not sound: it
+counted `voyage.sail` occurrences per *file* and inspected `tests/world/encounter.test.ts`'s helper,
+which said nothing about individual tests inside `tests/world/dispatch.test.ts`. Two tests there —
+"porting announces the island the voyage ended at, not the one it left" and "a refused porting
+settles nothing, so the battle outlives the command that failed" — dispatch `voyage.chart` and then
+set `legIndex` **directly**, never calling `voyage.sail`, so they sit in `phase: 'charted'` and the
+new guard refused them.
+
+Withdrawn rather than accommodated. Rewriting two existing tests to suit an explicitly non-blocking,
+optional change is scope the task did not ask for, and the task named this outcome in advance
+("if L29 cascades further than the analysis predicts, drop it"). The `port()` phase gap therefore
+**remains open and remains filed in `ISSUES.md`**, unchanged. Reverted in full: the guard, the
+`voyage-not-under-way` reason, its log message and its test — the diff carries no trace of it.
+
+Worth recording for whoever closes it later: the gap is real, but closing it means deciding what
+those two tests should assert, because they currently encode porting from a state that slice B's own
+phase model says cannot arise. That is a larger question than a one-line guard.
+
+**Gates, from cold in a clean worktree:**
+
+- `npm run check` — **exit 0, 608 pass / 0 fail** (607 before, plus the one new test), 21.6s.
+- `npm run smoke` — **4 passed**, all four baselines md5-identical, nothing re-blessed.
+
+The `purity.test.ts` child-spawn flake did not fire.
+
+**PR 15 is now `CONFLICTING` against `agent/develop`, and this was left alone deliberately.** Slice A
+merged as `a70a81b` while this branch remained based on `ae8edbd`. Files changed on both sides since
+the merge base: `ISSUES.md`, this analysis document, `packages/view/src/panels/minimap.ts`,
+`packages/view/src/panels/panels.css`, `tests/view/minimap.test.ts`, `package.json`,
+`package-lock.json`, `tsconfig.json` and `tests/view/ticker.test.ts`. The task forbids rebasing here
+and the rebase carries the CSS hazard with it, so it belongs to one deliberate pass rather than being
+smuggled into a guard fix. **The conflict set includes exactly the hazard files**, which means the
+rebase will at least force a human or agent to look at `panels.css` and `minimap.ts` together —
+though it will not force them to notice that `.pp-chart-sail` has stopped matching anything, because
+that failure is silent and slice A's guard stays green through the rename.
+
 ### 2026-09-04 — analysis, slice B (OPP-20), cycle 1
 
 The PR 15 review returned one blocking finding. Re-analysed only that, per the contract; the ten
