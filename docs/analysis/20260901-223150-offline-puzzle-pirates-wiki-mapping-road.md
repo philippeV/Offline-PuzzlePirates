@@ -5866,3 +5866,121 @@ a no-op. All seven island short names are distinct, non-empty and unambiguous. `
 `TITLE_SIZE_PX`, `TITLE_COLOUR` and `titleLabel` have zero surviving references, and neither unmerged
 uisweep branch conflicts in code. The record commit `48a096b` is append-only, and the manifests are
 untouched.
+
+### 2026-09-04 — analysis, the restore seam leaves the mounted scene stale (cycle 1)
+
+Returning from the slice C review with **one blocking finding**. Decisions 180-185. Only the
+blocking finding is re-analysed here; the ten non-blocking findings stay in `ISSUES.md`.
+
+Recorded for transparency: the agent writing this analysis also wrote the review that produced the
+finding, so decision 176 is its own recommendation. It is re-examined below rather than assumed, and
+the alternative the review named is rejected here on evidence it did not have.
+
+#### Decision 180 — the defect is not "restore forgets to reset the board", it is a seam with no invalidation
+
+Decision 141 conflated two things that are not the same: **staying in the puzzle scene** and
+**keeping the puzzle scene object**. It asked for the first and, by deleting the only line that made
+the scene id change, silently bought the second.
+
+`stage.follow` (`app.ts:96-97`) treats the scene id as the whole of the mounted scene's identity:
+
+    if (mounted !== null && mounted.id === client.scene) return;
+
+Every scene factory reads the world **once**, at construction — `createPortScene` captures
+`mooringLabel` and `portNameOf(state.pirate)` (`port.ts:63-79`), `createDeckScene` captures `grid`,
+`heading`, `crew` and `highlights` (`deck.ts:80-84`), `createIsoScene` paints base, highlights and
+objects once (`isoScene.ts:257-259`), and `createPuzzleScene` caches what it drew in
+`renderedSignature`, resetting it only in `layout()`. So the scene id is a valid identity for the
+mounted scene **only while the world underneath it is the same world**. Nothing enforces that.
+
+#### Decision 181 — the same seam is already broken for `reset`, which predates this PR
+
+This is the finding that decides the design, and the review did not have it. `reset`
+(`client.ts:130-137`) replaces the sim wholesale and sets `current = 'port'`. The **Ye** panel —
+which owns both **New game** (`ye.ts:77`) and **Load game** (`ye.ts:69`) — is normally used from the
+port scene, the opening scene. So `mounted.id === 'port' === client.scene`, `follow` early-returns,
+and starting a new game keeps the previous game's port scene: its captured heading and mooring
+label, and the avatar standing wherever it was walked to rather than at `PORT_SPAWN`.
+
+It is mostly invisible today only by coincidence — the opening is deterministic, so both games put
+the pirate at Alkaid with a sloop and the two captured strings happen to match. The avatar's
+position does not match, and nothing guarantees the strings will keep matching.
+
+So the seam has been missing invalidation since before slice C. Decision 141 did not create the
+defect class; it created the *first* case where the captured state visibly differs, because a
+restored world is genuinely a different world. **Any fix scoped to `restore` alone leaves `reset`
+broken.**
+
+#### Decision 182 — invalidate at the seam with a world epoch, not by comparing worlds
+
+Chosen: `GameClient` carries a monotonically increasing counter — an **epoch** — that changes exactly
+when the world is replaced wholesale, which is `restore` and `reset` and nothing else. `follow`
+compares it alongside the scene id, and remounts when either differs. The scene id keeps meaning
+"which scene", and the epoch supplies the "of which world" that was always missing.
+
+Rejected alternatives:
+
+- **Have `follow` compare a world identity instead of a scene id** — the shape the review offered as
+  the alternative worth weighing. Rejected on performance, decisively: `follow` is called from the
+  ticker on **every animation frame** (`app.ts:59`), not only on notification. Any per-frame world
+  comparison — `client.save()`, the sim hash in `hash.ts`, a structural diff — puts serialisation on
+  the frame budget of a 60fps loop to answer a question that changes twice in a session. An epoch is
+  the same answer for an integer compare.
+- **Reset each scene's caches when the world changes** — reset `renderedSignature` in the puzzle
+  scene, rebuild the deck's captured grid. Rejected: scenes have no signal that the world changed, so
+  each would have to detect it independently, the logic would be duplicated four times, and every
+  scene added later would silently regress. It also fixes only the caches someone remembered; the
+  puzzle scene alone has three (`renderedSignature`, `cascade`, `cascadeIndex`).
+- **Let `restore` force a remount directly** — the client does not own the stage and should not. The
+  stage already pulls `client.scene`; pulling one more value keeps the existing direction of
+  dependency.
+
+#### Decision 183 — a remount is the correct semantics, and scene-local state is meant to be discarded
+
+The remount throws away the avatar's standing tile, any in-flight cascade, and an open radial menu.
+That is not a cost to mitigate, it is the point: the world those things described no longer exists.
+It is also exactly what happened before decision 141, when a restore always tore the scene down — so
+this restores the pre-141 behaviour while keeping the one thing decision 141 actually wanted, the
+scene id. Nothing is to be preserved across a world replacement.
+
+#### Decision 184 — the epoch must move before the announce and roll back with everything else
+
+Ordering matters and is easy to get wrong. `announce()` is *inside* `restore`'s try block, and
+`stage.follow` is one of its subscribers (`app.ts:65`), so the epoch has to have already changed by
+the time `announce()` runs or the remount will not happen on that notification. It therefore moves
+with the sim swap, before the try, and `running` must capture it so the catch restores it alongside
+`sim`, `lines` and `current`.
+
+A failed restore that had already remounted self-heals on the next frame: the catch puts the epoch
+back, so the mounted scene's epoch no longer matches and the ticker's next `follow()` rebuilds from
+the world that is actually running. Note in passing that `restore` does not re-announce after a
+rollback — pre-existing, out of scope here, and made harmless by the ticker.
+
+#### Decision 185 — what can be pinned by a test, and what honestly cannot
+
+`GameClient` runs under plain `node --test` with no DOM, and `tests/view/boot.test.ts:66-106` already
+exercises `restore` including the rollback path. The epoch's semantics are fully testable there: it
+changes across `restore` and `reset`, and is unchanged by a failed `restore`. That is the regression
+test this slice must add, and `ISSUES.md` now records that the "zero automated coverage" claim which
+excused slice C from testing was wrong for `client.ts`.
+
+What cannot be pinned in that runner is the **consumption** of the signal — `follow` lives in
+`app.ts` behind a real Pixi `Application`, so "the board actually repainted" stays physical
+verification. Extracting `createStage` to make it testable without a renderer is a larger change than
+this repair and is deliberately not taken; it is filed rather than done. The exit criterion below
+therefore requires a **cross-save** load, because a same-save round-trip — what slice C verified —
+restores an identical board and cannot distinguish a repaint from a stale cache.
+
+#### The slice
+
+One slice, on the existing slice C branch and PR 12. Slice C is not merged and must not be, because
+the regression is inside it.
+
+**Slice C-repair — the mounted scene follows the world, not just the scene id.** Done means: a world
+epoch on `GameClient` that changes on `restore` and `reset` and rolls back with a failed `restore`;
+`follow` remounting when the scene id *or* the epoch differs; a `node --test` regression test pinning
+the epoch's three behaviours; all six gates green; and physical proof by **cross-save** load — load a
+save whose board differs from the one on screen while in the puzzle scene and see the new board, and
+the same from the deck with a different ship. `npm run check` must stay at 578 pass plus the new
+test. The Playwright smoke gate is already red on `agent/develop` for `battle.png` and is not this
+slice's to fix.
