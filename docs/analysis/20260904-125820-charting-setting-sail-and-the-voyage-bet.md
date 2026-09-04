@@ -504,6 +504,75 @@ guard will not catch it either, because slice B did not add one. Whoever merges 
 the CSS rule alongside the class and extend the guard. Recorded here rather than pre-emptively fixed:
 this branch has no `pp-chart-confirm` to style, and slice B is a separate open PR.
 
+### 2026-09-04 — physical test, slice A repair (OPP-19), cycle 1
+
+**Passed. Merged to `agent/develop`.** The repair does on screen exactly what it claims.
+
+This stage mattered more than usual here: no automated suite in the repo can see this fix. The unit
+tests never load the stylesheet, and the Playwright suite screenshots `#stage canvas`, a sibling of
+`#panels`, so no panel DOM ever enters a baseline — which is precisely how the original defect
+shipped. Everything below was observed in a real browser at `http://localhost:5178/?seed=12648430`,
+with computed styles read back to corroborate each screenshot rather than trusting the image.
+
+**The pre-click default state — the load-bearing case — is correct.** On first opening the chooser
+(click any island other than the pirate's own; the chart panel itself is already mounted at cold
+load), `pillage` is visibly chosen with nothing yet clicked:
+
+| Button    | `background-color`   | `color`            | `font-weight` | `aria-pressed` |
+| --------- | -------------------- | ------------------ | ------------- | -------------- |
+| `pillage` | `rgb(255, 212, 121)` | `rgb(32, 26, 16)`  | 600           | `true`         |
+| `trade`   | `rgb(43, 35, 23)`    | `rgb(232, 226, 208)` | 400         | `false`        |
+| `evade`   | `rgb(43, 35, 23)`    | `rgb(232, 226, 208)` | 400         | `false`        |
+
+That is `--pp-gold` filled with `#201a10` text against the plain `--pp-raised` recipe, exactly as the
+review predicted. The silent default is no longer silent.
+
+**Transitions are correct on every step, driven with a real pointer** rather than a synthetic
+`.click()`. Clicking `trade` moved the gold to `trade` and returned `pillage` to plain; clicking
+`evade` did the same again. Exactly one button carried `aria-pressed="true"` at every observation —
+the radio invariant holds.
+
+**`Set sail` reads as the primary action, not a fourth peer.** Measured `270.4px` wide against
+`270.4px` for its row — full width — while a voyage-type button is `58.9px`. Gold border
+(`rgb(255, 212, 121)`), gold text, weight 600. Its `background-color` computes to `rgba(0, 0, 0, 0)`
+because the gradient lives in `background-image`
+(`linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))`); that is the expected shape and not a defect.
+
+**Two checks beyond the brief, both clean:**
+
+- **The chosen state survives the repaint.** After 2.5s of the client's 60 Hz refresh, and again
+  after changing destination island, `evade` was still gold and still the only chosen button. The
+  idempotent-repaint structure this branch was originally about holds under the new rules.
+- **The highlight is truthful, not decorative.** With `evade` chosen, `Set sail` produced a voyage
+  carrying `type: 'evade'` and the log line "Course set for Sayers Rock, 4 leagues." The gold marks
+  the state the sim actually receives.
+
+**The original subject of the branch has not regressed.** A real pointer press and release on a grid
+island cell still lands on the same element and synthesises a click — the 60 Hz repaint that made the
+grid unclickable is gone. Selecting Sayers Rock re-titled the course and recomputed it to 4 leagues.
+
+**Gates, run from cold in a clean worktree at `ec6d600`:**
+
+- `npm run check` — **exit 0, 591 pass / 0 fail**, all six gates, 20.9s.
+- `npm run smoke` — **4 passed**. Baselines **untouched**: all four `__screenshots__` PNGs are
+  md5-identical before and after, and the working tree is clean. Nothing was re-blessed.
+
+The `tests/gates/purity.test.ts` child-spawn flake recorded in `ISSUES.md` did **not** fire, at 518 MB
+free physical and 86 `node.exe` processes. Worth recording because it settles a reporting gap
+`ISSUES.md` raised against this very commit: the changelog's "591 tests" is confirmed on this machine,
+so the earlier `580/1` was the flake shape and not a different suite. The blanket claim that this box
+cannot run its own gates remains withdrawn.
+
+**Nothing blocking was found, so nothing goes back to analysis.** The seven non-blocking findings
+already in `ISSUES.md` stand, including the substring-matching guard; none were re-raised here.
+
+**Carried forward, still not fixable from either branch alone.** Slice A is now on `agent/develop`
+with `.pp-chart-sail` styled. Slice B renames that class to `.pp-chart-confirm` and is based on
+`ae8edbd`, which predates this repair, so there is still no textual conflict — the rule will simply
+stop matching and the confirm control will silently lose its primary styling. Whoever brings slice B
+onto the repaired slice A **must** rename the rule and extend the stylesheet guard. The guard asserts
+a substring in `panels.css` and was proven not to catch exactly this rename, so it will not warn.
+
 ### 2026-09-04 — independent review, slice A repair (OPP-19), cycle 1
 
 Four lenses over `5454fd2` alone; `ae8edbd` and earlier were passed at cycle 0 and were not
