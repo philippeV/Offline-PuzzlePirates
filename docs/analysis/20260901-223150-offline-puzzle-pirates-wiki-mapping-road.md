@@ -6046,3 +6046,75 @@ on its own, the five static gates and `npm run build` all pass individually, and
 `node --test --test-concurrency=1` over the whole suite is **581 pass / 0 fail, exit 0**. The
 parallel forking is what the machine cannot sustain, not the code. CI is the authority on the pushed
 head.
+
+### 2026-09-04 — second review of PR 12, the slice C-repair (cycle 1)
+
+Four lenses over `86fbc33`, independent of the agent that wrote it and of the one that analysed it.
+**No blocking finding.** Decisions 190-192. The ten non-blocking findings from the first review stay
+in `ISSUES.md` and were confirmed untouched; this review's own findings are appended there.
+
+#### Decision 190 — the rollback's half-announced window is ACCEPTABLE, and the reason is stronger than the ticker
+
+The review task asked for a verdict on decision 184's self-heal claim, on the grounds that the
+ticker is rAF-driven and does not run while the pane is hidden. Verdict: **acceptable**, on two
+independent grounds, the first of which the earlier stages did not state.
+
+The feared sequence — `stage.follow` remounts on the new epoch, a *later* subscriber throws, the
+catch rolls the epoch back, and the mounted scene is left describing a discarded world — **cannot
+occur in the shipped app at all**, because there is no later subscriber. `GameClient` has exactly
+two production subscribers, and `Set` iterates in insertion order: `panels.refresh` registered via
+`app.ts:54` (`panels.ts:87`), then `stage.follow` at `app.ts:64`. `follow` runs **last**. Anything
+that throws, throws before the remount, so the catch rolls back a stage that never moved.
+
+The ticker argument then holds as the second line of defence, and the hidden-pane case makes it
+*safer* rather than worse: every `application.render()` in the codebase is preceded by a `follow()`
+in the same synchronous block (`app.ts:59` before `:61` in the ticker, `:67` before `:69` at boot),
+so no frame can be presented between a bad mount and its correction. When rAF is frozen, neither
+`follow` nor `render` runs and nothing is composited; the first frame after unhide runs `follow`
+before `render`. The user cannot see the discarded world on the canvas.
+
+What the canvas has and the **DOM panels do not** is that ordering guarantee. `panels.refresh` runs
+against the already-swapped sim and writes synchronously, and the catch never re-announces, so a
+throw part-way through leaves the panels showing a world that was rolled back. Pre-existing,
+unchanged by this commit, reachable, and filed rather than blocking — decision 184 called it out and
+was right to.
+
+#### Decision 191 — decision 181's `reset` claim is TRUE, but its stated reason is not the load-bearing one
+
+Verified rather than inherited, as the task required. The claim holds: nothing seed-dependent is
+visible after `reset`. But the reason decision 181 gave — that "the opening is deterministic, so the
+two captured strings happen to match" — is not what makes it safe, and the seed genuinely can differ
+(the New game field is user-editable, `ye.ts:35`, and feeds `client.reset` at `ye.ts:77`).
+
+The real reason is that `createPortScene` derives only two things from the world, `mooringLabel` from
+the ship class and `heading` from `portNameOf`, and `openingCommands` (`client/boot.ts:17-24`) always
+starts at `HOME_ISLAND` with a sloop **for every seed**. The strings are seed-invariant by
+construction, not by coincidence. The other openings are safe for different reasons again: `reset`
+forces `current = 'port'` and `syncScene` cannot move it to `deck` on a fresh world, so a non-port
+scene always changed id and remounted even pre-fix; and the `battle` opening polls the world every
+frame and was never stale.
+
+Recording the distinction because decision 181 used the coincidence reading to argue the defect
+"is mostly invisible today only by coincidence" — the conclusion was right, the mechanism was not,
+and a future change to the opening would not break it the way that reading implies.
+
+#### Decision 192 — the repair ships with tests that cannot detect its removal, and that is accepted here
+
+Decision 185 said the consumption of the epoch cannot be pinned under `node --test` and deliberately
+did not extract `createStage`. This review **proved the consequence** rather than restating it: a
+module-load trace shows `tests/view/boot.test.ts` never loads `app.ts`, and reverting `app.ts:98` to
+its pre-fix form while keeping the counter leaves the entire suite green — 12/12 in that file, 394
+across the tree.
+
+Accepted as non-blocking, because the delivered tests are exactly what decision 185 specified and
+the gap was disclosed, not hidden; the visual claim is carried by decision 188's browser proof with a
+pre-fix control, which is real evidence but a one-time artefact rather than a regression guard. The
+consequence to be honest about: **the fix could be reverted tomorrow and every one of the six gates
+would stay green.** The cheapest route to a real guard is filed in `ISSUES.md` — export `createStage`
+taking the factory map as a parameter, then assert a second construction against a stub application.
+
+One thing for the test stage that no earlier stage predicted: the remount now snaps the avatar back
+to `PORT_SPAWN` and re-centres the camera on New game or Load, because `createIsoScene` sets
+`standing = definition.spawn` at construction and `follow` calls `resize`. Decision 183 authorises it
+— scene-local state is meant to be discarded — but it is a visible behaviour change, and it is the
+cheapest thing to look for on screen.

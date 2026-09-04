@@ -3962,3 +3962,79 @@ they are now recorded in the analysis document instead.
   `agent/develop` content while believing they were on the feature branch; one lens's first probe run
   silently measured the base branch and had to be redone in an isolated worktree. Concurrent agents
   that need a specific commit must each use their own `git worktree`, never the shared checkout.
+
+### From the second independent review of PR 12, the slice C-repair (2026-09-04)
+
+Four lenses over commit `86fbc33`. No blocking finding; the repair is sound and minimal. What
+follows is what the lenses substantiated and judged not worth stopping for.
+
+- **`follow` can strand a destroyed scene, and only subscriber ordering prevents it.**
+  `app.ts:99-104` removes and destroys the mounted scene, then calls the factory. If
+  `SCENE_FACTORIES[client.scene](context)` throws, `mounted` still references the destroyed,
+  detached object and `mountedEpoch` is never advanced. Reached from `restore`'s `announce`, the
+  catch at `client.ts:129-133` rolls the epoch back, and `mounted.id === client.scene &&
+  mountedEpoch === client.epoch` becomes true again — so `follow` early-returns **permanently**:
+  black canvas, and `stage.update` calling `update()` on a destroyed PIXI container every frame.
+  Pre-fix this was unreachable for a same-id world swap because `follow` returned before touching
+  `mounted`, so the commit does add the trigger. **Not reachable today**, and two lenses proved it
+  independently rather than assuming it: the only throwing call in any factory is
+  `islandOf(pirate.atIslandId)` (`scenes/port.ts:86`), and `panels.ts:87` subscribes *before*
+  `app.ts:64`, so `panels.refresh` — `ye.ts:102` and `minimap.ts:149`, both of which throw on the
+  same value — always throws first and `stage.follow` is never reached. The guard is an accident of
+  the registration order at `app.ts:54/55/64`, not an invariant. A future third subscriber
+  registered after `stage.follow` opens it. Two-line hardening: null `mounted` before the factory
+  call, or build the new scene before destroying the old.
+- **The same ordering is the only thing closing an epoch ABA.** `follow` compares the epoch for
+  equality, and decision 184's rollback makes the counter non-monotonic despite decision 182 calling
+  it "monotonically increasing". If `follow` ever remounted on `E+1` and a later subscriber threw,
+  `mountedEpoch` would hold `E+1` while `client.epoch` returned to `E`; a subsequent successful load
+  back to `E+1` would then early-return on a scene built from the discarded world. It self-heals in
+  practice — the ticker calls `follow` every frame in between, which resets `mountedEpoch` to `E` —
+  so this needs both a third subscriber and a second load inside a single frame. Recorded because
+  the structural fix is the same one line as the item above.
+- **The three new tests have no power over the fix, and this was proved rather than argued.** A
+  module-load trace shows `tests/view/boot.test.ts` never loads `app.ts` at all. Reverting
+  `app.ts:98` to its pre-fix form — deleting the entire fix while keeping the counter — leaves
+  `boot.test.ts` at 12/12 and the full suite at 394/394 green. The tests honestly pin the *counter*
+  in `client.ts`; nothing anywhere pins the *consumption* of it. Decision 185 disclosed this gap
+  openly and chose not to extract `createStage`, so this is a documented deviation, not a hidden
+  one — but the fix could be reverted tomorrow and every gate would stay green. The cheapest real
+  regression test: export `createStage` and pass the scene factories in as a parameter instead of
+  closing over the module-level `SCENE_FACTORIES` (`app.ts:17`); a test then supplies a stub
+  `application` and a counting factory, calls `client.restore`, and asserts a second construction.
+- **`boot.test.ts:110`'s name overclaims.** "loading a save moves the world epoch *so a mounted
+  scene is rebuilt*" — the second clause is not asserted and cannot be in that runner.
+- **`OTHER_SEED` is decorative in the unit tests.** Setting it to `SEED` leaves all 12 passing. The
+  seed pairing is load-bearing for decision 188's browser proof, where `signatureOf` must collide
+  while the boards differ, but no unit test touches `signatureOf`. The two seeds do produce
+  different worlds at 600 ticks; the tests simply never depend on it.
+- **A failed `restore` leaves the DOM panels showing a world that was discarded — pre-existing.**
+  `panels.refresh` runs first, against `this.sim` already swapped at `client.ts:122`, and writes the
+  DOM synchronously; the catch restores the client but never re-announces, so nothing repaints the
+  panels. Concretely reachable: a save with `pirate.atIslandId` set to an unknown island loads
+  cleanly, then `clear(facts)` runs and `factRow('Whereabouts', …)` throws at `ye.ts:102`, leaving
+  the facts block **empty** over a rolled-back world. It heals on the next quiet announcement, at
+  most 30 ticks — about half a second. The canvas has no equivalent exposure: every
+  `application.render()` is preceded by a `follow()` in the same synchronous block, so no frame is
+  ever presented between a bad mount and its correction. Not introduced by this commit, which is why
+  it is here rather than blocking, but the commit does not close it.
+- **`save.ts` never validates `pirate.atIslandId`.** It checks `save.pirate` is an object or null and
+  stops there, while ship classes get `refuseUnknownShipClasses` (`save.ts:153`). That omission is
+  what makes the two items above reachable at all: `Sim.load` accepts `atIslandId: "atlantis"`,
+  `restore` succeeds, the epoch advances, and `islandOf` throws downstream in the view. An
+  `ISLAND_IDS` check alongside the ship-class one closes it at the source.
+- **`Sim`'s in-place `restore()`/`snapshot()` pair would replace the world without moving the
+  epoch.** `GameClient` never calls it today — the only in-place uses are harness-side
+  (`harness/src/methods/{sim,snapshot,session}.ts`) and touch no stage. Named because the epoch's
+  correctness now depends on every future wholesale world replacement remembering to move it, and
+  nothing enforces that.
+- **`mountedEpoch = -1` is never load-bearing.** `follow` short-circuits on `mounted !== null`
+  before the epoch is compared, so `0` would behave identically. Harmless, and the one place the
+  no-comments rule costs a reader a moment.
+- **The serial full-suite run is 580/1 on this box, not the claimed 581/0.**
+  `tests/gates/purity.test.ts:95` fails with `--print-config failed … 3221226505 !== 0`, which is
+  `0xC0000409` `STATUS_STACK_BUFFER_OVERRUN` — the spawned eslint crashing. Re-running that file
+  alone fails a *different* test in it, the signature of a non-deterministic child-spawn failure.
+  The file is untouched by this commit and exercises none of the code it changes, and CI is green on
+  `6ff0904`. Further corroboration for the standing node-process-exhaustion advisory: the gate is now
+  unreliable in *both* its parallel and serial forms on this machine.
