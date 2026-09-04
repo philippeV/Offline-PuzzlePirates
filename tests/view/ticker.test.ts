@@ -3,11 +3,6 @@ import { test } from 'node:test';
 
 import { createTicker, type Ticker } from '../../packages/view/src/ticker.ts';
 
-declare global {
-  var requestAnimationFrame: (callback: (now: number) => void) => number;
-  var cancelAnimationFrame: (handle: number) => void;
-}
-
 interface FrameQueue {
   readonly armed: number;
   fire(now: number): void;

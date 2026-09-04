@@ -276,6 +276,7 @@
 
 .pp-chart {
   width: 100%;
+  overflow-y: auto;
   border: 1px solid var(--pp-edge);
   border-radius: 6px;
   background: var(--pp-ground);
@@ -293,6 +294,7 @@
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 2px;
+  flex: 0 0 auto;
 }
 
 .pp-cell {
@@ -317,6 +319,11 @@
   border-color: var(--pp-edge);
   line-height: 1.05;
   word-break: break-word;
+}
+
+.pp-cell-island:disabled {
+  color: var(--pp-dim);
+  cursor: default;
 }
 
 .pp-cell-route {
@@ -348,6 +355,21 @@
 
 .pp-chart-voyage {
   text-transform: capitalize;
+}
+
+.pp-chart-voyage-chosen {
+  background: var(--pp-gold);
+  border-color: var(--pp-gold);
+  color: #201a10;
+  font-weight: 600;
+}
+
+.pp-chart-sail {
+  width: 100%;
+  border-color: var(--pp-gold);
+  background: linear-gradient(180deg, #4a3a18, #2b2317);
+  color: var(--pp-gold);
+  font-weight: 600;
 }
 
 .pp-chat {

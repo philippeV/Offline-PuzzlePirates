@@ -4,6 +4,202 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of the slice A repair, PR 14 (OPP-19), cycle 1
+
+Four lenses over `5454fd2` alone. **The repair is correct and nothing blocks.** The two rules are
+byte-identical to `53b5dd5` as claimed — verified by extracting both blocks and comparing them as
+UTF-8 bytes, including indentation, property order, colour literals and trailing whitespace — they
+are placed where the file's component-grouped, base-then-modifier convention puts them, and they win
+on source order against `.pp-button` as they must. Contrast computes to 12.3:1 for the chosen button
+and 7.8–11.0:1 across the sail gradient, all AAA. Every class `minimap.ts` emits was inventoried
+against the stylesheet and only `pp-chart-status` and `pp-chart-course` lack rules, both genuinely
+unstyled containers that encode no state, so no third instance of the defect survives. Scope
+discipline was exemplary: four files, additions only, and three known defects in the very test file
+being edited were deliberately left alone. What follows is what the lenses substantiated and judged
+not worth stopping for.
+
+- **The regression guard tests the wrong proposition, and five separate reintroductions of the
+  original defect leave it green.** `tests/view/minimap.test.ts:125-133` asserts that the string
+  `.<class> {` appears in `panels.css`. The invariant that actually broke is "the chosen voyage
+  renders differently from an unchosen one", and a substring in a file is not that. Confirmed by
+  execution against this repo's happy-dom, not by argument: the assertion still passes when the rule
+  exists but is **empty**; when it is **commented out**; when it is stripped to an irrelevant
+  declaration; when a later equal-specificity `.pp-chart-voyage { background: gray; font-weight: 400 }`
+  is appended, which computes the chosen button back to the unchosen appearance and restores the
+  defect in full; and when the **component renames the class** while the stylesheet is untouched.
+  The guard is not vacuous — reverting only the stylesheet does fail it, with the message the
+  changelog quotes, and that was verified — but it guards one direction only: the CSS being deleted.
+  It is blind to the direction that actually produced this defect, the component drifting away from
+  the CSS.
+
+  This is not hypothetical, and the commit says so itself: the analysis entry added by this very
+  commit records that slice B renames `pp-chart-sail` to `pp-chart-confirm`, that the rule will then
+  match nothing and the confirm control will silently lose its styling "exactly as it was lost the
+  first time", and that this guard will not catch it. So the repair ships with a written admission
+  that its guard does not survive the next merge, against the defect it exists to prevent. Recording
+  it is the right call under the blocking test — the fix is correct, CI is green, and returning a
+  cycle for test quality is the loop this queue exists to avoid — but the guard should be
+  re-pointed before slice B lands, which is the moment it will be needed.
+
+  A stronger mechanism is already within reach and about the same size. The test file's `before()`
+  hook (`:19-22`) already builds a happy-dom `Window`; injecting `panels.css` into a `<style>` there
+  and comparing the computed `fontWeight`/`backgroundColor` of a clicked voyage button against an
+  unclicked sibling closes every row above at once, with no new dependency and no hard-coded class
+  list — the cascade was verified to resolve correctly under happy-dom 20.14.0 in this repo.
+  Alternatively, and more in keeping with where this repo puts source-text gates, a
+  `tools/check-view-state-classes.ts` alongside `check-view-boundary.ts` could extract
+  `classList.toggle('pp-…')` literals from `packages/view/src/**/*.ts` and require a matching
+  selector, which would cover all five conditionally-toggled classes in the view rather than two.
+  The naive variant of that — requiring a rule for *every* `pp-*` class — was tried and flags 23
+  hook-only classes, so the sharp rule is toggled classes specifically.
+
+- **`STATEFUL_CHART_CLASSES` and the test's title are inaccurate for half their contents.**
+  `tests/view/minimap.test.ts:17` and `:125`. `classList.toggle`/`add` across `packages/view/src`
+  yields exactly five toggled classes: `pp-cell-route`, `pp-cell-here`, `pp-cell-selected`,
+  `pp-chart-voyage-chosen` and `pp-tab-active`. **`pp-chart-sail` is not among them** — it is applied
+  once at construction (`minimap.ts:167`) and never removed. So the constant named "stateful", the
+  title "the chart state the chooser *toggles*", and the failure message "so the chart *toggles* a
+  class that draws nothing" are all wrong for one of the two entries. It matters for maintenance
+  rather than correctness: the next reader extending the list has no correct rule to apply, because
+  the stated rule does not describe the list's actual membership.
+
+- **The guard's blast radius stops at the file on disk, not the stylesheet the app ships.**
+  `packages/view/src/panels/panels.ts:1` (`import './panels.css'`) is the only thing that gets the
+  file into the bundle, and nothing asserts it. Delete that import and every panel loses its styling
+  while this guard stays green. The computed-style approach above does not close this either; worth
+  knowing rather than worth fixing here.
+
+- **The L18 obligation was filed at the bottom of this file, under a heading that belongs to a
+  different PR.** This file's third line states its organising rule — non-blocking findings, newest
+  first — and the section this obligation belongs to, `## 2026-09-04 — independent review of slice A,
+  PR 14 (OPP-19)`, is the newest one at the top. The entry was instead appended at end of file, which
+  places it inside `### From the second independent review of PR 12, the slice C-repair` and under
+  `## 2026-09-02 — review of PR 1`. A reader arriving at that heading will read a slice-A merge
+  obligation as a PR-12 slice-C finding. L18 specified only that `ISSUES.md` is the right home
+  because it travels with the branch, so the heading was not dictated — but the file's own convention
+  was. Mitigating: the recent `2026-09-04` entries at the bottom were already bottom-appended the
+  same way, so this follows established bad practice rather than inventing it. The whole point of
+  the entry is to be found and trusted by someone who was not here.
+
+- **The convergence claim in that entry, and in decision L17, is overstated.** The entry says the two
+  implementations overlap "even though `panels.css` now will not", and L17 goes further: "when slice
+  5b reaches a PR the `.pp-chart*` block conflicts nowhere." Diffing the whole `.pp-chart {` to
+  `.pp-chat {` region between `53b5dd5` and `5454fd2` leaves four surviving divergences inside that
+  exact block: `.pp-chart` has `display: flex; flex-direction: column; max-height: 48vh` on 5b
+  against `overflow-y: auto` here; `.pp-chart-grid` has `min-height: 0; overflow-y: auto` against
+  `flex: 0 0 auto`; `.pp-chart-choice` carries `flex: 0 0 auto` only on 5b; and
+  `.pp-cell-island:disabled` exists only here. The true and narrower claim is that *the two new
+  rules* will not conflict. L17's own prose anticipates part of this and then contradicts itself, and
+  never mentions the dropped `.pp-chart-choice` declaration at all. Whoever merges 5b will hit a
+  `.pp-chart*` conflict regardless and must not assume the region is clean because the note said so.
+
+- **`.pp-chart-sail` pins `border-color` to gold, which removes the only hover affordance from the
+  panel's primary action.** `packages/view/src/panels/panels.css:369`. `.pp-button:hover` (`:104`)
+  gives feedback solely through `border-color: var(--pp-gold)`; before this commit Set sail sat at
+  `--pp-edge` and visibly turned gold on hover, and now it is gold at rest, so hovering does nothing.
+  The same applies to the chosen voyage button. Reported as an observation rather than a defect:
+  `.pp-tab-active` already establishes exactly this pattern in the codebase, and the block was taken
+  from `53b5dd5` character for character on purpose, so deviating here would defeat the convergence
+  the decision was made for. Worth a `:hover` refinement when the two branches are reconciled.
+
+- **The changelog's "591 tests" is not reconcilable with this file's own record of the suite.** An
+  entry above records the full serial run as 580/1 on this machine, failing
+  `tests/gates/purity.test.ts` with a child-spawn crash under the standing node-process-exhaustion
+  advisory. A clean 591 means either the flake did not fire or a different runner shape was used, and
+  the changelog does not say which. CI is green on the branch, so this is a reporting gap rather than
+  a doubt about the gate.
+
+## 2026-09-04 — independent review of slice A, PR 14 (OPP-19)
+
+Nine non-blocking findings from the four-lens review. The one blocking finding — `pp-chart-voyage-chosen`
+and `pp-chart-sail` toggled with no CSS rule behind them — went back to the analysis stage and is not
+recorded here.
+
+**The 60 Hz rebuild defect is still live in three sibling panels, and nothing recorded it.** The
+analysis narrowed the root cause to the chart, but `panels.ts:87` subscribes `refresh` to every event
+and `panels.ts:120` calls `view.refresh()` on the active panel, so the same clear-and-rebuild runs at
+60 Hz in `market.ts:60` (rebuilding `Buy`/`Sell` and a number field at `:107-108`), `location.ts:29`
+(buttons at `:60,:64,:102,:114,:125`) and `booty.ts:21` (button at `:52`). `Buy`, `Sell`, `Board the
+ship`, `Disembark` and `Divide the booty` are destroyed and re-created under the pointer exactly as the
+chart's cells were, so a real press straddling a tick never lands. Scoping the fix to the chart was
+correct for slice A; the omission was documentary. It starts to matter the moment a player tries to
+trade or board — which is to say already — and the fix is the idempotent-repaint treatment slice A just
+demonstrated. Worth doing as one pass over all three rather than three separate slices.
+
+**Test 6 cannot fail.** `tests/view/minimap.test.ts:112-113` reaches the Trade button and the sail
+control through optional chaining, so a test that never asserted the control exists cannot fail when it
+disappears. The file already has a throwing lookup helper at `:31-35`; using it makes the test bite for
+the right reason.
+
+**The changelog's explanation for test 6 passing against the pre-fix code is wrong.** It attributes it
+to `.click()` not reproducing a browser's mousedown/mouseup-on-different-nodes behaviour. That is true
+of any `.click()` test but is not the mechanism here: on the base there is no `.pp-chart-sail` at all,
+and `voyageButton(toIslandId, voyageType)` dispatched `voyage.chart` directly on click, so clicking
+Trade charted the voyage and the sail click was a no-op on `undefined`. Left uncorrected, a future
+reader will trust the stated mechanism and draw the wrong conclusion about what DOM shims can test.
+
+**Test 2 asserts construction constants.** `tests/view/minimap.test.ts:68-69` counts three voyage-type
+buttons and one sail button; post-fix both are built once and never added or removed, so those counts
+hold in every reachable state and cannot fail. Only tests at `:43` and `:94` assert node identity — the
+property that actually changed. Three of the five that bite against the base do so because the feature
+they assert did not exist there, not because of the rebuild.
+
+**`overflow-y: auto` on `.pp-chart` is not inert**, contrary to the slice A changelog's "both are inert
+on this base". It establishes a scroll container and a new block formatting context and pairs
+`overflow-x` up to `auto`. No visual change was observed and the smoke baselines were untouched, so
+nothing is broken; the record is simply overstated. Its sibling `flex: 0 0 auto` on `.pp-chart-grid` is
+genuinely inert, since `.pp-chart` is not a flex container on this base. Both lines exist to defend a
+layout shift that cannot reproduce here, so requirement 5 of slice A is delivered unverified and must be
+re-checked when the slice 5b art work merges and brings `max-height: 48vh` with it.
+
+**The new DOM lib creates a type/runtime asymmetry.** `tsconfig.json` gained
+`"lib": ["ES2023", "DOM", "DOM.Iterable"]`, and that project includes `tests/**/*.ts` and
+`tools/**/*.ts`, while the DOM exists at runtime only inside the `before()` hook of
+`tests/view/minimap.test.ts`. Any test or tool file can now reference `document` or `localStorage`,
+typecheck green and die with `ReferenceError` at runtime. The absent DOM lib had been the guard rail —
+which is precisely why `ticker.test.ts` hand-declared `requestAnimationFrame`. It starts to matter the
+first time someone writes a tool script against `document`.
+
+**`refresh()` mutates selection as a side effect.** `minimap.ts:60-61` clears `selectedIslandId` when it
+equals the island the player stands on. After this PR the whole point of `refresh` is that it only
+repaints, so a silent state mutation inside it contradicts the name. The rule it encodes (decision L12,
+you cannot chart to where you stand) belongs in the click handler at `:78-81` where the name would
+reveal it. Related: `paintChooser` at `:112-114` encodes the same voyage condition twice.
+
+**`section()` is duplicated.** `minimap.ts:39-40` hand-rolls `element('section', 'pp-section')` plus the
+`h3` title that `dom.ts:31-35` already provides, because it needs a live handle on the title node to
+repaint it. The motive is sound, but nine other call sites use the helper, so the chart is now the one
+panel whose section markup can drift silently. Widening the helper to hand back the title node would
+keep them in step.
+
+**No shared test DOM fixture, and the happy-dom `Window` is never closed.**
+`tests/view/minimap.test.ts:13-16` shims only `document` and leaves `window`, `requestAnimationFrame`
+and `getComputedStyle` absent, so the next panel test gets a bare `ReferenceError` rather than a clear
+signal. The repo already has the shared-fixture idiom in `tests/harness/client.ts`; a `tests/view/dom.ts`
+is the conventional home. Also `happy-dom` is pinned exact while every other devDependency uses a caret.
+
+## 2026-09-04 — analysis, charting and the voyage between league points (OPP-17)
+
+One non-blocking finding, split off from the root cause of the reported chart defect. The defect
+itself is blocking and is being fixed in slice A; this is the sim-side half that is not.
+
+**The simulation emits a `marker.drifted` event every tick, whether or not anything drifted.**
+`driftMarkers` (`packages/sim/src/marker.ts:47-56`) returns an event unconditionally on every call.
+`GameClient.advance` (`packages/view/src/client/client.ts:96-106`) calls `announce()` whenever the
+tick produced any event, so at `TICKS_PER_SECOND = 60` every panel's `refresh` subscription
+(`packages/view/src/panels/panels.ts:87,125`) runs 60 times a second forever, redrawing panels whose
+content has not changed. This is what made the chart unusable: `minimap.ts` rebuilds its 36 cell
+buttons on each refresh, so a real pointer's press and release land on different element objects and
+no `click` is ever synthesised. Judged not blocking, and deliberately **not** the fix for the chart,
+for two reasons. First, suppressing the event changes the event stream that goldens, replays and
+state hashes in `packages/fixtures/` were recorded against, so it would churn determinism artefacts
+across the repository for a defect that has a local view-side fix. Second, it would not actually make
+the chart safe — any other event arriving mid-press would rebuild the grid just the same, so the
+grid has to become idempotent regardless. It starts to matter as a performance and battery cost as
+soon as panels grow heavier, and as a correctness trap the next time someone reasonably assumes an
+emitted event means something happened. The fix is to emit `marker.drifted` only when a marker
+actually moved, and to re-record the affected fixtures deliberately in the same commit.
+
 ## 2026-09-04 — physical test of UI sweep slice D, PR 13
 
 Every item of the test task driven in a real browser at 1280x720, in an **isolated worktree** with
@@ -4183,3 +4379,13 @@ follows is what the lenses substantiated and judged not worth stopping for.
   save correctly changed the heading and correctly changed nothing else. Not a defect in anything
   shipped — the class simply has no geometric consequence yet — but the counts read as live inputs
   and are not, which is the kind of dead expressiveness a later reader trusts.
+
+- **Slice 5b already carries an equivalent voyage chooser, and `minimap.ts` will conflict in
+  substance.** Commit `53b5dd5` contains its own `selectedVoyageType`, `voyageTypeButton` and
+  `setSailButton`, so the two implementations overlap even though `panels.css` now will not — slice A
+  took `.pp-chart-voyage-chosen` and `.pp-chart-sail` from `53b5dd5` character for character
+  precisely so the stylesheet converges rather than diverges. When 5b reaches a PR, the resolution is
+  to **keep this branch's idempotent-repaint structure**: 5b's `courseSection` rebuilds the chooser
+  on every refresh, which is the 60 Hz teardown slice A exists to remove, and adopting it would
+  reintroduce the defect. Recorded here rather than reconciled, because reconciling would mean
+  touching the local/`origin/agent/develop` divergence that has been a standing human decision.
