@@ -384,6 +384,86 @@ allowed an immediate re-chart.
 The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
 voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.
 
+### 2026-09-04 — analysis, slice B (OPP-20), cycle 1
+
+The PR 15 review returned one blocking finding. Re-analysed only that, per the contract; the ten
+non-blocking findings stay in `ISSUES.md` and are not revisited here.
+
+**The finding is real, and I verified its mechanism from the source rather than accepting the
+review's account.** `state.battle` is assigned in five places, and exactly one of them *clears* it:
+`settleEncounter` (`packages/sim/src/world/session.ts:40`). The other four are
+`battle/dispatch.ts:46` and `world/encounter.ts:59`, which both *start* a battle, `state.ts:45`,
+which is initial state, and `save.ts:16`, which is the schema-3 migration. `settleEncounter` is
+private and reachable only through `concludedEncounterOf`, which returns `null` whenever
+`voyage === null` (`session.ts:23-27`); `stepWorld` also returns `[]` at `session.ts:10` on a null
+voyage. So once `abandon()` clears the voyage with a battle still `running`, there is no code path
+left in the repository that can ever settle it, and none that can clear `state.battle` short of
+loading another save or starting a new game. The review's conclusion holds exactly as written.
+
+**Why the window exists at all.** `abandon()` already refuses a voyage that is `under-way`
+(`world/dispatch.ts:96`), and encounters can only spawn from the phase-gated `stepVoyage`. So the
+vulnerable state is *only* `phase: 'charted'` with a battle running — which the shipped view cannot
+produce, but the harness surface this slice widened can, as can a loaded save.
+
+**Decision L28 — the guard goes *after* the phase check, not where `port()` puts it.** The task
+suggested copying `port()`, which tests `battle-running` immediately after its null-voyage check. Not
+doing that, for a reason worth recording: in `abandon()` the `under-way` refusal at `:96` already
+prevents that path from ever reaching the clear, so the only unprotected window is the charted one.
+Placing the new guard *after* `:96` therefore guards exactly the broken case and leaves every
+existing refusal reason unchanged; placing it before would silently change the refusal for
+"under way **and** in a battle" from `voyage-already-under-way` to `battle-running`, which is a
+behaviour change nothing asked for. Smallest change that closes the defect.
+
+The line itself is the one already in `port()` at `:119`:
+
+```ts
+if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
+```
+
+No new refusal reason, no new message: `battle-running` and its log line "Not while the guns are out."
+(`view/src/client/log.ts:44`) both already exist.
+
+**Decision L29 — close the `port()` phase gap in the same pass, and it is safe to do so.** The task
+offered this as optional. Taking it, because it is the same one-line shape in the same file and
+because the alternative is to leave a command that silently discards a charted course and then
+*reports an arrival that never happened* ("Ye make port at …"), which is a false statement to the
+player rather than a matter of taste. It also falsifies the slice B changelog's own claim that
+`voyage.abandon` is the only exit from the charted window.
+
+**Verified safe rather than assumed:** every existing test that expects `voyage.port` to be
+`accepted` operates on an under-way voyage. `tests/world/encounter.test.ts` was the only candidate
+risk — it dispatches `voyage.port` four times and never calls `voyage.sail` — but its `sailingState`
+helper sets `phase: 'under-way'` explicitly at `:49`. The other five files all sail first. So the new
+guard changes no existing expectation.
+
+This one *does* cost a new refusal reason, `voyage-not-under-way`, the natural counterpart to the
+existing `voyage-already-under-way`. That means `packages/sim/src/commands.ts` (union member) and
+`packages/view/src/client/log.ts` (message). The message map is typed
+`Record<RejectionReason, string>`, so the compiler will refuse to build until the message is written
+— the vocabulary cannot drift.
+
+**Rejected alternative — settle the battle inside `abandon()` instead of refusing.** It would avoid
+a refusal the player might find obstructive, but it invents a policy the rest of the world does not
+have: `port()` refuses in the identical situation, and the sim has exactly one settlement path,
+driven by the battle concluding on its own. Making `abandon` a second, implicit settler would widen
+the very surface the review flagged. Refusing keeps the two sibling commands consistent.
+
+**Scope for the development stage.** One slice, on the existing branch so PR 15 updates in place —
+no second branch, no second PR, no rebase, exactly as the slice A cycle 1 repair did. Both guards
+plus a test each, mirroring `tests/world/dispatch.test.ts:415` ("porting out of a running battle is
+refused, so the world is never stranded"), which sets `state.battle = createBattle([], false)` and
+asserts both the refusal reason and that `state.voyage` survives.
+
+**Unchanged and still not fixable from this branch alone — the CSS merge hazard.** Slice A merged to
+`agent/develop` this cycle as `a70a81b`, so the "PR 15 must not merge before PR 14" constraint is
+satisfied. But `agent/develop` now carries a `.pp-chart-sail` rule while this branch renames that
+control to `pp-chart-confirm` (`view/src/panels/minimap.ts:174`) and defines neither class. The rule
+will merge without conflict and then match nothing, and slice A's guard — which only asserts the
+substring `.pp-chart-sail {` is present in the file — stays green on the broken state. Whoever
+rebases must rename the rule and extend the guard, and confirm by eye, because no automated gate in
+this repo can see panel styling. **Deliberately not folded into this fix:** it belongs to the rebase,
+not to a `dispatch.ts` guard, and mixing them would make both harder to review.
+
 ### 2026-09-04 — independent review, slice B (OPP-20), PR 15
 
 Four lenses over `ae8edbd..35665ca`, cycle 0. **Changes requested on one blocking finding.** The
