@@ -6,11 +6,13 @@ import {
   DISENGAGE_COUNTER_START_TURNS,
   MOVE_TOKENS,
   PHASES_PER_TURN,
+  affordable,
   battleShipOf,
   findShip,
   heldTokensOf,
   idlePlan,
   planRejectionOf,
+  restsRequiredBy,
   shipClassOf,
 } from '../client/rules.ts';
 import type {
@@ -80,10 +82,10 @@ const FULL_METER = 1000;
 
 const MOVE_OPTIONS: { label: string; move: PhaseMove }[] = [
   { label: '—', move: { kind: 'none' } },
-  { label: 'Rest', move: { kind: 'rest' } },
   { label: '◄', move: { kind: 'move', token: 'left' } },
   { label: '▲', move: { kind: 'move', token: 'forward' } },
   { label: '►', move: { kind: 'move', token: 'right' } },
+  { label: 'Rest', move: { kind: 'rest' } },
 ];
 
 const FIRE_OPTIONS: { label: string; pick: FirePick }[] = [
@@ -108,6 +110,7 @@ export function createPlanner(client: GameClient): Planner {
   let currentShipId: EntityId | null = null;
   let plannedTurnIndex = -1;
   let maximumShotsPerSide = 1;
+  let restAvailable = false;
 
   for (let phase = 0; phase < PHASES_PER_TURN; phase += 1) {
     const row = createPhaseRow(phase);
@@ -238,7 +241,9 @@ export function createPlanner(client: GameClient): Planner {
       plannedTurnIndex = battle.turnIndex;
       draft = idlePlan();
     }
-    maximumShotsPerSide = shipClassOf(hull.shipClass).shotsPerSidePerPhase;
+    const shipClass = shipClassOf(hull.shipClass);
+    maximumShotsPerSide = shipClass.shotsPerSidePerPhase;
+    restAvailable = restsRequiredBy(shipClass.movesPerTurn) > 0;
 
     for (let phase = 0; phase < rows.length; phase += 1) refreshRow(rows[phase], draft[phase]);
 
@@ -249,7 +254,8 @@ export function createPlanner(client: GameClient): Planner {
     breakOff.set(readinessOf(ship.disengageCounter), ready ? 'ready' : `${ship.disengageCounter}`);
     disengageButton.setEnabled(ready && battle.outcome === 'running');
 
-    const rejection = planRejectionOf(hull.shipClass, draft);
+    const rejection =
+      planRejectionOf(hull.shipClass, draft) ?? affordable(ship.tokens, hull, draft);
     submitButton.setEnabled(rejection === null && battle.outcome === 'running');
     refusal.text = rejection === null ? '' : refusalOf(rejection);
     note.text = ready
@@ -260,7 +266,12 @@ export function createPlanner(client: GameClient): Planner {
   function refreshRow(row: PhaseRow | undefined, phase: BattlePhasePlan | undefined): void {
     if (row === undefined || phase === undefined) return;
     MOVE_OPTIONS.forEach((option, index) => {
-      row.moveButtons[index]?.setSelected(isMoveChosen(phase.move, option.move));
+      const button = row.moveButtons[index];
+      if (button === undefined) return;
+      const shown = option.move.kind !== 'rest' || restAvailable;
+      button.view.visible = shown;
+      button.setEnabled(shown);
+      button.setSelected(shown && isMoveChosen(phase.move, option.move));
     });
     FIRE_OPTIONS.forEach((option, index) => {
       row.fireButtons[index]?.setSelected(isFireChosen(phase.fire, option.pick));

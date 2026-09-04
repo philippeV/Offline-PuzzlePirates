@@ -81,7 +81,7 @@ export {
 export { BOOTY_POE_STREAM, awardBooty, freeHoldOf, rollBooty, type BootyRoll } from './battle/booty.ts';
 export { BRIGAND_PLAN_STREAM, planBrigandTurn } from './battle/brigand.ts';
 export { resolveMovement, type CollisionOutcome, type CollisionShip } from './battle/collision.ts';
-export { applyBattleCommand, applyCommissionCommand } from './battle/dispatch.ts';
+export { affordable, applyBattleCommand, applyCommissionCommand } from './battle/dispatch.ts';
 export { FIRE_RANGE, GRAPPLE_RANGE, grappleReaches, lineOfFire, resolveFire } from './battle/fire.ts';
 export {
   FACINGS,
@@ -97,6 +97,7 @@ export {
   idlePhase,
   idlePlan,
   planRejectionOf,
+  restsRequiredBy,
   type BattlePhasePlan,
   type PhaseFire,
   type PhaseMove,

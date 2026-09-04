@@ -61,6 +61,7 @@ const SCENE_MARGIN = 20;
 const PANEL_PADDING = 16;
 const PANEL_MINIMUM_WIDTH = 260;
 const PANEL_MAXIMUM_WIDTH = 404;
+const CHAT_FOOTPRINT = 150;
 const SHIP_ROW_HEIGHT = 46;
 const SHIP_ROW_CAPACITY = 2;
 
@@ -73,7 +74,7 @@ const PLANNER_Y = SHIPS_Y + SHIP_ROW_HEIGHT * SHIP_ROW_CAPACITY + 10;
 const OUTCOME_TEXTS: Record<BattleOutcome, string> = {
   'running': '',
   'player-won': 'The brigand strikes her colours.',
-  'player-lost': 'Yer ship be lost.',
+  'player-lost': 'The brigand carries the day.',
   'disengaged': 'Ye broke off from the fight.',
 };
 
@@ -162,7 +163,8 @@ export function createBattleScene(context: SceneContext): Scene {
 
   function panelScaleOf(panelWidth: number): number {
     const acrossScale = (panelWidth - PANEL_PADDING * 2) / panelWidthOfContent;
-    const downScale = (sceneHeight - SCENE_MARGIN * 2 - PANEL_PADDING * 2) / contentHeight;
+    const downScale =
+      (sceneHeight - SCENE_MARGIN * 2 - PANEL_PADDING * 2 - CHAT_FOOTPRINT) / contentHeight;
     return Math.max(0.4, Math.min(1, acrossScale, downScale));
   }
 
