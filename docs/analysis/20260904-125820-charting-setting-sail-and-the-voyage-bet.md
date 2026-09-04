@@ -241,12 +241,16 @@ never encounters; determinism holds for a fixed seed; `npm run check` and `npm r
 
 ## Jira
 
-| Key    | Type  | Summary                                                               |
-| ------ | ----- | --------------------------------------------------------------------- |
-| OPP-17 | Epic  | Charting, setting sail and the voyage between league points           |
-| OPP-18 | Story | Analysis: Charting, setting sail and the voyage between league points |
+| Key    | Type  | Summary                                                               | Slice |
+| ------ | ----- | --------------------------------------------------------------------- | ----- |
+| OPP-17 | Epic  | Charting, setting sail and the voyage between league points           | —     |
+| OPP-18 | Story | Analysis: Charting, setting sail and the voyage between league points | —     |
+| OPP-19 | Story | Slice A — the chart is usable again                                   | A     |
+| OPP-20 | Story | Slice B — charting and setting sail become two acts                   | B     |
+| OPP-21 | Story | Slice C — the passage is a place                                      | C     |
+| OPP-22 | Story | Slice D — traffic, and battle by range                                | D     |
 
-Slice stories are created under OPP-17 by this analysis and recorded in the changelog below.
+All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
