@@ -9,7 +9,6 @@ export const BUTTON_HEIGHT_PX = 28;
 export const BUTTON_CORNER_PX = 8;
 export const FIRST_BUTTON_ANGLE = -Math.PI / 2;
 export const LABEL_SIZE_PX = 13;
-export const TITLE_SIZE_PX = 14;
 export const BACKDROP_ALPHA = 0.35;
 
 const BACKDROP_COLOUR = 0x0a0f14;
@@ -18,7 +17,6 @@ const BUTTON_STROKE = 0xe0c23a;
 const SPOKE_COLOUR = 0xe0c23a;
 const SPOKE_ALPHA = 0.5;
 const LABEL_COLOUR = 0xf4ecd8;
-const TITLE_COLOUR = 0xe0c23a;
 const LABEL_FONT = 'Georgia, serif';
 
 export interface RadialMenu {
@@ -26,7 +24,6 @@ export interface RadialMenu {
   readonly open: boolean;
   show(
     point: ScreenPoint,
-    title: string,
     actions: ObjectAction[],
     choose: (actionId: string) => void,
   ): void;
@@ -75,7 +72,6 @@ export function createRadialMenu(): RadialMenu {
     },
     show(
       point: ScreenPoint,
-      title: string,
       actions: ObjectAction[],
       choose: (actionId: string) => void,
     ): void {
@@ -83,7 +79,7 @@ export function createRadialMenu(): RadialMenu {
       if (actions.length === 0) return;
       paintBackdrop();
       const centre = withinScreen(point, width, height);
-      ring.addChild(spokes(centre, actions.length), titleLabel(title, centre));
+      ring.addChild(spokes(centre, actions.length));
       actions.forEach((action, index) => {
         const button = actionButton(action, () => {
           hide();
@@ -131,16 +127,6 @@ function spokes(centre: ScreenPoint, count: number): Graphics {
     drawing.moveTo(centre.x, centre.y).lineTo(spot.x, spot.y);
   }
   return drawing.stroke({ width: 2, color: SPOKE_COLOUR, alpha: SPOKE_ALPHA });
-}
-
-function titleLabel(title: string, centre: ScreenPoint): Text {
-  const text = new Text({
-    text: title,
-    style: { fontFamily: LABEL_FONT, fontSize: TITLE_SIZE_PX, fill: TITLE_COLOUR },
-  });
-  text.anchor.set(0.5);
-  text.position.set(centre.x, centre.y);
-  return text;
 }
 
 function actionButton(action: ObjectAction, choose: () => void): Container {

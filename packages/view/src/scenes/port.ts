@@ -76,7 +76,6 @@ export function createPortScene(context: SceneContext): Scene {
     grid: buildPortGrid(mooringLabel),
     spawn: PORT_SPAWN,
     heading: portNameOf(state.pirate),
-    avatarLabel: 'Ye',
     avatarActions: AVATAR_ACTIONS,
     act,
   });
