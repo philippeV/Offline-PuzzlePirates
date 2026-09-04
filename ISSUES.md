@@ -4,6 +4,62 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — physical test of UI sweep slice D, PR 13
+
+Every item of the test task driven in a real browser at 1280x720, in an **isolated worktree** with
+its own `node_modules` and its own dev server — not in the shared checkout, which had a live writer
+in it (see the analysis document, decisions 206 and 207). No blocking failure; PR 13 merged to
+`agent/develop`. The findings below are recorded rather than returned.
+
+**The shared checkout is not a test environment, and a green result taken from it may mean nothing.**
+While this run was testing, another agent working slice 5b moved the shared checkout's `HEAD` onto
+`agent/develop`, merged slice 5b into it, started its own dev server on 5178, and re-blessed
+`battle.png` and `puzzle.png` in the working tree without committing them. The first smoke result this
+run saw — 4 passed — was therefore measured against other code and against baselines re-blessed
+fourteen minutes earlier, and was discarded. It starts to matter the moment any stage reports a gate
+result without saying where it ran; the cheap guard is to take every measurement in a worktree with
+its own install.
+
+**A worktree that borrows `node_modules` through a junction tests the wrong source, and says
+nothing.** `workspaces: ["packages/*"]` means `node_modules/@opp/*` are junctions into the main
+checkout's `packages/*`, so a borrowed `node_modules` resolves `@opp/view` and `@opp/sim` to the other
+tree. The symptom is a smoke run failing every scene on a systematic layout shift that looks exactly
+like a regression. A worktree needs its own `npm install` — 31 seconds with a warm cache.
+
+**The chat overlay hides the bottom of the board, and the water with it.** `.pp-chat` spans y 574-710;
+the board now spans y 24-696 at `cellSize` 56, so the bottom 122px — about **2.2 of the 12 rows** —
+sit behind it. Pre-existing rather than new: on `agent/develop` the 612px board sat at y 54-666 and the
+overlay covered about 1.8 rows. It got worse by roughly half a row, because a six-wide board is
+height-bound and now uses the full canvas height, and the rows it hides are the ones holding the
+water — at the driest water line (`waterLineRow` 9) all three water rows are behind the panel. Not
+blocking: the panel is translucent, the water-line boundary was visible at every level tested, and the
+remedy is a decision about the overlay's placement, not about board width. It starts to matter when a
+player is asked to judge the water level at a glance.
+
+**A puffer-beside-puffer swap reads as an unresponsive click.** Confirmed physically on two separate
+trees: clicking the left puffer of a horizontal pair changes **zero cells**, increments `moves` by
+one, and leaves the score alone — no animation, no feedback, nothing distinguishing it from a dropped
+click. In a puzzle scored as points per move over a rolling frame, that move is negative rather than
+neutral. It is decision 146 working exactly as specified from the wiki, so it is not a defect, and the
+player is never stuck because the pair's **right-hand** puffer still pokes and clears both (verified:
+20 cells changed, score 4). The cost is one wasted move while the player learns the rule. It starts to
+matter if the puffer spawn rate rises or if anyone reports the board feeling unresponsive; the cheap
+remedy is a visible acknowledgement of a no-op swap rather than a change to the rule.
+
+**The last-column swap refusal is clean and free, and the doubled rate is tolerable.** Clicking a
+plain tile in the last column writes **"That swap falls off the board."** to the chat log on a
+`refused` channel, leaves the board untouched, charges **no move**, and logs nothing to the console.
+The dead column is now 1/6 of the board rather than 1/12, so a player meets it twice as often, but
+since it costs nothing and explains itself, it reads as a boundary rather than a bug. Recorded so the
+doubled rate is not later rediscovered as a regression.
+
+**Retired: the red `battle.png` smoke gate is not a defect and should stop being carried as a ground
+condition.** In a worktree with its own install, on a port no other process could reach, and with the
+committed baselines left untouched afterwards, `npm run smoke` is **4 passed** — `port.png`,
+`deck.png`, `puzzle.png` and `battle.png` all green. This confirms decision 196 on a tree nothing else
+could write to. Task files in this lineage still list the red gate as a standing condition; they
+should not.
+
 ## 2026-09-04 — independent review of UI sweep slice D, PR 13
 
 Four lenses over `32c7c49`, none of them the agent that wrote or analysed the slice. No blocking
