@@ -58,7 +58,7 @@ function holdSection(ship: ShipState): HTMLElement {
   const hold = section('Cargo hold');
   hold.append(
     factRow("Ship's coffers", `${ship.poe} PoE`),
-    factRow('Tradeable goods', `${ship.cargoUnits} units`),
+    factRow('Tradeable goods', `${unitsOf(ship.cargo)} units`),
     lotList(ship.cargo, 'The hold be empty.'),
     note('Only hold goods may be sold at a market.'),
   );
@@ -72,6 +72,10 @@ function storesSection(ship: ShipState): HTMLElement {
     factRow('Rum', String(ship.rum)),
   );
   return stores;
+}
+
+function unitsOf(lots: CargoLot[]): number {
+  return lots.reduce((total, lot) => total + lot.units, 0);
 }
 
 function lotList(lots: CargoLot[], emptyText: string): HTMLElement {
