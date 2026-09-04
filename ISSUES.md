@@ -4274,3 +4274,13 @@ follows is what the lenses substantiated and judged not worth stopping for.
   save correctly changed the heading and correctly changed nothing else. Not a defect in anything
   shipped — the class simply has no geometric consequence yet — but the counts read as live inputs
   and are not, which is the kind of dead expressiveness a later reader trusts.
+
+- **Slice 5b already carries an equivalent voyage chooser, and `minimap.ts` will conflict in
+  substance.** Commit `53b5dd5` contains its own `selectedVoyageType`, `voyageTypeButton` and
+  `setSailButton`, so the two implementations overlap even though `panels.css` now will not — slice A
+  took `.pp-chart-voyage-chosen` and `.pp-chart-sail` from `53b5dd5` character for character
+  precisely so the stylesheet converges rather than diverges. When 5b reaches a PR, the resolution is
+  to **keep this branch's idempotent-repaint structure**: 5b's `courseSection` rebuilds the chooser
+  on every refresh, which is the 60 Hz teardown slice A exists to remove, and adopting it would
+  reintroduce the defect. Recorded here rather than reconciled, because reconciling would mean
+  touching the local/`origin/agent/develop` divergence that has been a standing human decision.

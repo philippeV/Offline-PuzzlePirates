@@ -458,3 +458,48 @@ remain from earlier runs. This document was committed to local `agent/develop` w
 pathspec. It was **not pushed**, because pushing requires first merging `origin/agent/develop`, and
 that merge would overwrite the other agent's uncommitted `puzzle.png`. Reconciling that divergence is
 left to the human or to whichever run owns those baselines.
+
+### 2026-09-04 — development, slice A repair (OPP-19), cycle 1
+
+The cycle 1 analysis had already settled every question, so this stage installed its three decisions
+and verified them rather than re-deriving anything.
+
+**L17 — the two rules are in.** `.pp-chart-voyage-chosen` and `.pp-chart-sail` were taken from
+`53b5dd5:packages/view/src/panels/panels.css:367-380` and placed immediately after `.pp-chart-voyage`.
+Byte-identity was checked by diffing the installed block against `git show` of the source rather than
+by eye: the diff is empty.
+
+**L19 — the guard is in, and it was proved to fail without the fix.** `tests/view/minimap.test.ts`
+asserts `panels.css` carries a rule for each of the two classes the component toggles, scoped to
+exactly those two names. Reverting only the stylesheet and re-running produced
+`panels.css carries no rule for .pp-chart-voyage-chosen, so the chart toggles a class that draws
+nothing` — so the guard genuinely closes the hole the review found, rather than passing vacuously.
+
+**L18 — the obligation is recorded** in `ISSUES.md`, naming `53b5dd5`'s equivalent chooser and
+stating that the resolution is to keep this branch's idempotent-repaint structure, because 5b's
+`courseSection` rebuilds per refresh and adopting it would reintroduce the very defect slice A fixes.
+
+**Confirmed by eye, which is what made this blocking.** Before any voyage type is clicked, `pillage`
+— the silent default at `minimap.ts:23` — now renders filled `--pp-gold` with `#201a10` text at
+weight 600, while `trade` and `evade` keep the plain `--pp-raised` recipe at weight 400. Clicking
+`trade` moved the gold to it and returned `pillage` to plain. `Set sail` renders full width
+(270.4px, the whole row) with a gold border and gold text at weight 600, so it reads as the primary
+action rather than a fourth peer of the three type buttons. Computed styles were read back to confirm
+the screenshot: chosen `rgb(255, 212, 121)` on `rgb(32, 26, 16)`, unchosen `rgb(43, 35, 23)` on
+`rgb(232, 226, 208)`. The gradient shows as a transparent `background-color` because it lives in
+`background-image`; that is expected and not a defect.
+
+**The baseline risk resolved the way the analysis predicted.** `npm run smoke` passed with
+`tests/e2e/__screenshots__` untouched, confirming the review's finding that the suite screenshots the
+PIXI canvas and never captures panel DOM. Nothing was re-blessed and nothing needed to be.
+
+**Verification.** `npm run check` green, 591 tests. `npm run smoke` 4 passed, baselines untouched.
+
+**Discovered, and it affects slice B rather than this repair.** Slice B renames `pp-chart-sail` to
+`pp-chart-confirm` (its confirm button charts a course; departure moved to the helm). This repair
+correctly styles `.pp-chart-sail`, which is the class on *this* branch — but once slice B is brought
+onto the repaired slice A, that rule will match nothing and the confirm control will lose its primary
+styling, silently, exactly as it was lost the first time. Slice B's own `STATEFUL_CHART_CLASSES`
+guard will not catch it either, because slice B did not add one. Whoever merges the two must rename
+the CSS rule alongside the class and extend the guard. Recorded here rather than pre-emptively fixed:
+this branch has no `pp-chart-confirm` to style, and slice B is a separate open PR.

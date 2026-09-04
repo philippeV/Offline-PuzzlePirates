@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { Window } from 'happy-dom';
 
@@ -9,6 +11,10 @@ import { createMinimap } from '../../packages/view/src/panels/minimap.ts';
 import type { PanelContext } from '../../packages/view/src/panels/panels.ts';
 
 const SEED = 12648430;
+const PANELS_STYLESHEET = fileURLToPath(
+  new URL('../../packages/view/src/panels/panels.css', import.meta.url),
+);
+const STATEFUL_CHART_CLASSES = ['pp-chart-voyage-chosen', 'pp-chart-sail'];
 
 before(() => {
   const window = new Window();
@@ -114,4 +120,15 @@ test('the chosen voyage type and Set sail charts the course', () => {
 
   assert.equal(context.client.state.voyage?.type, 'trade');
   assert.ok((context.client.state.voyage?.route.length ?? 0) > 1);
+});
+
+test('the stylesheet renders the chart state the chooser toggles', () => {
+  const stylesheet = readFileSync(PANELS_STYLESHEET, 'utf8');
+
+  for (const className of STATEFUL_CHART_CLASSES) {
+    assert.ok(
+      stylesheet.includes(`.${className} {`),
+      `panels.css carries no rule for .${className}, so the chart toggles a class that draws nothing`,
+    );
+  }
 });
