@@ -254,6 +254,58 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — development, slice A (OPP-19)
+
+Slice A implemented on `agent/feature/20260904-132300-opp17-slice-a-chart-is-usable-again`. The
+chart grid and every interactive control in the chooser are now built once and repainted in place,
+so no node a player can press is destroyed by a tick.
+
+**The chooser had the defect too, and the slice would not have worked without fixing it.** The
+analysis judged the chooser sound because its state and its command are sound, but `drawChooser`
+cleared and re-created the three voyage-type buttons and the `Set sail` button on every tick exactly
+as `drawGrid` did. Reaching the chooser would have made a chart that offers controls that cannot be
+pressed. The chooser is now a stable `status` block plus a stable course section whose title, facts,
+type row and sail row are updated rather than replaced, and `Set sail` reads `selectedIslandId` at
+click time instead of being rebuilt around it.
+
+**Decision L15: this branch is based on `origin/agent/develop`, not on local `agent/develop`.** The
+local branch is 8 ahead of the remote and its extra commits are the slice 5b sloop-scene and
+art-atlas work, which has no PR and was merged locally only. Basing on it would have carried another
+work item's unreviewed art into this PR. The analysis document and its `ISSUES.md` entry were
+cherry-picked onto the remote base instead; the `ISSUES.md` cherry-pick conflicted with the slice D
+test record and was resolved keeping both entries, newest first.
+
+**Consequence for requirement 5, honestly stated: the layout shift does not reproduce on this base.**
+`max-height: 48vh` on `.pp-chart` and `min-height: 0; overflow-y: auto` on `.pp-chart-grid` — the
+rules the analysis cited as `panels.css:285-310` — are part of the unpushed slice 5b work and are not
+on `origin/agent/develop`. Here the grid is a 6-column `aspect-ratio: 1` lattice whose height follows
+its width, so expanding the chooser cannot resize it. Two forward-compatible lines were added so the
+fault cannot return when the art work merges: `flex: 0 0 auto` on `.pp-chart-grid`, so the grid never
+yields space to the chooser, and `overflow-y: auto` on `.pp-chart`, so the chart itself scrolls when
+a `max-height` is imposed on it. Both are inert on this base and could not be verified here; whoever
+merges slice 5b must re-check the behaviour rather than trust them.
+
+**Decision L16: `happy-dom` 20.14.0 added as a devDependency.** The repository had no DOM
+implementation in tests at all and no test touched `document`, which is why a panel could ship with
+zero coverage. `tests/view/minimap.test.ts` adds six cases, and the root `tsconfig.json` gained
+`"lib": ["ES2023", "DOM", "DOM.Iterable"]` to match `packages/view` — pulling a panel into the tests
+project needs the DOM types. That made the hand-rolled `requestAnimationFrame` and
+`cancelAnimationFrame` declarations in `tests/view/ticker.test.ts` duplicate declarations, so they
+were removed; the stubbing itself is untouched.
+
+**The new tests were verified to bite.** Against the pre-fix `minimap.ts`, five of the six fail. The
+sixth, the `Set sail` dispatch, passes there because `.click()` invokes the listener directly and no
+DOM shim reproduces a browser's mousedown/mouseup-on-different-nodes behaviour. That is also why the
+fix was verified physically in a real browser with the clock running, on the seed from the defect
+report: clicking Doyle Island at 60 Hz now selects it, previews the two-league route on the grid,
+and offers Pillage/Trade/Evade and Set sail; choosing Trade and pressing Set sail logs "Course set
+for Doyle Island, 2 leagues." and puts the pirate at sea. Alkaid's cell is dimmed and disabled while
+the pirate stands on it, per decision L12.
+
+`npm run check` is green (590 tests) and `npm run smoke` is 4 passed with the committed baselines
+untouched — the disabled cell's dimmed label stays under the 0.01 diff ratio, so no baseline was
+re-taken.
+
 ### 2026-09-04 — analysis, cycle 0
 
 Analysis written from three parallel read-only reconnaissance passes over the repository plus a live

@@ -276,6 +276,7 @@
 
 .pp-chart {
   width: 100%;
+  overflow-y: auto;
   border: 1px solid var(--pp-edge);
   border-radius: 6px;
   background: var(--pp-ground);
@@ -293,6 +294,7 @@
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 2px;
+  flex: 0 0 auto;
 }
 
 .pp-cell {
@@ -317,6 +319,11 @@
   border-color: var(--pp-edge);
   line-height: 1.05;
   word-break: break-word;
+}
+
+.pp-cell-island:disabled {
+  color: var(--pp-dim);
+  cursor: default;
 }
 
 .pp-cell-route {
