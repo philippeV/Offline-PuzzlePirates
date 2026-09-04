@@ -383,3 +383,85 @@ allowed an immediate re-chart.
 
 The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
 voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.
+
+### 2026-09-04 — independent review, slice B (OPP-20), PR 15
+
+Four lenses over `ae8edbd..35665ca`, cycle 0. **Changes requested on one blocking finding.** The
+slice does what this document says it does, and the two things most likely to have gone wrong did
+not: the `client.atSea` narrowing (L23) was traced to every one of its readers and is correct at all
+four, and the schema-7 migration was checked against a fixture independently reconstructed from the
+build rather than against its author's description.
+
+**Blocking — `voyage.abandon` clears the voyage with no `battle-running` guard, and the battle can
+then never be settled.** `abandon` (`world/dispatch.ts:90-105`) sets `state.voyage = null` without
+the guard its sibling `port` carries twelve lines below (`:119`). `state.battle = null` is written in
+exactly one place in the repository, `settleEncounter` (`world/session.ts:40`), and both routes into
+it — `stepWorld` (`:10`) and `settleConcludedEncounter` via `concludedEncounterOf` (`:26`) — return
+early when `state.voyage === null`. So once the voyage is cleared with a *running* battle standing,
+nothing can ever clear that battle: `materialisePlunder` never runs and the winnings are lost, the
+brigand hull is never filtered out of `state.ships`, and `client.inBattle` stays true forever, which
+leaves `canEnter` permitting only `battle` and `puzzle` — an unrecoverable soft-lock short of loading
+another save. `abandon`'s own `settleConcludedEncounter` call (decision L26) is the *concluded* case
+and is a no-op for a running one, so L26 is correct and this is a separate, missing guard rather than
+a fault in it. Reproduced independently by two lenses through `world.start` → `ship.commission` →
+`battle.start` → `voyage.chart` → `voyage.abandon`, which returns `accepted` and leaves the battle
+running with no voyage.
+
+Not reachable from the shipped view today, by three separate accidents: encounters spawn only from
+`stepVoyage`, which this slice gated on `under-way`; the view's only `battle.start` is the
+`sea-battle` opening, which never dispatches `world.start`; and the abandon control is hidden unless
+charted. It is reachable through the harness command surface — which *this diff widened*, adding
+`voyage.abandon` to `packages/harness/src/commands.ts` — and through a loaded save. Judged blocking
+rather than filed: the consequence is terminal state corruption with data loss, the repository treats
+the harness as a first-class tested surface rather than a debug backdoor, and the three accidents
+protecting it are exactly the kind that evaporate when slice C gives the passage encounters of its
+own. The fix is one line copied verbatim from `port`.
+
+**Corrections to the slice B entry above.** Three of its claims are not supported by the code they
+describe. They are recorded here rather than edited out, because the register is append-only.
+
+1. "`voyage.abandon` is the only exit from that window" is **false**. `port()` is the one voyage
+   command with no `phase` check, and dispatched while charted it is accepted — `route[legIndex]` is
+   `route[0]`, the origin island's own point, so it re-sets `atIslandId` to where the pirate already
+   stands, nulls the course and reports an arrival for a voyage that never sailed. Benign in outcome
+   and unreachable from the UI, so it is filed in `ISSUES.md` rather than returned as blocking, but
+   the invariant decision L5 was justified by does not hold at the sim level.
+2. The soak suite's "~217s to ~7s … every seed previously charted a voyage that never moved" cannot
+   describe this PR's baseline. At `ae8edbd` charting departed immediately; and had voyages truly
+   stalled there, `soak.test.ts:210-222` asserts no run is `stuck`, so the suite would have been red
+   rather than slow. The figure describes the mid-development build after the phase gate landed but
+   before `voyage.sail` was added to the soak harness. The conclusion stands — the test is not
+   weakened — but not for the reason given.
+3. L27's rationale, that a new rejection reason "is scope this slice was not given", is refuted by
+   the slice's own diff, which adds `voyage-already-under-way` and its copy. Filing the empty-helm
+   wording may still be the right call on cost; the scope argument is not why.
+
+Additionally, the design's stated requirement to extend `FIELD_KINDS` was correctly dropped —
+`FIELD_KINDS` is `Record<keyof WorldState, FieldKind>` and describes top-level fields only, so
+`phase`, nested inside `voyage`, is already covered by `voyage: 'an object or null'`. The
+implementation is right and the design sentence was wrong; the changelog recorded the action but not
+the finding, which leaves a later reader diffing design against code and finding a guard missing with
+no explanation.
+
+**What the review verified rather than accepted.** The fixture re-blessing claim was checked by
+recomputing the golden's hash from first principles: forcing `schemaVersion` back to 6 in the *new*
+state reproduces the *old* declared `stateHash` byte-for-byte, which proves the only semantic change
+is the version bump. All three replays changed in hash fields only, and the deliberately-diverged
+tick-5 hash in `marker-drift-diverged-at-tick-5.json` was correctly left un-reblessed. Both save
+fixtures were reconstructed from the current build and match canonically, so `voyage-under-way-v6`
+genuinely predates the change and decision L22 holds in substance — though the test named for that
+provenance asserts only shape. The decisions 153/155 audit was re-run rather than trusted: `voyage.chart`
+still has exactly one production dispatch site passing `context.playerShip()`, and neither new command
+carries a `shipId`, so decision 153 holds for the reason given. Decision 129 is not widened, because
+`stepWorld` settles a concluded encounter on the branch *before* it delegates to the phase-gated
+`stepVoyage`. No dependency was added, and no assertion was weakened — thirteen tests added, none
+removed, and the load-bearing ones were confirmed to fail against `ae8edbd` rather than merely to
+pass now.
+
+**A merge hazard between this lineage's two open PRs, carried forward.** Slice B renames
+`.pp-chart-sail` to `.pp-chart-confirm`; slice A's cycle 1 repair (`5454fd2`, PR 14) installs a CSS
+rule for `.pp-chart-sail`. There is no textual conflict, because slice B is based on slice A at
+`ae8edbd`, which predates the repair — but the moment slice B is brought onto the repaired slice A,
+that rule matches nothing and the confirm control silently loses its primary styling, which is the
+same defect class the repair exists to fix. Slice B has no stylesheet guard to catch it. Whoever
+performs that merge must rename the rule and extend slice A's guard to the new class name.

@@ -4,6 +4,129 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of slice B (OPP-20), PR 15
+
+Four lenses over `ae8edbd..35665ca`. One blocking finding went back to analysis: `voyage.abandon`
+clears `state.voyage` with no `battle-running` guard, and `state.battle` can then never be settled.
+What follows is what the lenses substantiated and judged not worth stopping for.
+
+- **`voyage.port` is a second, undocumented exit from the charted window.** `port()`
+  (`packages/sim/src/world/dispatch.ts:113-132`) is the one voyage command with no `phase` check,
+  while its two new siblings both have one. Dispatched while charted, `voyage.route[legIndex]` is
+  `route[0]` — the origin island's own league point — so the command is *accepted*: it re-sets
+  `pirate.atIslandId` to the island the pirate never left, nulls the voyage and emits
+  `voyage.ported` with the log line "Ye make port at …". Nothing corrupts and nothing teleports,
+  because the point resolves to where the pirate already stands. Not reachable from the UI:
+  `location.ts:109` gates the Port button on `client.atSea`, which decision L23 redefined as
+  `phase === 'under-way'`. It matters twice. First, it silently discards a charted course and
+  reports an arrival for a voyage that never sailed, on a surface — `sim.dispatch` and the harness —
+  that this repository treats as first-class and tests. Second, it falsifies the slice B changelog's
+  own sentence, "`voyage.abandon` is the only exit from that window, which is precisely why decision
+  L5 required it"; that claim is corrected in the analysis document. The fix is one line, either the
+  missing guard or a recorded decision that porting a charted course is a deliberate synonym for
+  abandoning it.
+
+- **`legTicksRequired` for the first leg is a snapshot taken at charting, and departure never
+  refreshes it.** `chartVoyage` (`packages/sim/src/world/voyage.ts:49`) derives it from
+  `ship.speedPerMille` at the moment the course is struck; `sail()` (`world/dispatch.ts:82-83`)
+  sets the phase and nulls the island but does not recompute it; `stepVoyage` re-derives it only
+  when a leg *completes* (`voyage.ts:71`). Since `stepSpeed` (`ship/meters.ts:87-93`) rewrites
+  `speedPerMille` every tick from the duty stations and the bilge, a course charted at rest and
+  sailed with the crew on the sails runs its first leg at the dockside speed — measured at 25,200
+  ticks against 3,600 for the identical second leg. **This is not a regression and is not
+  introduced by slice B**: the `legTicksRequired:` line is byte-identical at `ae8edbd`, where
+  charting departed immediately from a ship that was equally at rest, so leg 0 was frozen at the
+  same at-dock value there too. What slice B changes is that the staleness window is now unbounded
+  and the flow the slice creates — chart on the map, walk to the helm, man the sails, set sail —
+  makes it the normal case rather than an instantaneous one, and it now runs in both directions
+  (chart at speed, dawdle, and leg 0 stays fast). It starts to matter as soon as the passage is a
+  place with anything to do in it, which is slice C. The fix is one line in `sail()`, re-deriving
+  from the current ship exactly as `stepVoyage` already does.
+
+- **The invariant the change retired is asserted nowhere.** Before slice B, `voyage !== null`
+  implied `pirate.atIslandId === null`, because `charter` nulled it. That meaning now lives in
+  `phase`, but `refuseSpoiltVoyage` (`packages/sim/src/save.ts:169-181`) validates `phase` in
+  isolation and never cross-checks it against `save.pirate.atIslandId`. A save carrying
+  `phase: 'under-way'` alongside a non-null `atIslandId` loads clean into a combination no command
+  can produce: `client.atSea` is true so `canEnter('port')` is false, while `deck.moored()` — reduced
+  by decision L24 to `pirate.atIslandId !== null` — still shows the gangplank, and `trade`/`divide`
+  guard only on `atIslandId`, so the player buys and sells in a market while the legs advance
+  underneath them. Self-inflicted only: this is an offline game whose saves are player-held text,
+  and every command path maintains the invariant correctly. But it is the one structural guarantee
+  this slice loosened, and it is now carried by convention rather than by the validator.
+
+- **The migration test named for provenance checks only shape.**
+  `tests/sim/migration.test.ts:241`, "the committed schema version six save is a genuine schema
+  version six artefact", asserts `schemaVersion === 6`, no `phase` key, and `atIslandId === null` —
+  all three of which a hand-stamped save satisfies. The artefact *is* genuine: both fixtures were
+  reconstructed from the current build during this review and match canonically byte-for-byte, so
+  decision L22 holds in substance. But the repo already owns the stronger idiom seventy lines above
+  at `migration.test.ts:169`, which rebuilds the run from its seed and compares hashes, and it
+  applies directly to `voyage-charted-v7.json` — the fixture that pins the *new* shape — where it
+  was left unused. The road document filed this same weakness against `bilge-session-v5.json`; this
+  slice repeats it rather than closing it. Four lines.
+
+- **Coverage the slice chose not to write.** The charted-but-at-island window is half pinned: a
+  second charter being refused is covered incidentally, but trading while charted and re-chartering
+  after abandoning are both stated as intended in the changelog and asserted nowhere — they are what
+  a future refactor of the phase guard would silently break. `deck.moored()` has no unit test at all
+  (`tests/view/` has no `deck.test.ts`), which decision L25's author disclosed honestly and which is
+  a real PIXI limitation, though `moored()` is a pure function of `WorldState` and would be testable
+  if exported. `abandon`'s `settleConcludedEncounter` call (L26) is untested and, absent a loaded
+  save, probably unreachable, where `port`'s equivalent *is* tested twice. The three new log strings
+  are in no assertion, and `textOf` ends in `default: return null`, so a missing case is silent
+  rather than a compile error — unlike `REFUSALS`, which is compiler-checked.
+  `tests/sim/save.test.ts:29`'s `COMMITTED_SAVES` sweep was not extended with the two new fixtures.
+
+- **`sail()` refuses a destination-less route as `unknown-island` where `port()` calls the same
+  condition `not-at-island`.** `world/dispatch.ts:79-80` against `:124-125`. The established meaning
+  of `unknown-island` elsewhere (`startWorld:31`, `charter:49`) is "the caller named an island that
+  does not exist", which is not what happened. Unreachable today, since `chartVoyage` only ever
+  routes between island points, so this is vocabulary consistency rather than a live defect.
+
+- **Three claims in the slice B changelog are not supported by the code they describe**, corrected
+  in the analysis document rather than left standing. The soak suite's "~217s to ~7s … every seed
+  previously charted a voyage that never moved" cannot describe this PR's baseline — at `ae8edbd`
+  charting departed immediately, and had voyages truly stalled, `soak.test.ts:210-222` asserts no run
+  is `stuck` and the suite would have been red, not slow; the figure describes the mid-development
+  build after the phase gate landed but before `voyage.sail` was added to the soak harness. The
+  conclusion holds — the test is not weakened, and is arguably strengthened — but the evidence
+  offered for it does not. L27's rationale, "the real fix is a new rejection reason, which is scope
+  this slice was not given", is refuted by the slice's own diff, which adds the rejection reason
+  `voyage-already-under-way` and its copy; the decision to file the empty-helm wording may still be
+  right on cost, but not for that reason. And the design's stated requirement to extend `FIELD_KINDS`
+  was correctly dropped — `FIELD_KINDS` is `Record<keyof WorldState, FieldKind>` and describes
+  top-level fields only, so a field nested inside `voyage` is already covered — but the changelog
+  records only what was done, not that a stated requirement was found inapplicable, leaving a later
+  reader to diff design against code and find a guard missing with no explanation.
+
+- **This file's own decision-154 entry, added by slice B, is not supported either.** It argues that
+  `save.voyage.phase` is "a second persisted field with its own validator, so a throwing `restore` no
+  longer needs decision 153's state to happen". `Sim.snapshot()` is `cloneWorldState`, which is
+  `JSON.parse(canonicalJson(state))` — a generic round-trip preserving `phase` — and `atomically()`
+  only ever restores that clone, while `chartVoyage` is the sole constructor and the migration
+  backfills every loaded save. A snapshot of a live sim therefore always carries a valid `phase`, and
+  the new validator adds no new way for `restore` to throw. The narrowing may be arguable on other
+  grounds; this is not one of them.
+
+- **A standing merge hazard between the two open PRs in this lineage.** Slice B renames
+  `.pp-chart-sail` to `.pp-chart-confirm`. Slice A's cycle 1 repair (`5454fd2`, PR 14) installs a CSS
+  rule for `.pp-chart-sail` — the very defect that repair exists to fix. Neither branch is wrong on
+  its own and there is no textual conflict, because slice B is based on slice A at `ae8edbd`, which
+  predates the repair. The moment slice B is brought onto the repaired slice A, that rule matches
+  nothing and the confirm control silently loses its primary styling, and slice B has no stylesheet
+  guard to catch it. Whoever performs that merge must rename the rule and extend slice A's guard to
+  the new class name.
+
+- **Nits.** `AbandonVoyageCommand` is inserted after `BuyCommodityCommand` in
+  `packages/sim/src/index.ts:18`, breaking the block's alphabetical order, where `SailVoyageCommand`
+  at `:22` is placed correctly. `VOYAGE_PHASES` is re-exported at `:315` with no consumer outside
+  `world/state.ts:52` — defensible as symmetry with `VOYAGE_TYPES`, which is consumed, but it is new
+  unused public surface. `destinationOf` (`world/dispatch.ts:106`) duplicates the league-point to
+  island derivation already inline in `port()`, differing only in the index. And slice B's own two
+  entries in this file were appended at the bottom, under the oldest section, against the
+  newest-first convention stated in its header.
+
 ## 2026-09-04 — analysis, charting and the voyage between league points (OPP-17)
 
 One non-blocking finding, split off from the root cause of the reported chart defect. The defect
