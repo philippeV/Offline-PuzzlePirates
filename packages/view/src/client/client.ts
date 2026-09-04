@@ -116,7 +116,6 @@ export class GameClient {
     const running = { sim: this.sim, lines: this.lines, scene: this.current };
     this.sim = restored;
     this.lines = [];
-    this.current = 'port';
     try {
       this.syncScene();
       this.announce();
