@@ -254,6 +254,76 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — test, slice B repair (OPP-20), PR 15, cycle 1
+
+**Testing passes. No blocking failure.** The guard does what the repair claims, it does not
+over-refuse, and the stranding it exists to close is genuinely closed. **PR 15 was deliberately not
+merged** — see the merge decision at the end.
+
+Exercised in an isolated worktree at `04df362` with its own `npm install`, not in the main working
+tree: that tree is dirty and another live session is editing it, and `node_modules/@opp/*` are
+**absolute** symlinks into it, so a shared install would have silently tested `agent/develop` code
+rather than this branch.
+
+**Gates, run twice.** `npm run check` exit 0, **608 pass / 0 fail** (24.6s, then 21.1s).
+`npm run smoke` 4 passed, and all four `tests/e2e/__screenshots__` PNGs are **md5-identical before
+and after** — nothing was re-blessed. The second run of both was taken after the probe work had
+restored `dispatch.ts` byte-for-byte, so no mutation window can be mistaken for a clean result.
+CI on `04df362` is the single passing `push` run, as expected while the PR is `CONFLICTING`.
+
+**The three physical checks, at the sim/harness boundary.**
+
+- **The guard holds, and both objects survive intact.** `voyage.abandon` against a running battle is
+  refused `battle-running`, and `state.battle` and `state.voyage` each **deep-equal** their
+  `structuredClone` snapshot — outcome still `running`, berths `[1,2]`, hulls `[1,2]`, brigand
+  damage `12345`, `bootyCargoUnits` 700. Proved by structural equality rather than the
+  `notEqual(..., null)` the existing test settles for.
+
+- **The battle is still settleable afterwards**, which is the actual point of the fix. Concluding it
+  and settling emits `cargo.plundered` for 700 units of pokeweed-berries, takes `bootyCargoUnits`
+  700 → 0, strikes the brigand (`hulls [1,2] → [1]`) and clears `state.battle`. **One correction to
+  the record:** this path materialises **cargo only**. `bootyPoe` is untouched (0 → 0) — dividing
+  poe is `booty.divide`'s job, not settlement's — so "the plunder materialises" should not be read
+  as poe moving.
+
+- **The guard does not over-refuse** — the gap the review flagged hardest, defended by no test in
+  the repository. **All three** concluded outcomes (`player-won`, `player-lost`, `disengaged`) are
+  **accepted**; the voyage clears, the battle clears, the brigand is struck, and the `player-won`
+  case emits `cargo.plundered` **inside the accepted result, ahead of `voyage.abandoned`**, proving
+  `settleConcludedEncounter` runs within `abandon()`. No regression.
+
+**Mutation check — two mutants, both killed by the probe, both invisible to the suite.** A blanket
+`state.battle !== null` guard produces the exact over-refusal; a mutant that refuses correctly while
+corrupting `battle.ships` and `voyage.legIndex` fails only on deep equality. **Under both, all 608
+existing tests stay green.** That confirms *by execution* the review's non-blocking findings that
+neither behaviour is defended today. Both were already filed in `ISSUES.md`; nothing was fixed here.
+Stated honestly: the probe's union exhaustiveness was typed, not machine-checked, since node's type
+stripping does not typecheck — it was verified by reading the `BattleOutcome` declaration.
+
+**The merge is blocked, and the conflict set is not what the hand-off assumed.** Computed with
+`git merge-tree --write-tree --name-only a70a81b 04df362` (merge base `8e016f3e`), the conflicts are
+exactly four files: `ISSUES.md`, this analysis document, `packages/view/src/panels/minimap.ts` and
+`tests/view/minimap.test.ts`. **`panels.css` auto-merges cleanly and is not among them.** The
+hand-off reasoned that "the conflict set does include `panels.css` … so a rebase forces someone to
+*open* those files" — it does not. Nobody is forced to open it. It silently gains slice A's
+`.pp-chart-sail` rule, which then matches nothing, while the conflicted `minimap.ts` resolves to
+`pp-chart-confirm`.
+
+The hazard is also defended less than it looks. Slice A's guard is **two** things: a
+stylesheet-substring assertion (`tests/view/minimap.test.ts`, asserts `panels.css` contains
+`.pp-chart-sail {`) and DOM assertions querying `.pp-chart-sail`. This branch's own
+`minimap.test.ts` has **no stylesheet guard at all** and queries `.pp-chart-confirm`. So the natural
+resolution keeps slice A's substring guard — still green, because the rule is present and merely
+matches nothing — and takes this branch's renamed DOM queries, also green. Net: every gate green,
+the confirm control silently unstyled.
+
+**Decision: the test stage did not rebase, and forwarded a development task for it instead.** The
+rebase changes production CSS and markup classes, must rename the rule and extend slice A's guard so
+it asserts the invariant rather than a substring, and has a failure mode no automated gate in this
+repository detects. Doing it here would put an unreviewed production change straight onto
+`agent/develop`, which is what the review stage exists to prevent. Testing passes on the branch as it
+stands; the merge waits on that separate, reviewed change.
+
 ### 2026-09-04 — development, slice A (OPP-19)
 
 Slice A implemented on `agent/feature/20260904-132300-opp17-slice-a-chart-is-usable-again`. The
