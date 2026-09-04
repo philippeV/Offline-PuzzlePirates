@@ -1138,3 +1138,51 @@ correctly styles `.pp-chart-sail`, the class on *this* branch. Neither branch is
 there is no textual conflict, because slice B is based on slice A at `ae8edbd`, which predates this
 repair. Whoever brings slice B onto the repaired slice A must rename the rule and extend the guard,
 or the confirm control silently loses its primary styling.
+
+### 2026-09-04 — independent review, integration merge (OPP-20), PR 15, `18b937a`
+
+Four lenses over the merge commit only. **No blocking findings. Forwarded to the test stage.**
+Reviewed by a different run from the one that authored `18b937a`, so independence holds.
+
+**What was verified from source rather than accepted from the hand-off.** The merge's own record is
+accurate on every checkable claim. `packages/sim/**` is untouched: the combined diff (`git show --cc`)
+is *identical* to `diff 2c24ad2..18b937a`, 656 insertions and 0 deletions across exactly `ISSUES.md`,
+this document, `panels.css` and `tests/view/minimap.test.ts`. The minimap crux resolves in the
+merge's favour — `diff a70a81b..18b937a` on `minimap.ts` is purely additive slice B work plus the
+`setSailButton` → `chartCourseButton` rename; build-once (`minimap.ts:49,53`) and repaint-in-place
+(`paintGrid` mutating via `classList.toggle`, no `clear(grid)`, no `drawGrid`) both survive, so no
+player-clickable node is destroyed by a tick. The check was widened past what the task asked: **all
+nine files `agent/develop` changed since the base are byte-identical to develop in the merged tree**,
+so nothing was dropped anywhere, not only in `minimap.ts`. The test set is the exact union of both
+parents (7 + 8 → 9), `git diff --diff-filter=D` is empty against both, and there are no conflict
+markers. The changelog carries 14 dated entries, the two shared ones appearing once each; `ISSUES.md`
+lost zero lines from either parent.
+
+**Corrections to the task's own framing, recorded because the next stage inherits it.** The task
+names four conflicted files including `minimap.ts` and excluding `panels.css`. The true combined diff
+is the inverse: `minimap.ts` is absent (resolved to a parent verbatim) and `panels.css` is present
+(hand-edited). This confirms the correction the first, later-reaped review attempt had already made.
+
+**The one finding worth the human's attention, non-blocking.** The replacement guard dropped the
+`DOM → stylesheet` assertion its parent had, and the rationale recorded for that is overstated: the
+defect being fixed was the *substring* check, not the hand-maintained allowlist. A converse assertion
+narrowed to classes applied via `classList.toggle` — today exactly one — is principled, not an
+allowlist. Deleting the `.pp-chart-voyage-chosen` rule today fails the old guard and passes the new
+one. Judged non-blocking because the production stylesheet is correct as it stands, so what was lost
+is guard strength rather than behaviour. Filed in `ISSUES.md` with the narrower assertion as the
+suggested follow-up, alongside three further blind spots (the `pp-cell*`/`pp-here-mark` classes the
+`pp-chart` prefix does not cover and which no test references at all; `app.css` never being scanned;
+the raw-text regex treating a `.pp-chart` in a CSS comment as a phantom rule) and the test title that
+now asserts the opposite of its body — itself a half-addressed prior finding.
+
+**The stylesheet → DOM deviation is accepted as-is.** It is a genuine behavioural test rather than a
+tautology: it reads the shipped stylesheet from disk and drives the real `createMinimap`, comparing
+two independently produced sets. It demonstrably catches the defect that actually reached the
+pipeline, where the substring check could not. Its limits are recorded honestly by the merge itself.
+
+**Environment note for the next stage.** The *local* ref
+`agent/feature/20260904-132301-opp17-slice-b-charting-and-setting-sail` is stale at `04df362`; the
+merge lives on the remote at `18b937a`. This review committed from a detached worktree and pushed
+`HEAD:` to the branch. Anyone checking that branch out locally must fetch first or they will silently
+work on a tree that predates the merge. The stale ref was deliberately left alone rather than
+force-updated, because another live session is working in this repository.

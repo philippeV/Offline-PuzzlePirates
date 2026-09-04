@@ -4,6 +4,81 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of the integration merge (OPP-20), PR 15, `18b937a`
+
+Four lenses over the merge commit `18b937a` only — the conflict resolutions, the `panels.css`
+rename and the replacement stylesheet guard. **No blocking findings.** The merge's substance matches
+its record: `packages/sim/**` is untouched (`diff 2c24ad2..18b937a` is identical to the combined
+diff), all nine files `agent/develop` changed since the base are byte-identical to develop in the
+merged tree, the test set is the exact union of both parents (7 + 8 → 9, none dropped), and no
+conflict marker survives anywhere.
+
+### The replacement guard lost an assertion the guard it replaced had
+
+**The merge dropped the `DOM → stylesheet` direction, and the recorded rationale for that is
+overstated.** The parent guard asserted, for two named state-toggled classes, that a rule exists
+(`a70a81b:tests/view/minimap.test.ts:128-132`, `STATEFUL_CHART_CLASSES`):
+
+```
+stylesheet.includes(`.${className} {`),
+`panels.css carries no rule for .${className}, so the chart toggles a class that draws nothing`,
+```
+
+The replacement asserts only the converse. Concretely: delete the `.pp-chart-voyage-chosen` block
+(`panels.css:360-365`) and the old guard fails while the new one passes green — which is the exact
+failure mode slice A installed a guard against.
+
+The merge records that the forward direction "would have required either inventing three CSS rules
+or reintroducing exactly the hand-maintained allowlist the guard exists to remove". That is not
+right. The defect the guard was replaced over was the **substring** check, not the allowlist. A
+converse assertion narrowed to classes applied via `classList.toggle` — today exactly one,
+`minimap.ts:162` — is principled rather than hand-maintained: a class that is *toggled* must by
+definition draw a difference, whereas `pp-chart-status`, `pp-chart-course` and `pp-chart-abandon`
+are never toggled and legitimately need no rule.
+
+Not blocking: the production stylesheet is correct today (`.pp-chart-voyage-chosen` exists at
+`panels.css:360` and is still applied), so what was lost is guard strength, not behaviour. It starts
+to matter the moment someone deletes or renames a rule for a toggled class.
+
+### The guard's blind spots beyond the one already filed
+
+- **It only guards the `pp-chart` prefix.** `minimap.ts:69-97` also renders `pp-cell`, `pp-cell-sea`,
+  `pp-cell-island`, `pp-cell-route`, `pp-cell-selected`, `pp-cell-here` and `pp-here-mark`, styled in
+  the same block of `panels.css:300-343`. `CHART_CLASS_PATTERN` matches none of them, so renaming
+  `pp-cell-selected`, `pp-cell-here`, `pp-cell-sea` or `pp-here-mark` reproduces this defect
+  undetected — those four have zero references anywhere under `tests/`.
+- **It scans only `panels.css`** (`tests/view/minimap.test.ts:14-16`). `packages/app/src/app.css`
+  also exists and is never read; a chart rule placed there is invisible to the guard. No `pp-chart`
+  lives there today.
+- **It parses CSS with a raw-text regex** (`CHART_CLASS_PATTERN = /\.pp-chart[\w-]*/g`). It handles
+  pseudo-classes, compound and grouped selectors and `@media` correctly, but a `.pp-chart…` inside a
+  CSS **comment** or a string value would become a phantom rule the chart is required to render.
+  `panels.css` has no comments and no `@media` today, so this cannot fire yet.
+
+### The test's name now asserts the opposite of its body
+
+`tests/view/minimap.test.ts:197` still reads `test('the stylesheet renders the chart state the
+chooser toggles', ...)`. That name is the parent's and describes the parent's assertion. It is now
+wrong for 6 of the 7 classes — only `pp-chart-voyage-chosen` is toggled; the rest are constructed
+once. This is a **half-addressed prior finding**: the slice A repair review already filed the
+inaccurate title (see `ISSUES.md` entry of 2026-09-04, slice A repair), and the merge fixed the
+constant and the failure message but left the title. Keeping the parent's name over an inverted body
+is how the assertion loss above stays invisible in test output.
+
+### Record-keeping
+
+- **The merge filed its own `ISSUES.md` entry at the bottom of the file**, below the 2026-09-02
+  entries, breaking the newest-first order this file states at line 3. Undocumented, and the same
+  drift is already tracked further down this file from an earlier merge. This entry is filed at the
+  top, where the convention puts it.
+- The analysis doc claims of the rename that "no reference to the old class survives anywhere in the
+  repository". True of code — zero hits under `packages/`, `tests/`, `tools/` — but 33 hits survive
+  in prose in this file and the analysis doc itself. Only the word "anywhere" is wrong.
+
+Already recorded by the merge itself and **not re-filed here**: the guard's three-state coverage
+brittleness, `.pp-chart-abandon` having no rule on any branch (a design decision for the human), and
+the port-5178 smoke trap.
+
 ## 2026-09-04 — independent review of the slice B repair (OPP-20), PR 15, cycle 1
 
 Four lenses over `f0fb4cc` only — the one-line `battle-running` guard in `abandon()`, its test and
