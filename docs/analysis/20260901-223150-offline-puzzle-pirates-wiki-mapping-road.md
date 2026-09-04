@@ -6370,3 +6370,108 @@ The worktree used here is verified gone.
 
 The new blob is 1414 bytes, single-line, LF, `schemaVersion` 3, board 6x12 = 72 cells — the same
 canonical key order as the file it replaces.
+
+### 2026-09-04 — independent review, UI sweep slice D (PR 13)
+
+Four lenses over `32c7c49`, run concurrently, none of them the agent that wrote the slice or the
+one that analysed it. **No blocking finding**; the slice goes to the test stage. Both CI checks are
+green on the head commit, which is the authority here because the task's own ground conditions
+record both local gate forms as unreliable on this box.
+
+The task set the review a specific question — *is every re-blessed byte explained by the width
+change, and nothing else?* The honest answer is **yes for the golden, and no for two artefacts**,
+in opposite directions: one changed less than it should have, one changed more.
+
+#### 199. The golden's classification is confirmed by re-derivation, and its absences are the real evidence
+
+Re-computed with the repo's own `jsonPatch` over `git show`-extracted blobs rather than taken from
+the PR: **184 state operations** — 144 `remove`, 40 `replace`, 0 `add` — across exactly
+`/balance/bilging` (1), `/puzzle/board` (180) and `/rngStreams/bilge.fill` (3). The 180 decompose as
+72 `remove` on `cells`, 72 `remove` on `shapes`, 35 `replace` on surviving cells and 1 on
+`board/width`. The envelope moves one operation, `stateHash`. The development run's figures are
+accurate as stated.
+
+What carries more weight than the match is what is **absent**: no `/tick`, no `/markers`, no
+`/schemaVersion`, no `/rngStreams/marker.drift`, no `add` under `/rngStreams` — so `bilge.refill`
+never appeared and the idle board cleared nothing — and no scoring field. `waterLineRow` 6,
+`bilgePerMille` 504, `starLevel` 1 and `totalScore` 0 are byte-identical to base. The flood and
+scoring pipelines are provably untouched by the width change, which is the property decision 145
+exists to protect.
+
+`puzzle.png` was decoded pixel-by-pixel as a second check: the board block goes from 12 x 51 = 612px
+to 6 x 56 = 336px about the same centre, reproducing the `cellSize` and `originX` arithmetic at
+`scenes/puzzle.ts:210-217` exactly. Its geometry is fully accounted for.
+
+#### 200. The replay fixture was re-hashed, not re-blessed, and now verifies a rejection
+
+This is the review's central finding and it corrects decision 145's completeness claim.
+`packages/fixtures/replays/bilge-session.json` had all 15 trail hashes and its `finalHash`
+re-recorded, but its `commands` array was left exactly as it was — and it still issues
+`{"tick":4,"command":{"op":"bilge.swap","x":10,"y":0}}`. On a six-wide board `x:10` is off the
+board. Replaying the committed fixture gives tick 0 accepted with 3 events, **tick 4 rejected
+`swap-outside-board`**, tick 9 accepted with 2 events. `dispatchIssuedAt`
+(`packages/harness/src/replay.ts:66-70`) calls `sim.dispatch(entry.command)` and throws the result
+away, so the rejection is swallowed and the trail still verifies bit-identically —
+`tests/harness/replay.test.ts` is 9/9 green.
+
+The artefact was therefore re-blessed into a weaker form, and the commit's diff on that file is
+hashes only, so nothing about the loss is visible to a reader. Ticks 4-8 now exercise idle stepping
+where they used to exercise the swap and resolve path.
+
+Judged **not blocking** under the contract's test: no gate is red, no product behaviour regressed,
+no data is at risk, and the swap path is still covered twice in this very fixture at ticks 0 and 9
+as well as by the golden and the migration test. But it is filed loudly rather than quietly, because
+a determinism gate that silently verifies less is precisely the failure mode the slice's own task
+file predicted re-blessing can hide, and because the diff cannot show it. The fix is cheap and
+belongs to the next slice that touches bilging: move the tick-4 command inside `x` 0-4 and re-record
+the trail.
+
+The general lesson, which outlives this slice: **re-blessing a replay means revisiting its inputs,
+not only its outputs.** A hash trail can be regenerated to green over a command set that no longer
+does anything, and every gate will agree.
+
+#### 201. Decision 195's blast radius is five tests, not three, and the screenshot carries a second fix
+
+Two further tests reach the six-wide sim board through the harness `BALANCE` and poke a puffer at
+`x:5`, which is now the last column, so the 3 x 3 detonation is clipped to 6 cells where it was an
+interior 9: `tests/puzzle/commands.test.ts:166` and `tests/puzzle/tokens.test.ts:183`. Both stay
+green because neither asserts a cell count, so only their silent meaning changed; their stated
+intents still hold, which is why this is filed rather than returned. Two lenses found
+`tokens.test.ts` independently. The count in decision 195 should read five.
+
+Separately, `puzzle.png`'s re-blessing absorbs a correction that has nothing to do with width. The
+`agent/develop` baseline still showed the hint `"Click a tile to swap it with the tile on its right.
+The last column cannot start a swap."`, while `agent/develop:packages/view/src/scenes/puzzle.ts:138`
+already read `"Click a puffer to pop it. …"`. The old baseline was photographing something that was
+not the tree's own code — which **corroborates decision 196's port-squatter diagnosis from a second
+and independent angle** rather than contradicting it. The review was asked to try to falsify 196 and
+instead found supporting evidence; `playwright.config.ts:24-29` with `reuseExistingServer:
+!process.env.CI` against port 5178 makes the mechanism plain.
+
+#### What the review checked and could not fault
+
+The gesture fix is **pinned by a real test**, established by mutation: reverting `scenes/bilgeGesture.ts`
+to its `agent/develop` form in a scratch worktree turns `tests/view/bilgeGesture.test.ts` red with
+`'poke' !== 'swap'`. That is worth recording explicitly because the equivalent experiment on the
+slice C repair came back green, and the difference is real rather than rhetorical.
+
+A legacy save is **not** corrupted by the width change. The board is persisted, never re-derived:
+`balance.bilging.boardWidth` is read at exactly one runtime site, `packages/sim/src/puzzle/bilging.ts:40`
+in `createBilgeBoard`, which runs only on `puzzle.start`. A schema-6 save built at 12 wide was loaded
+and played on this branch — board stays 12 x 12, hash stable, a swap at `x:8` accepted, round-trip
+byte-stable. `refuseSpoiltBoard` independently enforces `cells.length === width * height`.
+
+Three suspicions were raised and **discarded on evidence** rather than reported: `swapPartnerOf` was
+already exported at base and already used four times in `scenes/puzzle.ts`, so no new sim knowledge
+leaks into the view; it returns `{x: x+1, y}` unconditionally and `cellAt` guards through
+`isInsideBoard`, so a right-edge puffer degrades to `poke` with no wrap and no throw; and
+`client.bilging` cannot be undefined, because `GameClient.balance` is a readonly constructor-injected
+field distinct from the nullable `state.balance`. The `ISSUES.md` append-only convention was likewise
+confirmed real, so the surviving `DEFAULT_BOARD_WIDTH` entry is by design and was not filed as a
+finding.
+
+One review-side error is recorded for honesty: an ad-hoc replay script written during verification
+reported a final-hash mismatch, which was the script stepping on every tick where `verifyReplay`
+steps only `if (tick < lastTick)`. It was the script's defect, not the fixture's, and it was
+discarded rather than reported. The rejection at tick 4 is the part that survived independent
+checking.

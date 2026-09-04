@@ -4,6 +4,83 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of UI sweep slice D, PR 13
+
+Four lenses over `32c7c49`, none of them the agent that wrote or analysed the slice. No blocking
+finding. CI is green on both checks. The findings below are recorded rather than returned, and the
+first one is the review's central result.
+
+**The re-blessed replay fixture verifies less than it did, and the diff cannot show it.**
+`packages/fixtures/replays/bilge-session.json` had all 15 hashes and its `finalHash` re-recorded,
+but its `commands` array was left untouched — and it still issues `{"tick":4,"command":{"op":
+"bilge.swap","x":10,"y":0}}`. On a six-wide board `x:10` is off the board. Replaying the committed
+fixture shows tick 0 accepted with 3 events, **tick 4 rejected `swap-outside-board`**, tick 9
+accepted with 2 events. `dispatchIssuedAt` (`packages/harness/src/replay.ts:66-70`) calls
+`sim.dispatch(entry.command)` and discards the result, so the rejection is swallowed and the trail
+still verifies — `tests/harness/replay.test.ts` is 9/9 green. The consequence is that ticks 4-8 now
+exercise idle stepping where they used to exercise the swap/resolve path, and the file's diff is
+hashes only, so nothing about the loss is visible to a reader of the commit. Judged not blocking
+because the swap path is still covered twice in this same fixture (ticks 0 and 9), because the
+golden re-derives all 184 operations correctly, and because no gate is red; but this is exactly the
+"re-blessed into a weaker form" failure that the slice's own task file warned re-blessing can hide.
+It starts to matter the moment someone trusts this replay as the swap-path regression gate — which
+is what it is for. The fix is cheap and belongs in the next slice that touches bilging: move the
+tick-4 command inside `x` 0-4 and re-record the trail. It also corrects decision 145's claim that
+every determinism artefact was re-blessed: this one was re-hashed, not re-blessed.
+
+**Decision 195's blast radius is five tests, not three.** Beyond the three moved in
+`tests/puzzle/move.test.ts`, two more poke a puffer at `x:5` — `tests/puzzle/commands.test.ts:166`
+and `tests/puzzle/tokens.test.ts:183` — which on a six-wide board is the last column, so the 3x3
+detonation is clipped to 6 cells where it used to be an interior 9. Both stay green because neither
+asserts a cell count; only their silent meaning changed, and their stated intents (a poke scores a
+move; the maneuver bar counts pairs) still hold. Found independently by two lenses. Related and
+harmless: `tests/puzzle/tokens.test.ts:27` and `tests/puzzle/critters.test.ts:22` still declare
+`const WIDTH = 12` for locally-built boards while driving a six-wide sim board, which in a
+no-comments repo makes the name misleading.
+
+**`puzzle.png`'s re-blessing absorbs a second, unrelated correction.** The analysis entry
+attributes the new baseline to the width change alone. It also silently fixes a stale baseline: the
+`agent/develop` baseline still showed the hint `"Click a tile to swap it with the tile on its
+right. The last column cannot start a swap."`, while `agent/develop:packages/view/src/scenes/
+puzzle.ts:138` already read `"Click a puffer to pop it. …"`. The old baseline was therefore
+photographing something that was not the tree's own code, which corroborates decision 196's
+port-squatter diagnosis from a second angle rather than contradicting it. Geometry itself is fully
+explained by the width: the board block goes 12x51=612px to 6x56=336px about the same centre,
+reproducing `puzzle.ts:210-217` exactly.
+
+**The `client.bilging` layout fallback is pinned by nothing.** `packages/view/src/client/client.ts:
+68-70` feeds `packages/view/src/scenes/puzzle.ts:204-205`, and no test imports `scenes/puzzle.ts`
+at all. The fallback fires only when `boardOf()` is null — no puzzle running — so the smoke
+screenshot does not exercise it either, since it opens a live board. Only `tsc` prevents a
+regression to a hardcoded 12. Not worth a test of its own today; worth knowing before that getter
+is reused for anything load-bearing.
+
+**A puffer-beside-puffer swap is a verified no-op that costs a move.** Running it leaves the board
+bytes unchanged with `moves` 1 and `totalScore` 0. Clicking the left puffer of a horizontal pair
+now burns a move for nothing where it previously cleared nine cells; clicking the right one still
+pokes and clears both, so the player is never stuck. This is decision 146 working as specified, not
+a defect against the analysis — recorded so the consequence is visible to whoever revisits 146.
+
+**The last-column refusal rate roughly doubles.** `tileUnder` (`packages/view/src/scenes/puzzle.ts:
+362-371`) accepts the last column while `isSwapOrigin` (`:445-449`) does not, so a non-puffer click
+there dispatches a swap the sim refuses with `swap-outside-board` and writes a refusal line.
+Pre-existing and already blessed by a test, but the dead column goes from 12 of 144 cells to 12 of
+72. Not introduced here.
+
+**`bilge-session-v3.json` and `bilge-session-v5.json` now disagree about board width on purpose.**
+Verified as sound: v5 has no assertion re-deriving it against a live run, so regenerating it would
+make a schema-5 artefact carry today's tuning instead of its era's. Recorded only because the
+disagreement looks like an oversight to a future reader.
+
+**`ISSUES.md` cannot be read alone to know what is still open.** The append-only convention is real
+and confirmed, so the `DEFAULT_BOARD_WIDTH` / `DEFAULT_BOARD_HEIGHT` entry at `ISSUES.md:1676-1678`
+surviving this PR is by design, not an oversight — the analysis entry records its closure. But no
+entry carries an in-file closed or superseded marker, so closure is discoverable only by reading
+the analysis document alongside. A convention question for the human, not a defect.
+
+**Unrelated to this PR, noticed in passing.** `.claude/skills/pp-ui-test/` is untracked in the
+working checkout and predates this commit: a skill this lineage references is not committed.
+
 ## 2026-09-04 — physical test of UI sweep slice B, PR 11
 
 Four claims were driven in a real headless Chromium at 1280x720, deviceScaleFactor 2, against a
