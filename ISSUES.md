@@ -4,6 +4,75 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of slice A, PR 14 (OPP-19)
+
+Nine non-blocking findings from the four-lens review. The one blocking finding — `pp-chart-voyage-chosen`
+and `pp-chart-sail` toggled with no CSS rule behind them — went back to the analysis stage and is not
+recorded here.
+
+**The 60 Hz rebuild defect is still live in three sibling panels, and nothing recorded it.** The
+analysis narrowed the root cause to the chart, but `panels.ts:87` subscribes `refresh` to every event
+and `panels.ts:120` calls `view.refresh()` on the active panel, so the same clear-and-rebuild runs at
+60 Hz in `market.ts:60` (rebuilding `Buy`/`Sell` and a number field at `:107-108`), `location.ts:29`
+(buttons at `:60,:64,:102,:114,:125`) and `booty.ts:21` (button at `:52`). `Buy`, `Sell`, `Board the
+ship`, `Disembark` and `Divide the booty` are destroyed and re-created under the pointer exactly as the
+chart's cells were, so a real press straddling a tick never lands. Scoping the fix to the chart was
+correct for slice A; the omission was documentary. It starts to matter the moment a player tries to
+trade or board — which is to say already — and the fix is the idempotent-repaint treatment slice A just
+demonstrated. Worth doing as one pass over all three rather than three separate slices.
+
+**Test 6 cannot fail.** `tests/view/minimap.test.ts:112-113` reaches the Trade button and the sail
+control through optional chaining, so a test that never asserted the control exists cannot fail when it
+disappears. The file already has a throwing lookup helper at `:31-35`; using it makes the test bite for
+the right reason.
+
+**The changelog's explanation for test 6 passing against the pre-fix code is wrong.** It attributes it
+to `.click()` not reproducing a browser's mousedown/mouseup-on-different-nodes behaviour. That is true
+of any `.click()` test but is not the mechanism here: on the base there is no `.pp-chart-sail` at all,
+and `voyageButton(toIslandId, voyageType)` dispatched `voyage.chart` directly on click, so clicking
+Trade charted the voyage and the sail click was a no-op on `undefined`. Left uncorrected, a future
+reader will trust the stated mechanism and draw the wrong conclusion about what DOM shims can test.
+
+**Test 2 asserts construction constants.** `tests/view/minimap.test.ts:68-69` counts three voyage-type
+buttons and one sail button; post-fix both are built once and never added or removed, so those counts
+hold in every reachable state and cannot fail. Only tests at `:43` and `:94` assert node identity — the
+property that actually changed. Three of the five that bite against the base do so because the feature
+they assert did not exist there, not because of the rebuild.
+
+**`overflow-y: auto` on `.pp-chart` is not inert**, contrary to the slice A changelog's "both are inert
+on this base". It establishes a scroll container and a new block formatting context and pairs
+`overflow-x` up to `auto`. No visual change was observed and the smoke baselines were untouched, so
+nothing is broken; the record is simply overstated. Its sibling `flex: 0 0 auto` on `.pp-chart-grid` is
+genuinely inert, since `.pp-chart` is not a flex container on this base. Both lines exist to defend a
+layout shift that cannot reproduce here, so requirement 5 of slice A is delivered unverified and must be
+re-checked when the slice 5b art work merges and brings `max-height: 48vh` with it.
+
+**The new DOM lib creates a type/runtime asymmetry.** `tsconfig.json` gained
+`"lib": ["ES2023", "DOM", "DOM.Iterable"]`, and that project includes `tests/**/*.ts` and
+`tools/**/*.ts`, while the DOM exists at runtime only inside the `before()` hook of
+`tests/view/minimap.test.ts`. Any test or tool file can now reference `document` or `localStorage`,
+typecheck green and die with `ReferenceError` at runtime. The absent DOM lib had been the guard rail —
+which is precisely why `ticker.test.ts` hand-declared `requestAnimationFrame`. It starts to matter the
+first time someone writes a tool script against `document`.
+
+**`refresh()` mutates selection as a side effect.** `minimap.ts:60-61` clears `selectedIslandId` when it
+equals the island the player stands on. After this PR the whole point of `refresh` is that it only
+repaints, so a silent state mutation inside it contradicts the name. The rule it encodes (decision L12,
+you cannot chart to where you stand) belongs in the click handler at `:78-81` where the name would
+reveal it. Related: `paintChooser` at `:112-114` encodes the same voyage condition twice.
+
+**`section()` is duplicated.** `minimap.ts:39-40` hand-rolls `element('section', 'pp-section')` plus the
+`h3` title that `dom.ts:31-35` already provides, because it needs a live handle on the title node to
+repaint it. The motive is sound, but nine other call sites use the helper, so the chart is now the one
+panel whose section markup can drift silently. Widening the helper to hand back the title node would
+keep them in step.
+
+**No shared test DOM fixture, and the happy-dom `Window` is never closed.**
+`tests/view/minimap.test.ts:13-16` shims only `document` and leaves `window`, `requestAnimationFrame`
+and `getComputedStyle` absent, so the next panel test gets a bare `ReferenceError` rather than a clear
+signal. The repo already has the shared-fixture idiom in `tests/harness/client.ts`; a `tests/view/dom.ts`
+is the conventional home. Also `happy-dom` is pinned exact while every other devDependency uses a caret.
+
 ## 2026-09-04 — analysis, charting and the voyage between league points (OPP-17)
 
 One non-blocking finding, split off from the root cause of the reported chart defect. The defect

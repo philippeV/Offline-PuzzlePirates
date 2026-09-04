@@ -254,6 +254,52 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — independent review, slice A (OPP-19), cycle 0
+
+Four-lens review of PR 14. The core refactor was verified rather than taken on trust: no node a player
+can press is re-created on the repaint path, every property the old `cellOf` set at construction is
+updated in the repaint, and the cached cells cannot go stale because `LEAGUE_POINTS` and `ISLANDS` are
+module constants independent of seed, save and scene. The `hidden` toggling the refactor newly relies on
+was checked specifically, since it is the classic way this pattern breaks: `.pp-overlay [hidden]`
+(`panels.css:34`) outranks `.pp-actions { display: flex }` and the chart is mounted inside `.pp-overlay`,
+so it holds. Rejecting the `marker.drifted` suppression as the fix was the right call. Security,
+sim-purity and the `ISSUES.md` cherry-pick all came back clean.
+
+**One blocking finding: the chooser ships with no rendered state.** `minimap.ts:155` toggles
+`pp-chart-voyage-chosen` and `:167` builds the confirm control with `pp-chart-sail`; `panels.css` on this
+branch defines neither, having only `.pp-chart-voyage` at `:356`. The selected voyage type is therefore
+conveyed only by `aria-pressed`, invisible to a sighted mouse user, and `DEFAULT_VOYAGE_TYPE` is
+`pillage` (`:23,46`) — so a player who never touches the type row sails a combat voyage that nothing on
+screen announced, and a player who does click Trade gets no confirmation it took. This slice replaced
+one-click-dispatch, where the type in force was never ambiguous, with select-then-confirm, and shipped
+the select half without its visual state. Requirement 1 asks for the chooser *and* the confirm control;
+a chooser that cannot show what is chosen half-delivers it.
+
+**Why it happened, which the repair must take into account.** The unpushed local `agent/develop` already
+contains this same chooser — `selectedVoyageType`, `voyageTypeButton`, `setSailButton` and the identical
+`pp-chart-voyage-chosen` toggle — from slice 5b commit `53b5dd5`, *together with* both CSS rules. The
+TypeScript half was carried onto the `origin/agent/develop` base chosen by decision L15; the stylesheet
+half was not. Decision L15 itself remains correct — basing on the unpushed local branch would have pulled
+another work item's unreviewed art atlas into this PR — but its cost was never recorded: PR 14 and the
+unpushed slice 5b work now hold **two independent implementations of the same chooser**, which will
+conflict in both `minimap.ts` and the `.pp-chart*` block of `panels.css` whenever 5b reaches a PR. That
+reconciliation is a design decision, not a patch, which is why this returned to analysis rather than
+being fixed inline.
+
+**Also established, and material to slices B–D.** The 60 Hz clear-and-rebuild is not confined to the
+chart: `market.ts`, `location.ts` and `booty.ts` re-create their buttons on the same subscription, so
+`Buy`, `Sell`, `Board the ship`, `Disembark` and `Divide the booty` are unpressable by the identical
+mechanism. Scoping slice A's fix to the chart was right, but the analysis had recorded the root cause as
+a chart problem; it is a panel-deck problem. Filed in `ISSUES.md` with the other eight non-blocking
+findings, among them that test 6 cannot fail (optional chaining over a control it never asserts) and
+that the changelog's stated reason for test 6 passing against pre-fix code is wrong — the real reason is
+that the base had no sail control and its type buttons dispatched directly.
+
+Requirement 5 is confirmed undeliverable on this base, as the development stage honestly stated, with one
+correction: of the two forward-compatible lines, `flex: 0 0 auto` is genuinely inert but `overflow-y:
+auto` is not — it establishes a scroll container and a block formatting context. No visual change was
+observed and no baseline moved, so nothing is broken; the record was simply overstated.
+
 ### 2026-09-04 — development, slice A (OPP-19)
 
 Slice A implemented on `agent/feature/20260904-132300-opp17-slice-a-chart-is-usable-again`. The
