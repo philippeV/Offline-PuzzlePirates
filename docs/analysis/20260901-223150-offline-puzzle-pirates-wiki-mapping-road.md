@@ -5775,3 +5775,94 @@ default 5178, which is still squatted by a dead worktree and would have served a
   new element. Post-fix: same row, same input, focus retained, typed value `37` intact across five
   dispatches. Finding 11 pre-fix: save while bilging, load, and the client lands in the port scene.
   Post-fix: it stays in the puzzle, board restored, `Yer voyage be restored.` in the chat.
+
+### 2026-09-04 — independent review, UI sweep slice C (PR 12)
+
+Four lenses, run as separate agents against `48a096b`. **Changes requested: one blocking finding,
+two manifestations, one root cause.** Decisions 174-179.
+
+#### Decision 174 — decision 141 is right, and incomplete: the scene survives, the scene's caches do not
+
+`restore` no longer forces `current` to `'port'`, which is what decision 141 asked for and what the
+slice's own exit criterion tested. But `stage.follow` (`app.ts:96-97`) early-returns when
+`mounted.id === client.scene`, so preserving the scene also means **the mounted scene object is not
+rebuilt**. Every scene that reads world state once at construction, or caches what it has drawn, now
+keeps describing the world that was replaced.
+
+`syncScene` (`client.ts:143-147`) has three rules and none of them touches `'puzzle'` or `'deck'`, so
+both scenes survive a restore intact. Reproduced in the existing Node test environment, no DOM
+needed: two clients on seeds `20260902` and `77777777`, both in the puzzle scene, `a.restore(b.save())`
+leaves `a.scene === 'puzzle'` and `a.save() === b.save()` — the sim is B's, the mounted scene is
+still A's.
+
+- **The puzzle board.** `render` (`puzzle.ts:306-322`) repaints cells only when `signatureOf` changes,
+  and the signature is `moves:starLevel:cascadeIndex:cascade.length:cellSize` — **it does not include
+  the board cells.** `renderedSignature` is reset only in `layout()`, i.e. only on resize, and
+  `follow`'s early return skips the `resize()` that a remount would have run. Both probe clients sit
+  at `moves: 0, starLevel: 0` with no cascade, so the signature is byte-identical across the restore
+  while the cells differ. The old game's tiles stay painted. `renderWater`, `renderHighlight` and
+  `renderPanel` are unguarded and do update, so the waterline and the info panel jump to the new
+  world while the tiles do not. `performAt` (`puzzle.ts:326`) reads `boardOf()` live, so the first
+  click swaps pieces on a board the player cannot see. It self-corrects only once `moves` changes.
+- **The deck.** `createDeckScene` (`deck.ts:80-84`) reads `context.client.state` once and hands
+  `createIsoScene` a fixed `grid`, `heading`, `crew` and `highlights`; `paintBase`/`paintHighlights`/
+  `paintObjects` run once at `isoScene.ts:257-259`. Restoring from the deck therefore keeps the old
+  ship's class name, crew tiles, duty highlight and gangplank state until the player leaves and
+  re-enters. Display-only — `arrive()` re-checks `moored()` live — but it does not self-correct.
+
+Before this PR neither was reachable: `current` was forced to `'port'`, `mounted.id !== client.scene`,
+and the scene was always torn down and rebuilt. This is new, and it is the direct cost of the one
+line the PR deleted.
+
+#### Decision 175 — why the slice's own physical verification missed it
+
+The slice verified finding 11 by saving and loading **within one session**. A same-save round-trip
+restores an identical board, so the stale render and the correct render are the same pixels and the
+cache bug is invisible. The defect needs two *different* worlds, which only a cross-save load
+produces. The exit criterion as written ("save while bilging, load, stay in the puzzle with the board
+restored") is satisfiable by a scene that never re-rendered at all — it tests the scene id, not the
+board. A criterion that says "restored" should be exercised with a board that differs.
+
+#### Decision 176 — the fix belongs at the restore seam, not in each scene
+
+Left to the development stage, but the shape the review would defend: `restore` is the one event that
+replaces the world wholesale under a live scene, so it should invalidate the mounted scene rather
+than have every scene learn to detect a world swap. Forcing a remount at that seam (a generation
+counter `follow` compares, or an explicit remount call after a successful restore) fixes both
+manifestations and every future scene at once. Resetting `renderedSignature` alone fixes the puzzle
+board and leaves the deck stale, so it is the narrower and worse fix.
+
+#### Decision 177 — decision 171's load-bearing claim is false, and the conclusion still holds
+
+`ISSUES.md` records the puzzle-less scene as "not reachable from any save this app produces". It is:
+save migration 2 (`save.ts:14`) mints `puzzle: null`, `save.ts:36` accepts it, so loading a legacy v1/v2
+save and then pressing **Save game** writes a `schemaVersion: 6` save carrying `"puzzle": null`.
+Verified end to end. The gap stays non-blocking, because the resulting scene is degraded rather than
+dead — the Leave button is painted and wired at construction by `hud.ts:110,126-129`, independent of
+`render()`, and `Escape` also works, so the player is never trapped. The wording is corrected in
+`ISSUES.md` rather than the judgement.
+
+#### Decision 178 — the clock-for-dispatch substitution is sound and discharges the exit criterion
+
+Checked independently rather than accepted. `createTicker` is rAF-driven (`ticker.ts:17,33`), and both
+paths converge on the **same function object**: `createPanelDeck` registers `refresh` once
+(`panels.ts:87`), the clock path is `ticker → client.advance → announce()` (`client.ts:87`) and the
+dispatch path is `client.dispatch → announce()` (`client.ts:76`). Identical listener set, identical
+`refresh`, no rebuild on either side. The asymmetries run against the clock path, not for it —
+`advance` announces conditionally and calls `syncScene` first, which `dispatch` does not. Five real
+dispatches are adequate evidence for a defect a single refresh exposes. Decision 172 stands.
+
+#### Decision 179 — what the review checked and found clean
+
+Decisions 139, 140, 142, 143 conform to their contracts. The build-once shape genuinely matches
+`ye.ts` and `chat.ts`; `PanelView` is still satisfied and the panel deck is constructed once per
+`mount()`, so the lifetime-long listeners neither leak nor double-register. `bodyHolds` is
+load-bearing, not dead defensive code — it is what stops `replaceChildren` detaching the focused
+input. Decision 169's premise is verified: `createMarkets` (`world/market.ts:23-28`) builds a stock
+for every commodity and nothing ever removes one, so `replaceChildren` fires only on the first fill.
+Decision 170 introduces no new dispatch value — `trade` always read the map, never the input, and
+`integerOf` (`dom.ts:92-95`) can never return `NaN`; the sim refuses negative units and treats `0` as
+a no-op. All seven island short names are distinct, non-empty and unambiguous. `avatarLabel`,
+`TITLE_SIZE_PX`, `TITLE_COLOUR` and `titleLabel` have zero surviving references, and neither unmerged
+uisweep branch conflicts in code. The record commit `48a096b` is append-only, and the manifests are
+untouched.

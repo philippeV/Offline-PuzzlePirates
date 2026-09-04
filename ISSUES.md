@@ -3893,3 +3893,72 @@ they are now recorded in the analysis document instead.
   `requestAnimationFrame`, and a hidden pane never fires it. Any queue stage that tries to verify
   time-dependent view behaviour by waiting will silently measure nothing, and will report a pass it
   did not earn. Drive real `dispatch` events instead, or front the pane.
+
+### From the independent review of PR 12 (2026-09-04)
+
+- **Correction to the slice C entry above: a puzzle-less save *is* reachable from this app.** The
+  entry claims the blank puzzle scene is "not reachable from any save this app produces". Migration 2
+  (`sim/src/save.ts:14`) mints `puzzle: null` and `save.ts:36` accepts it, so loading a legacy v1/v2
+  save and then pressing **Save game** writes a `schemaVersion: 6` save carrying `"puzzle": null`.
+  Verified end to end. The judgement is unchanged — the scene is degraded, not dead, because the
+  Leave button and `Escape` are wired at construction independently of `render()` — but the one-line
+  `syncScene` guard the entry proposes is more warranted than the entry implies.
+- **`packages/view/src/client/client.ts` is not uncovered, and the scene-preservation change was
+  testable in the existing runner.** The slice C entry says "every file it touches has zero automated
+  coverage". `tests/view/boot.test.ts:66-106` already exercises `restore`, including the rollback
+  path, and `client.scene` is already asserted six times across `boot.test.ts` and `loop.test.ts`.
+  `GameClient` runs under plain `node --test` with no DOM. The review reproduced PR 12's blocking
+  defect in that runner in about five lines. The no-tests decision is right for
+  `packages/view/src/panels/` and wrong for `client.ts`.
+- **"The repo has no DOM test environment" is half true and worth restating accurately.** There is no
+  unit-level DOM emulator — no jsdom, happy-dom or linkedom anywhere, and the runner is
+  `node --test`. But `playwright.config.ts` drives real Chromium at 1280x720 with four page-level
+  baselines in `tests/e2e/__screenshots__/`, and `toHaveScreenshot(page)` captures the DOM panel
+  overlay, so panel text is already under assertion there. The accurate statement is: there is a
+  browser E2E harness, it is not wired into `npm run check`, and there is no unit-level DOM emulator.
+- **The Playwright smoke gate is already red on `agent/develop`, before this PR.** `battle.png` fails
+  on both branches with essentially the same diff (22238 px on the feature branch, 22258 px on the
+  base, against a 0.01 `maxDiffPixelRatio`). Slice C did not cause it and does not worsen it —
+  `port.png`, `deck.png` and `puzzle.png` pass on both, which incidentally proves the `shortNameOf`
+  label change stays inside tolerance and needed no re-blessing. Someone should re-bless or fix
+  `battle.png`; until then the suite cannot signal.
+- **Two pure functions added by this slice are testable today and untested.** `shortNameOf`
+  (`view/src/panels/minimap.ts:157-160`) and `unitsOf` (`view/src/panels/booty.ts:77-79`) both import
+  cleanly under `node --test` — `dom.ts` touches `document` only inside function bodies — and cost one
+  `export` each. `shortNameOf` has real untested edges this slice introduced: `Isle of Keris` to
+  `Keris`, `Edgar's Choice` to `Edgar's Choice` (previously `Edgar's`), and the `words.length === 0`
+  fallback is entirely unexercised.
+- **Decision 170's justification is overstated, and one divergence is now permanent.** The decision
+  says the field and the map are "the same value by construction". They are not: `integerOf` maps
+  `''` to `0` and `'2.5'` to `2`. Previously the next refresh re-stamped `units.value` from the map,
+  so an emptied field visibly snapped back within half a second; now nothing re-stamps, so the field
+  can read empty indefinitely while **Buy** dispatches `0`, which `buyCommodity` accepts as a
+  `{ok: true, poe: 0, units: 0}` no-op. The player presses Buy and gets silence. Nothing is
+  corrupted — this is the same "the panel shows one thing and the sim uses another" class the sweep
+  exists to close, and it is the one instance the sweep introduced.
+- **The booty chest still prints a counter above the list that replaced it.** `panels/booty.ts:49-50`
+  reads `ship.bootyCargoUnits` directly above `lotList(ship.bootyCargo, ...)`, and
+  `materialisePlunder` (`sim/src/world/encounter.ts:83-84`) zeroes the counter and *then* stows the
+  lot. So after a won encounter reaches port the chest reads **"Plundered goods 0 units"** above a
+  populated list — the identical lie decision 139 fixed one section below, still standing twelve
+  lines above the fix. Pre-existing and outside slice C's stated scope; the `unitsOf` helper this
+  slice added at `booty.ts:77-79` fixes it verbatim.
+- **`StockRow`'s new field names read as contradicting their own column headers.**
+  `panels/market.ts:11-12,71-73,92` names the cells `sellPrice` and `buyPrice`, and appends them under
+  the `Buy` and `Sell` headers respectively. The rendering is *correct* — `buyCommodity` charges
+  `sellPricePoe` when the pirate buys — but the old code was an anonymous positional list, and naming
+  these cells market-side under pirate-side headers means the only way to check the panel is to count
+  append order. Pirate-side names (`buyCell`/`sellCell`) would make the file read right.
+- **A latent hardening gap in the sim's trade handler, unreachable today.**
+  `sim/src/world/dispatch.ts:91-116` applies no finiteness or integer guard, and `buyCommodity`'s
+  `units < 0` and `stock.units < units` comparisons are both false for `NaN`. A dispatched
+  `units: NaN` is accepted and produces `NaN` stock, PoE and cargo; `client.save()` then throws
+  `simulation state holds safe integers only` (`sim/src/hash.ts:42`) and the session becomes
+  permanently unsaveable. Unreachable from the UI because `integerOf` clamps to `0` and the harness
+  validates with `requiredCount` — so the view is the backstop, not the sim. A
+  `Number.isSafeInteger(units)` guard would make that structural rather than incidental.
+- **Parallel review lenses sharing one checkout corrupted two lenses' reads.** Two of the four lenses
+  ran `git checkout` on the shared working tree mid-review, so other lenses briefly read
+  `agent/develop` content while believing they were on the feature branch; one lens's first probe run
+  silently measured the base branch and had to be redone in an isolated worktree. Concurrent agents
+  that need a specific commit must each use their own `git worktree`, never the shared checkout.
