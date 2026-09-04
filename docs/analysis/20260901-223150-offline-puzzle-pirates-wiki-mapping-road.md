@@ -5984,3 +5984,65 @@ save whose board differs from the one on screen while in the puzzle scene and se
 the same from the deck with a different ship. `npm run check` must stay at 578 pass plus the new
 test. The Playwright smoke gate is already red on `agent/develop` for `battle.png` and is not this
 slice's to fix.
+
+### 2026-09-04 — development, the mounted scene follows the world (cycle 1)
+
+Implements decisions 180-185 on the slice C branch, pushed to PR 12. Decisions 186-189. The design
+was taken from the cycle 1 analysis unchanged; what follows records how it landed and one thing the
+verification method had to get right that the task file did not anticipate.
+
+#### Decision 186 — the epoch is a private field behind a getter, and `follow` keeps its copy in the stage closure
+
+`GameClient` already separates storage from its read surface — `sim`/`state`, `lines`/`log`,
+`current`/`scene` — so the epoch follows that idiom: `private worldEpoch` with `get epoch()`. It
+moves in exactly the two places decision 182 names, `restore` and `reset`.
+
+On the consuming side the mounted epoch is a `let mountedEpoch` in the `createStage` closure beside
+`mounted`, not a field on the `Scene` interface. Putting it on `Scene` would have meant touching all
+four scene factories to carry a value none of them use, for no gain — `follow` is the only reader.
+The whole change is 9 lines of source across two files.
+
+#### Decision 187 — a resize masks this defect, so the proof had to hold layout still
+
+This is the finding the next agent should not have to rediscover. `createPuzzleScene` resets
+`renderedSignature` in `layout()`, so **any resize repaints the board from current state** — a stale
+scene object included. The first attempt at physical proof was therefore worthless: the browser pane
+reports `innerWidth` 0 until a screenshot forces layout, the remount then triggered `resize()`, and
+the board changed for a reason that had nothing to do with the fix.
+
+The proof was redone with the layout settled *before* the load — dispatch a `resize` event, confirm
+`innerWidth` is 1280, screenshot, then `restore` — so the only thing that changes across the two
+screenshots is the board's content. Every claim below was then run twice, once with the fix and once
+with the two source files reverted to the pre-fix commit and the page reloaded, at identical layout.
+
+#### Decision 188 — what the physical proof established, both criteria, both with a pre-fix control
+
+Cross-save preconditions were exactly the ones decision 185 requires: seeds `20260902` and
+`77777777`, both at `moves` 0 and `starLevel` 0, so `signatureOf` collides while the boards differ,
+and the scene id stayed `puzzle` across the load so the old early-return would have fired.
+
+| Case | Pre-fix | With the fix |
+| ---- | ------- | ------------ |
+| Puzzle, cross-save load | state reports the new board, canvas still paints the old one, pixel-identical to before the load; only the DOM bilge readout moves | canvas repaints, row 0 reads `3,2,1,2,2,1,0,0,2,2,1,1`, matching the loaded world |
+| Deck, load a different hull | heading still reads `Sloop` on the sloop hull while state reports `war-brig` | heading reads `War brig` on the larger hull, with its own crew and highlights |
+
+The deck save was produced the way the slice B test found: **Ye > Save game**, edit `"shipClass"` in
+the save text, **Load game**. No devtools, so this is a route a player has.
+
+`reset` was not exercised in the browser. Its epoch move is pinned by the unit test, and decision
+181's point is that the defect there is invisible today because the opening is deterministic — there
+is nothing on screen to see. Stated rather than glossed.
+
+#### Decision 189 — the parallel test gate is unreliable on this box; the serial run is the signal
+
+`npm run check` ran **all six gates green from cold in one pass** early in this run: exit 0, 581 pass
+0 fail in 22.1s, which is the 578 baseline plus the three new tests. A later re-run of the identical
+tree hung for ten minutes and then failed whole test *files* with no assertion failures — the
+`spawn`/ENOMEM signature the needs-input advisory describes, with the box at 98.9% commit charge and
+104 node processes.
+
+That was confirmed to be environmental, not a regression: `tests/view/clock.test.ts` passes 5/5 run
+on its own, the five static gates and `npm run build` all pass individually, and
+`node --test --test-concurrency=1` over the whole suite is **581 pass / 0 fail, exit 0**. The
+parallel forking is what the machine cannot sustain, not the code. CI is the authority on the pushed
+head.
