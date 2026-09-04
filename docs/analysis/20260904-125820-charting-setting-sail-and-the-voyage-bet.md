@@ -384,6 +384,82 @@ allowed an immediate re-chart.
 The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
 voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.
 
+### 2026-09-04 — independent review, slice B repair (OPP-20), PR 15, cycle 1
+
+Four lenses over `f0fb4cc` only. **Approved — no blocking findings.** The cycle 0 blocker is closed
+and the fix is the right one. Eight non-blocking findings went to `ISSUES.md`.
+
+**The load-bearing claims were re-derived from source, not accepted from the commit message.**
+
+- **L28's placement is correct and sufficient, and the argument is stronger than the changelog
+  states it.** `VoyagePhase` is a closed union of exactly two values (`world/state.ts:10`) and
+  `.phase` is assigned in exactly one place in the whole of `packages/*/src` — `world/dispatch.ts:82`,
+  inside `sail()`. So the pre-existing `under-way` refusal eliminates one of the two phases and
+  `charted` is the only phase that ever reached `state.voyage = null`. Separately,
+  `pirate.atIslandId = null` is also written in exactly one place, `world/dispatch.ts:83`, the line
+  immediately after it — therefore `charted` implies `atIslandId !== null`, and the new guard at
+  `:97` **cannot shadow the `not-at-island` refusal below it**. Every pre-existing refusal reason is
+  unchanged, which is what the decision claimed. Placing the guard first, by contrast, genuinely
+  would change two refusal reasons — so the chosen placement is the strictly safer one, not merely an
+  equivalent one.
+
+- **The `running` discriminator is exact, not incidental.** `BattleOutcome` is
+  `'running' | 'player-won' | 'player-lost' | 'disengaged'` (`battle/state.ts:9`);
+  `concludedEncounterOf` (`world/session.ts:26`) returns null exactly when the outcome is `running`,
+  and `settleEncounter` clears `state.battle` unconditionally for all three concluded values. So
+  `outcome === 'running'` is the precise complement of "settleable" and there is **no
+  concluded-but-unsettled outcome the guard misses** — a blanket `state.battle !== null` guard would
+  have been wrong in the other direction, blocking the settle path `abandon()` reaches at `:102`.
+
+- **The fix is complete for its class.** `state.voyage` is assigned at exactly three sites
+  (`dispatch.ts:58, 103, 130`); `charter()` refuses outright if a voyage already runs, and both
+  clears are now guarded and both call `settleConcludedEncounter` first. `state.battle = null` exists
+  at exactly one site in the repository, `world/session.ts:40`. Nothing in `packages/view` or
+  `packages/harness` writes either field. No unrecorded stranding path was found.
+
+- **The L29 revert is complete.** `f0fb4cc` is three files, **69 insertions and zero deletions** —
+  the zero proves no rename, reformat or tidy-up rode along. `packages/sim/src/commands.ts` and
+  `packages/view/src/client/log.ts` have **no diff hunks at all**, and `voyage-not-under-way` has
+  **zero occurrences anywhere outside `docs/`**, where it survives only as the prose recording the
+  withdrawal. `REFUSALS` is typed `Record<RejectionReason, string>`, so an orphan in either direction
+  would fail the build; union and map are at exact parity. No trace leaked.
+
+- **The test is a genuine guard, proved by execution, not by reading.** With the guard line deleted
+  the new test fails and the pre-fix behaviour is visible in the assertion output — the abandon is
+  *accepted* and the voyage cleared with the battle still running — while the other 24 tests in the
+  file still pass. This lineage had reason to check: slice A's cycle 1 review found a guard that
+  stayed green against five reintroductions of its own defect. This one is not that.
+
+**What the review found that the development step had not recorded**, all filed as non-blocking:
+the guard's outcome discriminator and L28's placement are each pinned by **no** test (both mutations
+leave 608/608 green), the new test's `notEqual(..., null)` assertions survive a mutant that refuses
+correctly while corrupting both the battle and the voyage, and the soak driver — which asserts that
+battles resolve — never dispatches `voyage.abandon` at all, which is why nothing caught the cycle 0
+blocker earlier.
+
+**One correction to the record.** The changelog entry below overstates the defect it repairs, and it
+should not be used to triage the still-open `port()` gap. It says the strand was permanent, plunder
+lost, and `inBattle` stuck true; none of the three holds. `inBattle` is computed as
+`outcome === 'running'` (`view/src/client/client.ts:82`), so it goes false the moment the battle
+concludes and the view returns to `deck` (`:165`); `charter()` has no battle guard and `abandon()`
+leaves the pirate in port, so a new chart is always reachable; and once a voyage exists again the
+next tick settles the stale battle and materialises the plunder **late rather than never**. The cost
+was a bounded window — phantom brigand hull, encounter spawning suppressed — which is the same shape
+already recorded for the `port()` variant. The fix remains correct; only its stated severity was
+wrong.
+
+**Gates confirmed rather than assumed**, from cold in a clean worktree: `npm run check` exit 0,
+**608 pass / 0 fail**, run twice with identical results and no `purity.test.ts` flake; `npm run smoke`
+4 passed with all four baseline PNGs md5-identical before and after, so nothing was re-blessed. The
+single CI check on `f0fb4cc` is the `push`-triggered run; the `pull_request` run cannot fire while
+the PR is `CONFLICTING`, and that is expected rather than missing coverage.
+
+**States noted, not treated as defects in this diff:** PR 15 remains `CONFLICTING` against
+`agent/develop` and was deliberately not rebased; the `.pp-chart-sail` → `pp-chart-confirm` CSS
+hazard remains live and is not fixable from this branch; the `port()` phase gap remains open and
+filed. None is a finding against `f0fb4cc`.
+
+
 ### 2026-09-04 — development, slice B repair (OPP-20), cycle 1
 
 Repaired on the existing branch so PR 15 updates in place — no second branch, no second PR, no

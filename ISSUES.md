@@ -4,6 +4,90 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of the slice B repair (OPP-20), PR 15, cycle 1
+
+Four lenses over `f0fb4cc` only — the one-line `battle-running` guard in `abandon()`, its test and
+the changelog. **No blocking findings; the cycle 0 blocker is genuinely closed.** The mechanism was
+re-derived from source rather than accepted: `VoyagePhase` is a closed two-value union and `.phase`
+is written in exactly one place (`world/dispatch.ts:82`), so `abandon()`'s pre-existing `under-way`
+refusal leaves `charted` as the only phase reaching the clear; `pirate.atIslandId = null` is written
+in exactly one place (`:83`, the line after it), so `charted` implies at-island and the new guard
+cannot shadow `not-at-island`; and `concludedEncounterOf` (`world/session.ts:26`) returns null
+exactly when the outcome is `running`, so `running` is the precise complement of "settleable" and
+the guard has no concluded-but-unsettled hole. What follows is what the lenses substantiated and
+judged not worth stopping for.
+
+- **The guard's outcome discriminator is pinned by nothing, and the over-refusal case has no test at
+  all.** Dropping `&& state.battle.outcome === 'running'` from `world/dispatch.ts:97` leaves **all
+  608 tests green**, confirmed by execution. That mutation is a real regression in mirror image:
+  `abandon()` would then refuse a charted voyage whose battle has *concluded*, where today it
+  accepts and calls `settleConcludedEncounter`. Every `voyage.abandon` site in the suite
+  (`tests/world/dispatch.test.ts:139, 286, 366, 387, 399` and `tests/harness/world-commands.test.ts:17`)
+  either sets no battle or sets a running one, so **nothing anywhere proves the guard does not
+  over-refuse**. It starts to matter the first time someone tightens or generalises the predicate.
+  Cheapest close: a sibling test that charts, sets a `player-won` battle, and asserts `voyage.abandon`
+  is *accepted* and the battle settled — which would also close the `settleConcludedEncounter`
+  coverage gap this file already records above.
+
+- **Decision L28's placement argument is asserted by no test either.** Moving the guard to the very
+  top of `abandon()`, before the null-voyage check, leaves **608/608 green** — yet that position is
+  exactly the behaviour change L28 says it deliberately avoided, reporting `battle-running` instead
+  of `voyage-already-under-way` for "under way and in a battle" and instead of `no-voyage-running`
+  for "no voyage and a battle running". The existing test at `tests/world/dispatch.test.ts:381`
+  cannot defend the ordering because it never sets a battle. One added line
+  (`state.battle = createBattle([], false);`) in that test would pin L28's whole argument.
+
+- **The new test's two `assert.notEqual(..., null)` lines prove only non-nullness, not integrity.**
+  A mutant that returns the correct refusal while concluding the battle as a loss, emptying its
+  berths and wiping the voyage's route on the way out keeps the **whole 608-test suite green**. The
+  stronger idiom is seven lines away in the same file: "a refused porting settles nothing…"
+  (`tests/world/dispatch.test.ts:537-568`) asserts `state.battle?.outcome` and deep-equals the
+  surviving hulls. Asserting `outcome === 'running'` plus surviving hulls — and ideally continuing to
+  conclude the battle, re-issue `voyage.abandon` and assert it is now accepted with plunder
+  materialising — would kill this mutant and the discriminator mutant together.
+
+- **The changelog committed in this very commit overstates the defect it repairs, and the record
+  should be corrected before anyone triages the still-open `port()` gap by it.** It says the strand
+  was permanent, that plunder was lost, and that `inBattle` was stuck true. None of the three holds.
+  `client.ts:82` computes `inBattle` as `outcome === 'running'`, so it goes **false** the moment the
+  battle concludes, and `client.ts:165` then returns the view from `battle` to `deck`; `charter()`
+  (`world/dispatch.ts:48-58`) has no battle guard and `abandon()` leaves the pirate in port, so a new
+  chart is always available; and once a voyage exists again `concludedEncounterOf` is reachable, so
+  the next tick settles the stale battle and **materialises the plunder late rather than losing it**.
+  The real cost is a bounded window — a phantom brigand hull in `state.ships` and encounter spawning
+  suppressed while `state.battle !== null` — which is the same shape this file already records for
+  the `port()` variant ("it self-heals on the first tick of the next voyage"). The fix is right
+  either way; only its stated severity is wrong.
+
+- **The soak suite cannot catch this class of defect, which is why it did not.** `tests/world/soak.test.ts`
+  tracks `battleRunning` and asserts voyages terminate with their battles resolved, but the soak
+  driver contains **zero** occurrences of `voyage.abandon` — the entire abandon path is outside its
+  reach. Adding `voyage.abandon` to the driver would close the family rather than this one line of
+  it, and would have caught the cycle 0 blocker before review did.
+
+- **The predicate is now duplicated verbatim at three sites.**
+  `state.battle !== null && state.battle.outcome === 'running'` appears character-identical at
+  `world/dispatch.ts:97`, `world/dispatch.ts:120` and `world/voyage.ts:59`, with
+  semantically-equivalent negations at `world/session.ts:26`, `battle/session.ts:58` and
+  `view/src/client/client.ts:82`. A `battleRunning(state)` predicate would be a genuine readability
+  win — but extracting it inside a one-line repair commit is precisely the unrelated refactor the
+  project's rules forbid. **Filed deliberately rather than done.**
+
+- **`abandon()`'s `not-at-island` branch (`world/dispatch.ts:100`) is dead code.** `charted` implies
+  `atIslandId !== null` by the single-write argument above, so the branch was unreachable before this
+  commit and remains so after it. Pre-existing, not introduced here, and harmless — but it is the
+  kind of guard a reader takes as evidence that the state it names is reachable.
+
+- **The load door does not check that a battle has a voyage to belong to.** `refuseSpoiltState`
+  (`packages/sim/src/save.ts:119-130`) validates the voyage and the battle independently and never
+  the cross-field invariant `battle !== null ⇒ voyage !== null`, so a save carrying a running battle
+  with a null voyage — exactly the shape this commit exists to prevent — serialises and deserialises
+  clean at schema 7. Judged **not** worth a migration: the state loads, plays and self-heals on the
+  next chart, and there is no autosave, so a player would have to hand-copy a save during the window.
+  The structural point stands for later: this invariant is now enforced pointwise by separate guards
+  in `abandon()` and `port()`, by nothing at `battle.start`, and by no single assertion anywhere.
+
+
 ## 2026-09-04 — independent review of slice B (OPP-20), PR 15
 
 Four lenses over `ae8edbd..35665ca`. One blocking finding went back to analysis: `voyage.abandon`
