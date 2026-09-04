@@ -92,14 +92,16 @@ function createStage(
 ): Stage {
   const context: SceneContext = { client, atlas, emit: (intent) => act(client, panels, intent) };
   let mounted: Scene | null = null;
+  let mountedEpoch = -1;
 
   function follow(): void {
-    if (mounted !== null && mounted.id === client.scene) return;
+    if (mounted !== null && mounted.id === client.scene && mountedEpoch === client.epoch) return;
     if (mounted !== null) {
       application.stage.removeChild(mounted.view);
       mounted.destroy();
     }
     mounted = SCENE_FACTORIES[client.scene](context);
+    mountedEpoch = client.epoch;
     application.stage.addChild(mounted.view);
     resize();
   }
