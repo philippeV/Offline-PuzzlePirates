@@ -4038,3 +4038,15 @@ follows is what the lenses substantiated and judged not worth stopping for.
   The file is untouched by this commit and exercises none of the code it changes, and CI is green on
   `6ff0904`. Further corroboration for the standing node-process-exhaustion advisory: the gate is now
   unreliable in *both* its parallel and serial forms on this machine.
+
+- **The deck diorama does not scale with the vessel, and `STATION_COUNTS` is written as if it did.**
+  `scenes/deck.ts:39-47` reads `sailStations`/`carpStations`/`bilgeStations`/`gunStations` off the
+  ship class, but `stationsOf` (`:122-124`) consumes them only as `count > 0`. Every one of the
+  fourteen classes has all four counts non-zero, so the filter can never drop a slot: a war brig's
+  nine sail stations and a sloop's three both render one mast, on the same tile, inside the same
+  hard-coded 14x9 hull (`:16-18`; `buildDeckGrid` at `:152-162` takes no ship class). Crew is the
+  station set minus `playerStation`, so `pirateCap` (30 against 7) and `crewCount` (22 against 5) are
+  never drawn either. Found while physically testing the slice C-repair, where loading a `war-brig`
+  save correctly changed the heading and correctly changed nothing else. Not a defect in anything
+  shipped — the class simply has no geometric consequence yet — but the counts read as live inputs
+  and are not, which is the kind of dead expressiveness a later reader trusts.

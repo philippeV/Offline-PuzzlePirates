@@ -6118,3 +6118,125 @@ to `PORT_SPAWN` and re-centres the camera on New game or Load, because `createIs
 `standing = definition.spawn` at construction and `follow` calls `resize`. Decision 183 authorises it
 — scene-local state is meant to be discarded — but it is a visible behaviour change, and it is the
 cheapest thing to look for on screen.
+
+### 2026-09-04 — physical test, the slice C-repair (PR 12, cycle 1)
+
+Task `20260904-053010-test-uisweep-c-repair-mounted-scene-follows-the-world`, against `e464f35` in
+the repository working tree, `vite packages/app` on **port 5197** (5178 is still squatted), driven
+in a real browser at 1280x720. **No blocking failure. PR 12 merged to `agent/develop`.** One
+non-blocking finding is in `ISSUES.md` under today's heading.
+
+Decision 192 said it plainly: the suite cannot detect this fix's removal, so the screen was the only
+evidence available. Every claim below was driven through the shipped UI and photographed.
+
+#### The layout was settled before anything was loaded
+
+Decision 187's trap was taken seriously, because it is what made the development run's first proof
+worthless. In each scene: `resize` dispatched, `window.innerWidth` confirmed to read **1280** and not
+`0`, screenshot taken, and only then the load. The pane was fronted for every timing-sensitive step,
+so `createTicker`'s rAF actually fired — confirmed by `client.tick` advancing between reads
+(802 to 1106, 244 to 494) rather than assumed.
+
+#### 1. The puzzle cross-save load — the original defect, and the strongest proof available
+
+Seeds `20260902` and `77777777`, both at `moves` 0 and `starLevel` 0 at the same `cellSize`, so
+`signatureOf` collides and `client.scene` stays `puzzle` across the load. The save was produced
+through the player's own route — **Ye > Save game** on a second tab, real mouse click, 9378
+characters — and pasted into the first tab's textarea, where **Load game** was pressed with a real
+mouse click.
+
+- Status read *"Yer voyage be restored."*, `client.epoch` moved 0 to 1, `client.scene` stayed
+  `puzzle`, `moves` and `starLevel` stayed 0. The signature genuinely collided.
+- Board state after the load read row 0 as `3,2,1,2,2,1,0,0,2,2,1,1` — decision 188's recorded value
+  for seed `77777777`, reached here by an independent route.
+- **The canvas repainted, and to the right board.** The post-load screenshot is *pixel-identical* to
+  the same board rendered natively in the other tab at the same settled layout. That is the claim
+  decision 188 could only make against a hand-built pre-fix control; here it is a direct positive.
+- Reproduced a second time from a fresh page, to rule out a one-off.
+
+**The board is also playable afterwards, which is the half of the defect that would have bitten a
+player.** A real click on a tile of the loaded board incremented `moves` 0 to 1 and swapped the pair
+under the cursor. Pre-fix, `performAt` read the live board while the canvas showed the old one, so
+that same click moved pieces the player could not see.
+
+#### 2. The deck, loading a different hull
+
+**Ye > Save game**, `"shipClass":"sloop"` edited to `"war-brig"` in the textarea, **Load game** — no
+devtools, exactly the route decision 188 used. The canvas heading followed, `Sloop` to `War brig`,
+with `epoch` 0 to 1 and the scene id unchanged at `deck`.
+
+The hull did **not** change shape, and that is correct rather than a failure: the deck is a fixed
+diorama. `DECK_WIDTH`/`DECK_HEIGHT` are constants (`scenes/deck.ts:16-18`), `buildDeckGrid` takes no
+ship class at all (`:152-162`), and `STATION_COUNTS` (`:39-47`) is consumed only as a `count > 0`
+presence predicate (`:122-124`) — every one of the fourteen classes has all four counts non-zero, so
+all seven station slots always render at the same tiles. Crew is the station set minus
+`playerStation` (`:140-145`); `highlights` is `playerStation` alone (`:147-150`); `pirateCap` and
+`crewCount` are never read by the view.
+
+**193. On the deck, the ship class reaches exactly one pixel — the heading — so "the hull follows"
+is a claim about that string and nothing else.** Recorded because the task asked for heading *and*
+hull, and a future stage reading only that sentence would look for a bigger boat that this renderer
+has never drawn. The gap between `STATION_COUNTS` and its use is in `ISSUES.md`.
+
+#### 3 and 4. `reset`, and the avatar snap — the behaviour no stage had seen
+
+**Ye > New game** in the port, real click. Status read *"A fresh ocean rolls out."*, `epoch` moved
+0 to 1, `client.tick` reset (1106 to 244, then climbing again), scene id stayed `port`, and — as
+decision 191 predicted by construction — every visible string was unchanged: heading `Alkaid
+Island`, facts `Scurvy Jane` / `Alkaid Island` / `bilging`.
+
+So the seed-invariance held, and the visible evidence was the item decision 192 flagged instead. The
+pirate was walked away from spawn first — three tiles down the island, clearly displaced from the
+jetty — and **New game snapped it back to `PORT_SPAWN` with the camera re-centred**, in the same
+frame as the world swap. **Load did the same** from a one-tile displacement, `epoch` 0 to 1.
+
+It reads as deliberate, not glitchy: the scene is rebuilt whole, and the result is indistinguishable
+from a freshly opened port — no partial frame, no drift, no torn camera in any screenshot taken
+immediately after the click. Worth saying plainly what that costs a player, since nothing else has:
+**a load now discards where you were standing.** That is decision 183's intent, and it is defensible,
+but it is a real change to what New game and Load feel like.
+
+#### 5. The stranded-scene hazard behaves exactly as filed
+
+A save with `"atIslandId"` edited to `"nowhere"`, loaded through the panel.
+
+- The player sees a clean refusal: *"That save be spoiled: no island named nowhere"*.
+- The world rolled back and kept running — `pirate.atIslandId` still `alkaid`, scene `port`,
+  `client.tick` still climbing.
+- The Ye facts block was read **empty (0 rows) in the instant after the click** and had healed by the
+  next screenshot, which is `ISSUES.md`'s "at most 30 ticks — about half a second", observed rather
+  than reasoned.
+- **The canvas was untouched and the console held zero errors** — only Vite's HMR debug lines — so
+  there was no per-frame error and no black canvas. The review's reachability analysis stands.
+
+**194. The epoch's rollback path is confirmed on screen, not just in the unit test.** `client.epoch`
+read 1 both before and after the refused load, so `restore`'s catch restored `worldEpoch`
+(`client.ts:132`) alongside the sim; had it not, the counter would have advanced over a rolled-back
+world and every later `follow` would have compared against a phantom epoch. That is the one
+consequence of decision 186 that `boot.test.ts` covers and the screen agrees with.
+
+#### The gates were taken from CI, deliberately
+
+`npm run check` was **not** re-run locally. The task's own ground conditions record the gate as
+unreliable on this box in both forms — the parallel run aborts whole files under memory pressure, the
+serial run crashes `tests/gates/purity.test.ts` with `0xC0000409` in a spawned eslint — and the box
+was measured at **98.8% commit charge with 105 `node.exe` processes** before this run started. CI is
+green on `6ff0904`, and `e464f35` adds only `ISSUES.md` and this document. Re-running a gate whose
+failures would not be attributable, on a machine that cannot reliably spawn a child process, would
+have produced noise and risked the physical pass; the physical pass is what this stage exists for.
+
+One thing was fixed rather than reported: an orphaned Vite dev server from an earlier queue run
+(PID 22724, `opp-slice5` scratchpad, started 03:23) was still holding memory. It is the queue's own
+leaving, so killing it needed no human decision, and it is the class of process the 03:45 note to the
+standing advisory identified as the expensive one.
+
+#### What could not be isolated, and is not charged to this slice
+
+Click-to-walk in the port covered about one tile per click for most of the run, while an early click
+in the same session walked three. `client.log` recorded **no** `NO_WALK_REFUSAL` for any of them, and
+a click-coordinate probe confirmed the taps land where intended (screenshot `(430,315)` arrives as
+page `(688,504)`, correctly scaled). The same short walk occurs on a **fresh page at `epoch` 0 that
+has never remounted**, which is what rules the remount out as the cause — so this is not the
+repair's, and it is most likely `pathBetween`'s bound on `camera.visibleTiles()` interacting with the
+pane's rAF pacing rather than a defect at all. Named here, unresolved, so that a future stage that
+sees it does not mistake it for a regression this commit introduced.
