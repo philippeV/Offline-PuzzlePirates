@@ -21,6 +21,7 @@ import {
 import type { PanelContext } from './panels.ts';
 
 const HERE_MARK = '✕';
+const GENERIC_NAME_WORDS = ['isle', 'island', 'rock', 'of'];
 
 export function createMinimap(context: PanelContext, host: HTMLElement): PanelView {
   const client = context.client;
@@ -154,6 +155,6 @@ function progressPerMilleOf(ticks: number, required: number): number {
 }
 
 function shortNameOf(name: string): string {
-  const first = name.split(' ')[0] ?? name;
-  return first;
+  const words = name.split(' ').filter((word) => !GENERIC_NAME_WORDS.includes(word.toLowerCase()));
+  return words.length === 0 ? name : words.join(' ');
 }

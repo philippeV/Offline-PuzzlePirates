@@ -107,7 +107,6 @@ export function createDeckScene(context: SceneContext): Scene {
     grid,
     spawn: DECK_SPAWN,
     heading: ship === undefined ? UNKNOWN_DECK_HEADING : shipClassOf(ship.shipClass).name,
-    avatarLabel: 'Ye',
     avatarActions: AVATAR_ACTIONS,
     crew: crewTilesOf(stations, ship),
     highlights: highlightsOf(stations, ship),

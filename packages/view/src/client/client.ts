@@ -22,6 +22,7 @@ export class GameClient {
   private sim: Sim;
   private lines: LogLine[] = [];
   private current: SceneId = 'port';
+  private worldEpoch = 0;
   private readonly listeners = new Set<() => void>();
   private quietTicks = 0;
 
@@ -51,6 +52,10 @@ export class GameClient {
 
   get scene(): SceneId {
     return this.current;
+  }
+
+  get epoch(): number {
+    return this.worldEpoch;
   }
 
   get log(): readonly LogLine[] {
@@ -113,10 +118,10 @@ export class GameClient {
 
   restore(text: string): void {
     const restored = Sim.load(text);
-    const running = { sim: this.sim, lines: this.lines, scene: this.current };
+    const running = { sim: this.sim, lines: this.lines, scene: this.current, epoch: this.worldEpoch };
     this.sim = restored;
     this.lines = [];
-    this.current = 'port';
+    this.worldEpoch += 1;
     try {
       this.syncScene();
       this.announce();
@@ -124,6 +129,7 @@ export class GameClient {
       this.sim = running.sim;
       this.lines = running.lines;
       this.current = running.scene;
+      this.worldEpoch = running.epoch;
       throw failure;
     }
   }
@@ -133,6 +139,7 @@ export class GameClient {
     for (const command of openingCommands(this.opening, this.balance)) this.sim.dispatch(command);
     this.lines = [];
     this.current = 'port';
+    this.worldEpoch += 1;
     this.syncScene();
     this.announce();
   }

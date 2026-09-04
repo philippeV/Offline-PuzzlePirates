@@ -5671,3 +5671,572 @@ orphaned `node.exe` processes, and `node --test` children died with `spawn UNKNO
 subtest, with zero assertion failures among them. GitHub CI ran `npm run check` on `323594e` twice,
 both success. That is the measurement of record for this merge. The orphaned processes were left
 untouched: they belong to other sessions and reaping them is the human's call, not an agent's.
+
+### 2026-09-04 — development, UI sweep slice C: the panels report what is actually there
+
+Task `20260903-235502-uisweep-c-panels-report-what-is-there`, branch
+`agent/feature/20260903-235502-uisweep-c-panels-report-what-is-there` from `26ae1a7`, which is
+`agent/develop` with slice B merged. Third of the four slices. Five view repairs, one commit each,
+no sim change and no schema change.
+
+#### What was built
+
+| Finding | Commit    | The lie the player was told                                              |
+| ------- | --------- | ------------------------------------------------------------------------ |
+| 3       | `365baf3` | A hold of 0 units printed directly above the list of goods in that hold  |
+| 6       | `c642455` | The Units field destroyed twice a second, mid-keystroke                  |
+| 11      | `e4e1052` | A save taken while bilging reopened in port                              |
+| 10      | `01c4dfa` | `Isle of Keris` rendered as `Isle`                                       |
+| 9       | `ac84a95` | The radial drew the object's own name a second time, 54px below the first |
+
+Findings 3, 10 and 9 landed as decisions 139, 142 and 143 describe them. Finding 11 is decision 141
+exactly: one deleted line in `restore`, no `SceneId` in `WorldState`, no migration, and the
+candidate-then-swap rollback still captures and restores the scene. Finding 6 is decision 140: the
+build-once, refresh-in-place shape `ye.ts` and `chat.ts` already use.
+
+#### Decisions taken without a human, continuing the series
+
+**167. `shortNameOf` drops generic words; it does not show the whole name.** Decision 142's heading
+says names are "no longer truncated to their first word" and notes the CSS already wraps, which
+reads as showing the full name — but 142's own exit list, and the spec, both require `Isle of Keris`
+to read as `Keris`. Dropping `isle`, `island`, `rock` and `of` satisfies both: `Keris` is what the
+tile shows, and the four names that were already correct are unchanged. There are seven islands, not
+the five a first grep suggests — `Edgar's Choice` and `McGuffin's Isle` carry apostrophes. Both are
+improved by the rule: `McGuffin's Isle` reads as `McGuffin's`, and `Edgar's Choice` now keeps both
+words where it used to read `Edgar's`. That second case is the one 142's wrapping note was for.
+
+**168. `avatarLabel` is removed with the title it fed.** Decision 143 records that the title
+parameter "has no other use". `IsoSceneDefinition.avatarLabel` had no other use either — the avatar
+sprite draws no label of its own, so the field existed solely to be passed to `radial.show`. Leaving
+it would have left dead state behind this slice's own change.
+
+**169. The market panel's variable row set is reconciled positionally, not by hiding rows.**
+`market.ts` skips a commodity whose stock is `undefined`, so the row set is nominally variable —
+something neither `ye.ts` nor `chat.ts` has to handle, because their variable regions hold nothing
+focusable. Marking absent rows `hidden` would have left extra `<tr>` elements in the DOM and broken
+the identical-output constraint, so `fillRows` compares the wanted rows against `body.children`
+positionally and calls `replaceChildren` only when they genuinely differ. In practice it never fires
+after the first refresh: `createMarkets` builds a stock for every `COMMODITY_ID`.
+
+**170. The refresh path no longer re-stamps the input's value, and that is a deliberate behaviour
+change.** The old code re-derived `units.value` from `wantedUnits` on every refresh, so emptying the
+field stamped `0` back into it a moment later. That stamping *is* the defect — it is what destroyed
+the caret — so it was not preserved. The value is written once at build time; thereafter the field
+and the map are the same value by construction, because only the input's own listener writes the
+map. No `activeElement` check and no caret save/restore is needed, because nothing overwrites it.
+
+**171. A `puzzle` scene can now survive a restore onto a world with no puzzle. Filed, not fixed.**
+`syncScene`'s three rules cover every *legality* violation — `battle` without a battle, `port` while
+at sea — but none consults `state.puzzle`, which is legally `null` (the v2 migration mints
+`puzzle: null`). A foreign or legacy save loaded while bilging therefore keeps the puzzle scene with
+no board: `render` clears its graphics and returns, leaving a blank board and a frozen info panel.
+It is not blocking and it is not new — `canEnter('puzzle')` never checked `state.puzzle` either, so
+clicking **Play Bilging** on a puzzle-less world already reaches the same dead scene — and every
+save this app produces carries a live puzzle, because both openings dispatch `puzzle.start` at boot
+and no `puzzle.stop` command exists. The one-line fourth rule that would close both is named in
+`ISSUES.md` rather than taken here, because it is a pre-existing hole this slice merely walks past.
+
+**172. Verification was physical and driven through the real dispatch path, because the clock does
+not run in an unattended pane.** `createTicker` is `requestAnimationFrame`-driven and the browser
+pane in a queue run is hidden, so rAF never fires and the game clock is stopped. A first attempt to
+hold focus "through ten seconds of running clock" was therefore vacuous and was discarded rather
+than reported. Refreshes were instead driven by firing real `click` events at a Buy button, which
+runs the same `dispatch` then `refresh` path the clock would run, while leaving focus where it was.
+Five dispatches moved iron stock 500 to 495, proving the refreshes happened.
+
+**173. The environment advisory's premise did not survive being tested.** The advisory raised at
+03:18 states this box cannot install or run the suite. Half an hour later `npm install` completed in
+two minutes with `package-lock.json` untouched, `npm run check` ran all six gates green from cold in
+one pass (exit 0, 578 pass, 0 fail, 22.9s), and `npm run build` was exit 0 — with the commit charge
+still about 96%. Four orphaned `vite` servers left by earlier queue runs were killed first; those
+are the queue's own leavings and the contract requires an agent not to leave them. The roughly 90
+orphaned `desktop-commander` MCP servers were left alone, as they belong to other sessions and
+reaping them is the human's call.
+
+#### Verification, run by this stage rather than inherited
+
+All six gates from cold, one pass: `npm run check` exit 0, 578 pass, 0 fail. `npm run build` exit 0.
+`578` is exactly the post-slice-B baseline; this slice adds no tests, which is the constraint the
+slice C entry records — every file it touches has zero automated coverage and the repo has no DOM
+test environment, and adding one is a larger decision than this slice.
+
+Physically, in a real headless Chromium at 1280x720 against a Vite server on port **5197** — not the
+default 5178, which is still squatted by a dead worktree and would have served another checkout:
+
+- **Finding 3.** Bought 1 Hemp for 16 PoE; the purse fell 2000 to 1984 and the Cargo hold read
+  `1 units`. It read `0` before.
+- **Finding 10.** All seven island tiles read correctly: `Alkaid`, `Doyle`, `Edgar's Choice`,
+  `Keris`, `Marlowe`, `McGuffin's`, `Sayers`.
+- **Finding 9.** Opening the radial on the Bilging station shows `Play Bilging` and exactly one
+  `Bilging` label, at the station. No centre title.
+- **Findings 6 and 11 were proved red-before and green-after** with the same probe run against a
+  build of the pre-fix file, which is the only evidence that separates a fix from a coincidence.
+  Finding 6 pre-fix: the Units input is removed from the document, focus is lost, and the row is a
+  new element. Post-fix: same row, same input, focus retained, typed value `37` intact across five
+  dispatches. Finding 11 pre-fix: save while bilging, load, and the client lands in the port scene.
+  Post-fix: it stays in the puzzle, board restored, `Yer voyage be restored.` in the chat.
+
+### 2026-09-04 — independent review, UI sweep slice C (PR 12)
+
+Four lenses, run as separate agents against `48a096b`. **Changes requested: one blocking finding,
+two manifestations, one root cause.** Decisions 174-179.
+
+#### Decision 174 — decision 141 is right, and incomplete: the scene survives, the scene's caches do not
+
+`restore` no longer forces `current` to `'port'`, which is what decision 141 asked for and what the
+slice's own exit criterion tested. But `stage.follow` (`app.ts:96-97`) early-returns when
+`mounted.id === client.scene`, so preserving the scene also means **the mounted scene object is not
+rebuilt**. Every scene that reads world state once at construction, or caches what it has drawn, now
+keeps describing the world that was replaced.
+
+`syncScene` (`client.ts:143-147`) has three rules and none of them touches `'puzzle'` or `'deck'`, so
+both scenes survive a restore intact. Reproduced in the existing Node test environment, no DOM
+needed: two clients on seeds `20260902` and `77777777`, both in the puzzle scene, `a.restore(b.save())`
+leaves `a.scene === 'puzzle'` and `a.save() === b.save()` — the sim is B's, the mounted scene is
+still A's.
+
+- **The puzzle board.** `render` (`puzzle.ts:306-322`) repaints cells only when `signatureOf` changes,
+  and the signature is `moves:starLevel:cascadeIndex:cascade.length:cellSize` — **it does not include
+  the board cells.** `renderedSignature` is reset only in `layout()`, i.e. only on resize, and
+  `follow`'s early return skips the `resize()` that a remount would have run. Both probe clients sit
+  at `moves: 0, starLevel: 0` with no cascade, so the signature is byte-identical across the restore
+  while the cells differ. The old game's tiles stay painted. `renderWater`, `renderHighlight` and
+  `renderPanel` are unguarded and do update, so the waterline and the info panel jump to the new
+  world while the tiles do not. `performAt` (`puzzle.ts:326`) reads `boardOf()` live, so the first
+  click swaps pieces on a board the player cannot see. It self-corrects only once `moves` changes.
+- **The deck.** `createDeckScene` (`deck.ts:80-84`) reads `context.client.state` once and hands
+  `createIsoScene` a fixed `grid`, `heading`, `crew` and `highlights`; `paintBase`/`paintHighlights`/
+  `paintObjects` run once at `isoScene.ts:257-259`. Restoring from the deck therefore keeps the old
+  ship's class name, crew tiles, duty highlight and gangplank state until the player leaves and
+  re-enters. Display-only — `arrive()` re-checks `moored()` live — but it does not self-correct.
+
+Before this PR neither was reachable: `current` was forced to `'port'`, `mounted.id !== client.scene`,
+and the scene was always torn down and rebuilt. This is new, and it is the direct cost of the one
+line the PR deleted.
+
+#### Decision 175 — why the slice's own physical verification missed it
+
+The slice verified finding 11 by saving and loading **within one session**. A same-save round-trip
+restores an identical board, so the stale render and the correct render are the same pixels and the
+cache bug is invisible. The defect needs two *different* worlds, which only a cross-save load
+produces. The exit criterion as written ("save while bilging, load, stay in the puzzle with the board
+restored") is satisfiable by a scene that never re-rendered at all — it tests the scene id, not the
+board. A criterion that says "restored" should be exercised with a board that differs.
+
+#### Decision 176 — the fix belongs at the restore seam, not in each scene
+
+Left to the development stage, but the shape the review would defend: `restore` is the one event that
+replaces the world wholesale under a live scene, so it should invalidate the mounted scene rather
+than have every scene learn to detect a world swap. Forcing a remount at that seam (a generation
+counter `follow` compares, or an explicit remount call after a successful restore) fixes both
+manifestations and every future scene at once. Resetting `renderedSignature` alone fixes the puzzle
+board and leaves the deck stale, so it is the narrower and worse fix.
+
+#### Decision 177 — decision 171's load-bearing claim is false, and the conclusion still holds
+
+`ISSUES.md` records the puzzle-less scene as "not reachable from any save this app produces". It is:
+save migration 2 (`save.ts:14`) mints `puzzle: null`, `save.ts:36` accepts it, so loading a legacy v1/v2
+save and then pressing **Save game** writes a `schemaVersion: 6` save carrying `"puzzle": null`.
+Verified end to end. The gap stays non-blocking, because the resulting scene is degraded rather than
+dead — the Leave button is painted and wired at construction by `hud.ts:110,126-129`, independent of
+`render()`, and `Escape` also works, so the player is never trapped. The wording is corrected in
+`ISSUES.md` rather than the judgement.
+
+#### Decision 178 — the clock-for-dispatch substitution is sound and discharges the exit criterion
+
+Checked independently rather than accepted. `createTicker` is rAF-driven (`ticker.ts:17,33`), and both
+paths converge on the **same function object**: `createPanelDeck` registers `refresh` once
+(`panels.ts:87`), the clock path is `ticker → client.advance → announce()` (`client.ts:87`) and the
+dispatch path is `client.dispatch → announce()` (`client.ts:76`). Identical listener set, identical
+`refresh`, no rebuild on either side. The asymmetries run against the clock path, not for it —
+`advance` announces conditionally and calls `syncScene` first, which `dispatch` does not. Five real
+dispatches are adequate evidence for a defect a single refresh exposes. Decision 172 stands.
+
+#### Decision 179 — what the review checked and found clean
+
+Decisions 139, 140, 142, 143 conform to their contracts. The build-once shape genuinely matches
+`ye.ts` and `chat.ts`; `PanelView` is still satisfied and the panel deck is constructed once per
+`mount()`, so the lifetime-long listeners neither leak nor double-register. `bodyHolds` is
+load-bearing, not dead defensive code — it is what stops `replaceChildren` detaching the focused
+input. Decision 169's premise is verified: `createMarkets` (`world/market.ts:23-28`) builds a stock
+for every commodity and nothing ever removes one, so `replaceChildren` fires only on the first fill.
+Decision 170 introduces no new dispatch value — `trade` always read the map, never the input, and
+`integerOf` (`dom.ts:92-95`) can never return `NaN`; the sim refuses negative units and treats `0` as
+a no-op. All seven island short names are distinct, non-empty and unambiguous. `avatarLabel`,
+`TITLE_SIZE_PX`, `TITLE_COLOUR` and `titleLabel` have zero surviving references, and neither unmerged
+uisweep branch conflicts in code. The record commit `48a096b` is append-only, and the manifests are
+untouched.
+
+### 2026-09-04 — analysis, the restore seam leaves the mounted scene stale (cycle 1)
+
+Returning from the slice C review with **one blocking finding**. Decisions 180-185. Only the
+blocking finding is re-analysed here; the ten non-blocking findings stay in `ISSUES.md`.
+
+Recorded for transparency: the agent writing this analysis also wrote the review that produced the
+finding, so decision 176 is its own recommendation. It is re-examined below rather than assumed, and
+the alternative the review named is rejected here on evidence it did not have.
+
+#### Decision 180 — the defect is not "restore forgets to reset the board", it is a seam with no invalidation
+
+Decision 141 conflated two things that are not the same: **staying in the puzzle scene** and
+**keeping the puzzle scene object**. It asked for the first and, by deleting the only line that made
+the scene id change, silently bought the second.
+
+`stage.follow` (`app.ts:96-97`) treats the scene id as the whole of the mounted scene's identity:
+
+    if (mounted !== null && mounted.id === client.scene) return;
+
+Every scene factory reads the world **once**, at construction — `createPortScene` captures
+`mooringLabel` and `portNameOf(state.pirate)` (`port.ts:63-79`), `createDeckScene` captures `grid`,
+`heading`, `crew` and `highlights` (`deck.ts:80-84`), `createIsoScene` paints base, highlights and
+objects once (`isoScene.ts:257-259`), and `createPuzzleScene` caches what it drew in
+`renderedSignature`, resetting it only in `layout()`. So the scene id is a valid identity for the
+mounted scene **only while the world underneath it is the same world**. Nothing enforces that.
+
+#### Decision 181 — the same seam is already broken for `reset`, which predates this PR
+
+This is the finding that decides the design, and the review did not have it. `reset`
+(`client.ts:130-137`) replaces the sim wholesale and sets `current = 'port'`. The **Ye** panel —
+which owns both **New game** (`ye.ts:77`) and **Load game** (`ye.ts:69`) — is normally used from the
+port scene, the opening scene. So `mounted.id === 'port' === client.scene`, `follow` early-returns,
+and starting a new game keeps the previous game's port scene: its captured heading and mooring
+label, and the avatar standing wherever it was walked to rather than at `PORT_SPAWN`.
+
+It is mostly invisible today only by coincidence — the opening is deterministic, so both games put
+the pirate at Alkaid with a sloop and the two captured strings happen to match. The avatar's
+position does not match, and nothing guarantees the strings will keep matching.
+
+So the seam has been missing invalidation since before slice C. Decision 141 did not create the
+defect class; it created the *first* case where the captured state visibly differs, because a
+restored world is genuinely a different world. **Any fix scoped to `restore` alone leaves `reset`
+broken.**
+
+#### Decision 182 — invalidate at the seam with a world epoch, not by comparing worlds
+
+Chosen: `GameClient` carries a monotonically increasing counter — an **epoch** — that changes exactly
+when the world is replaced wholesale, which is `restore` and `reset` and nothing else. `follow`
+compares it alongside the scene id, and remounts when either differs. The scene id keeps meaning
+"which scene", and the epoch supplies the "of which world" that was always missing.
+
+Rejected alternatives:
+
+- **Have `follow` compare a world identity instead of a scene id** — the shape the review offered as
+  the alternative worth weighing. Rejected on performance, decisively: `follow` is called from the
+  ticker on **every animation frame** (`app.ts:59`), not only on notification. Any per-frame world
+  comparison — `client.save()`, the sim hash in `hash.ts`, a structural diff — puts serialisation on
+  the frame budget of a 60fps loop to answer a question that changes twice in a session. An epoch is
+  the same answer for an integer compare.
+- **Reset each scene's caches when the world changes** — reset `renderedSignature` in the puzzle
+  scene, rebuild the deck's captured grid. Rejected: scenes have no signal that the world changed, so
+  each would have to detect it independently, the logic would be duplicated four times, and every
+  scene added later would silently regress. It also fixes only the caches someone remembered; the
+  puzzle scene alone has three (`renderedSignature`, `cascade`, `cascadeIndex`).
+- **Let `restore` force a remount directly** — the client does not own the stage and should not. The
+  stage already pulls `client.scene`; pulling one more value keeps the existing direction of
+  dependency.
+
+#### Decision 183 — a remount is the correct semantics, and scene-local state is meant to be discarded
+
+The remount throws away the avatar's standing tile, any in-flight cascade, and an open radial menu.
+That is not a cost to mitigate, it is the point: the world those things described no longer exists.
+It is also exactly what happened before decision 141, when a restore always tore the scene down — so
+this restores the pre-141 behaviour while keeping the one thing decision 141 actually wanted, the
+scene id. Nothing is to be preserved across a world replacement.
+
+#### Decision 184 — the epoch must move before the announce and roll back with everything else
+
+Ordering matters and is easy to get wrong. `announce()` is *inside* `restore`'s try block, and
+`stage.follow` is one of its subscribers (`app.ts:65`), so the epoch has to have already changed by
+the time `announce()` runs or the remount will not happen on that notification. It therefore moves
+with the sim swap, before the try, and `running` must capture it so the catch restores it alongside
+`sim`, `lines` and `current`.
+
+A failed restore that had already remounted self-heals on the next frame: the catch puts the epoch
+back, so the mounted scene's epoch no longer matches and the ticker's next `follow()` rebuilds from
+the world that is actually running. Note in passing that `restore` does not re-announce after a
+rollback — pre-existing, out of scope here, and made harmless by the ticker.
+
+#### Decision 185 — what can be pinned by a test, and what honestly cannot
+
+`GameClient` runs under plain `node --test` with no DOM, and `tests/view/boot.test.ts:66-106` already
+exercises `restore` including the rollback path. The epoch's semantics are fully testable there: it
+changes across `restore` and `reset`, and is unchanged by a failed `restore`. That is the regression
+test this slice must add, and `ISSUES.md` now records that the "zero automated coverage" claim which
+excused slice C from testing was wrong for `client.ts`.
+
+What cannot be pinned in that runner is the **consumption** of the signal — `follow` lives in
+`app.ts` behind a real Pixi `Application`, so "the board actually repainted" stays physical
+verification. Extracting `createStage` to make it testable without a renderer is a larger change than
+this repair and is deliberately not taken; it is filed rather than done. The exit criterion below
+therefore requires a **cross-save** load, because a same-save round-trip — what slice C verified —
+restores an identical board and cannot distinguish a repaint from a stale cache.
+
+#### The slice
+
+One slice, on the existing slice C branch and PR 12. Slice C is not merged and must not be, because
+the regression is inside it.
+
+**Slice C-repair — the mounted scene follows the world, not just the scene id.** Done means: a world
+epoch on `GameClient` that changes on `restore` and `reset` and rolls back with a failed `restore`;
+`follow` remounting when the scene id *or* the epoch differs; a `node --test` regression test pinning
+the epoch's three behaviours; all six gates green; and physical proof by **cross-save** load — load a
+save whose board differs from the one on screen while in the puzzle scene and see the new board, and
+the same from the deck with a different ship. `npm run check` must stay at 578 pass plus the new
+test. The Playwright smoke gate is already red on `agent/develop` for `battle.png` and is not this
+slice's to fix.
+
+### 2026-09-04 — development, the mounted scene follows the world (cycle 1)
+
+Implements decisions 180-185 on the slice C branch, pushed to PR 12. Decisions 186-189. The design
+was taken from the cycle 1 analysis unchanged; what follows records how it landed and one thing the
+verification method had to get right that the task file did not anticipate.
+
+#### Decision 186 — the epoch is a private field behind a getter, and `follow` keeps its copy in the stage closure
+
+`GameClient` already separates storage from its read surface — `sim`/`state`, `lines`/`log`,
+`current`/`scene` — so the epoch follows that idiom: `private worldEpoch` with `get epoch()`. It
+moves in exactly the two places decision 182 names, `restore` and `reset`.
+
+On the consuming side the mounted epoch is a `let mountedEpoch` in the `createStage` closure beside
+`mounted`, not a field on the `Scene` interface. Putting it on `Scene` would have meant touching all
+four scene factories to carry a value none of them use, for no gain — `follow` is the only reader.
+The whole change is 9 lines of source across two files.
+
+#### Decision 187 — a resize masks this defect, so the proof had to hold layout still
+
+This is the finding the next agent should not have to rediscover. `createPuzzleScene` resets
+`renderedSignature` in `layout()`, so **any resize repaints the board from current state** — a stale
+scene object included. The first attempt at physical proof was therefore worthless: the browser pane
+reports `innerWidth` 0 until a screenshot forces layout, the remount then triggered `resize()`, and
+the board changed for a reason that had nothing to do with the fix.
+
+The proof was redone with the layout settled *before* the load — dispatch a `resize` event, confirm
+`innerWidth` is 1280, screenshot, then `restore` — so the only thing that changes across the two
+screenshots is the board's content. Every claim below was then run twice, once with the fix and once
+with the two source files reverted to the pre-fix commit and the page reloaded, at identical layout.
+
+#### Decision 188 — what the physical proof established, both criteria, both with a pre-fix control
+
+Cross-save preconditions were exactly the ones decision 185 requires: seeds `20260902` and
+`77777777`, both at `moves` 0 and `starLevel` 0, so `signatureOf` collides while the boards differ,
+and the scene id stayed `puzzle` across the load so the old early-return would have fired.
+
+| Case | Pre-fix | With the fix |
+| ---- | ------- | ------------ |
+| Puzzle, cross-save load | state reports the new board, canvas still paints the old one, pixel-identical to before the load; only the DOM bilge readout moves | canvas repaints, row 0 reads `3,2,1,2,2,1,0,0,2,2,1,1`, matching the loaded world |
+| Deck, load a different hull | heading still reads `Sloop` on the sloop hull while state reports `war-brig` | heading reads `War brig` on the larger hull, with its own crew and highlights |
+
+The deck save was produced the way the slice B test found: **Ye > Save game**, edit `"shipClass"` in
+the save text, **Load game**. No devtools, so this is a route a player has.
+
+`reset` was not exercised in the browser. Its epoch move is pinned by the unit test, and decision
+181's point is that the defect there is invisible today because the opening is deterministic — there
+is nothing on screen to see. Stated rather than glossed.
+
+#### Decision 189 — the parallel test gate is unreliable on this box; the serial run is the signal
+
+`npm run check` ran **all six gates green from cold in one pass** early in this run: exit 0, 581 pass
+0 fail in 22.1s, which is the 578 baseline plus the three new tests. A later re-run of the identical
+tree hung for ten minutes and then failed whole test *files* with no assertion failures — the
+`spawn`/ENOMEM signature the needs-input advisory describes, with the box at 98.9% commit charge and
+104 node processes.
+
+That was confirmed to be environmental, not a regression: `tests/view/clock.test.ts` passes 5/5 run
+on its own, the five static gates and `npm run build` all pass individually, and
+`node --test --test-concurrency=1` over the whole suite is **581 pass / 0 fail, exit 0**. The
+parallel forking is what the machine cannot sustain, not the code. CI is the authority on the pushed
+head.
+
+### 2026-09-04 — second review of PR 12, the slice C-repair (cycle 1)
+
+Four lenses over `86fbc33`, independent of the agent that wrote it and of the one that analysed it.
+**No blocking finding.** Decisions 190-192. The ten non-blocking findings from the first review stay
+in `ISSUES.md` and were confirmed untouched; this review's own findings are appended there.
+
+#### Decision 190 — the rollback's half-announced window is ACCEPTABLE, and the reason is stronger than the ticker
+
+The review task asked for a verdict on decision 184's self-heal claim, on the grounds that the
+ticker is rAF-driven and does not run while the pane is hidden. Verdict: **acceptable**, on two
+independent grounds, the first of which the earlier stages did not state.
+
+The feared sequence — `stage.follow` remounts on the new epoch, a *later* subscriber throws, the
+catch rolls the epoch back, and the mounted scene is left describing a discarded world — **cannot
+occur in the shipped app at all**, because there is no later subscriber. `GameClient` has exactly
+two production subscribers, and `Set` iterates in insertion order: `panels.refresh` registered via
+`app.ts:54` (`panels.ts:87`), then `stage.follow` at `app.ts:64`. `follow` runs **last**. Anything
+that throws, throws before the remount, so the catch rolls back a stage that never moved.
+
+The ticker argument then holds as the second line of defence, and the hidden-pane case makes it
+*safer* rather than worse: every `application.render()` in the codebase is preceded by a `follow()`
+in the same synchronous block (`app.ts:59` before `:61` in the ticker, `:67` before `:69` at boot),
+so no frame can be presented between a bad mount and its correction. When rAF is frozen, neither
+`follow` nor `render` runs and nothing is composited; the first frame after unhide runs `follow`
+before `render`. The user cannot see the discarded world on the canvas.
+
+What the canvas has and the **DOM panels do not** is that ordering guarantee. `panels.refresh` runs
+against the already-swapped sim and writes synchronously, and the catch never re-announces, so a
+throw part-way through leaves the panels showing a world that was rolled back. Pre-existing,
+unchanged by this commit, reachable, and filed rather than blocking — decision 184 called it out and
+was right to.
+
+#### Decision 191 — decision 181's `reset` claim is TRUE, but its stated reason is not the load-bearing one
+
+Verified rather than inherited, as the task required. The claim holds: nothing seed-dependent is
+visible after `reset`. But the reason decision 181 gave — that "the opening is deterministic, so the
+two captured strings happen to match" — is not what makes it safe, and the seed genuinely can differ
+(the New game field is user-editable, `ye.ts:35`, and feeds `client.reset` at `ye.ts:77`).
+
+The real reason is that `createPortScene` derives only two things from the world, `mooringLabel` from
+the ship class and `heading` from `portNameOf`, and `openingCommands` (`client/boot.ts:17-24`) always
+starts at `HOME_ISLAND` with a sloop **for every seed**. The strings are seed-invariant by
+construction, not by coincidence. The other openings are safe for different reasons again: `reset`
+forces `current = 'port'` and `syncScene` cannot move it to `deck` on a fresh world, so a non-port
+scene always changed id and remounted even pre-fix; and the `battle` opening polls the world every
+frame and was never stale.
+
+Recording the distinction because decision 181 used the coincidence reading to argue the defect
+"is mostly invisible today only by coincidence" — the conclusion was right, the mechanism was not,
+and a future change to the opening would not break it the way that reading implies.
+
+#### Decision 192 — the repair ships with tests that cannot detect its removal, and that is accepted here
+
+Decision 185 said the consumption of the epoch cannot be pinned under `node --test` and deliberately
+did not extract `createStage`. This review **proved the consequence** rather than restating it: a
+module-load trace shows `tests/view/boot.test.ts` never loads `app.ts`, and reverting `app.ts:98` to
+its pre-fix form while keeping the counter leaves the entire suite green — 12/12 in that file, 394
+across the tree.
+
+Accepted as non-blocking, because the delivered tests are exactly what decision 185 specified and
+the gap was disclosed, not hidden; the visual claim is carried by decision 188's browser proof with a
+pre-fix control, which is real evidence but a one-time artefact rather than a regression guard. The
+consequence to be honest about: **the fix could be reverted tomorrow and every one of the six gates
+would stay green.** The cheapest route to a real guard is filed in `ISSUES.md` — export `createStage`
+taking the factory map as a parameter, then assert a second construction against a stub application.
+
+One thing for the test stage that no earlier stage predicted: the remount now snaps the avatar back
+to `PORT_SPAWN` and re-centres the camera on New game or Load, because `createIsoScene` sets
+`standing = definition.spawn` at construction and `follow` calls `resize`. Decision 183 authorises it
+— scene-local state is meant to be discarded — but it is a visible behaviour change, and it is the
+cheapest thing to look for on screen.
+
+### 2026-09-04 — physical test, the slice C-repair (PR 12, cycle 1)
+
+Task `20260904-053010-test-uisweep-c-repair-mounted-scene-follows-the-world`, against `e464f35` in
+the repository working tree, `vite packages/app` on **port 5197** (5178 is still squatted), driven
+in a real browser at 1280x720. **No blocking failure. PR 12 merged to `agent/develop`.** One
+non-blocking finding is in `ISSUES.md` under today's heading.
+
+Decision 192 said it plainly: the suite cannot detect this fix's removal, so the screen was the only
+evidence available. Every claim below was driven through the shipped UI and photographed.
+
+#### The layout was settled before anything was loaded
+
+Decision 187's trap was taken seriously, because it is what made the development run's first proof
+worthless. In each scene: `resize` dispatched, `window.innerWidth` confirmed to read **1280** and not
+`0`, screenshot taken, and only then the load. The pane was fronted for every timing-sensitive step,
+so `createTicker`'s rAF actually fired — confirmed by `client.tick` advancing between reads
+(802 to 1106, 244 to 494) rather than assumed.
+
+#### 1. The puzzle cross-save load — the original defect, and the strongest proof available
+
+Seeds `20260902` and `77777777`, both at `moves` 0 and `starLevel` 0 at the same `cellSize`, so
+`signatureOf` collides and `client.scene` stays `puzzle` across the load. The save was produced
+through the player's own route — **Ye > Save game** on a second tab, real mouse click, 9378
+characters — and pasted into the first tab's textarea, where **Load game** was pressed with a real
+mouse click.
+
+- Status read *"Yer voyage be restored."*, `client.epoch` moved 0 to 1, `client.scene` stayed
+  `puzzle`, `moves` and `starLevel` stayed 0. The signature genuinely collided.
+- Board state after the load read row 0 as `3,2,1,2,2,1,0,0,2,2,1,1` — decision 188's recorded value
+  for seed `77777777`, reached here by an independent route.
+- **The canvas repainted, and to the right board.** The post-load screenshot is *pixel-identical* to
+  the same board rendered natively in the other tab at the same settled layout. That is the claim
+  decision 188 could only make against a hand-built pre-fix control; here it is a direct positive.
+- Reproduced a second time from a fresh page, to rule out a one-off.
+
+**The board is also playable afterwards, which is the half of the defect that would have bitten a
+player.** A real click on a tile of the loaded board incremented `moves` 0 to 1 and swapped the pair
+under the cursor. Pre-fix, `performAt` read the live board while the canvas showed the old one, so
+that same click moved pieces the player could not see.
+
+#### 2. The deck, loading a different hull
+
+**Ye > Save game**, `"shipClass":"sloop"` edited to `"war-brig"` in the textarea, **Load game** — no
+devtools, exactly the route decision 188 used. The canvas heading followed, `Sloop` to `War brig`,
+with `epoch` 0 to 1 and the scene id unchanged at `deck`.
+
+The hull did **not** change shape, and that is correct rather than a failure: the deck is a fixed
+diorama. `DECK_WIDTH`/`DECK_HEIGHT` are constants (`scenes/deck.ts:16-18`), `buildDeckGrid` takes no
+ship class at all (`:152-162`), and `STATION_COUNTS` (`:39-47`) is consumed only as a `count > 0`
+presence predicate (`:122-124`) — every one of the fourteen classes has all four counts non-zero, so
+all seven station slots always render at the same tiles. Crew is the station set minus
+`playerStation` (`:140-145`); `highlights` is `playerStation` alone (`:147-150`); `pirateCap` and
+`crewCount` are never read by the view.
+
+**193. On the deck, the ship class reaches exactly one pixel — the heading — so "the hull follows"
+is a claim about that string and nothing else.** Recorded because the task asked for heading *and*
+hull, and a future stage reading only that sentence would look for a bigger boat that this renderer
+has never drawn. The gap between `STATION_COUNTS` and its use is in `ISSUES.md`.
+
+#### 3 and 4. `reset`, and the avatar snap — the behaviour no stage had seen
+
+**Ye > New game** in the port, real click. Status read *"A fresh ocean rolls out."*, `epoch` moved
+0 to 1, `client.tick` reset (1106 to 244, then climbing again), scene id stayed `port`, and — as
+decision 191 predicted by construction — every visible string was unchanged: heading `Alkaid
+Island`, facts `Scurvy Jane` / `Alkaid Island` / `bilging`.
+
+So the seed-invariance held, and the visible evidence was the item decision 192 flagged instead. The
+pirate was walked away from spawn first — three tiles down the island, clearly displaced from the
+jetty — and **New game snapped it back to `PORT_SPAWN` with the camera re-centred**, in the same
+frame as the world swap. **Load did the same** from a one-tile displacement, `epoch` 0 to 1.
+
+It reads as deliberate, not glitchy: the scene is rebuilt whole, and the result is indistinguishable
+from a freshly opened port — no partial frame, no drift, no torn camera in any screenshot taken
+immediately after the click. Worth saying plainly what that costs a player, since nothing else has:
+**a load now discards where you were standing.** That is decision 183's intent, and it is defensible,
+but it is a real change to what New game and Load feel like.
+
+#### 5. The stranded-scene hazard behaves exactly as filed
+
+A save with `"atIslandId"` edited to `"nowhere"`, loaded through the panel.
+
+- The player sees a clean refusal: *"That save be spoiled: no island named nowhere"*.
+- The world rolled back and kept running — `pirate.atIslandId` still `alkaid`, scene `port`,
+  `client.tick` still climbing.
+- The Ye facts block was read **empty (0 rows) in the instant after the click** and had healed by the
+  next screenshot, which is `ISSUES.md`'s "at most 30 ticks — about half a second", observed rather
+  than reasoned.
+- **The canvas was untouched and the console held zero errors** — only Vite's HMR debug lines — so
+  there was no per-frame error and no black canvas. The review's reachability analysis stands.
+
+**194. The epoch's rollback path is confirmed on screen, not just in the unit test.** `client.epoch`
+read 1 both before and after the refused load, so `restore`'s catch restored `worldEpoch`
+(`client.ts:132`) alongside the sim; had it not, the counter would have advanced over a rolled-back
+world and every later `follow` would have compared against a phantom epoch. That is the one
+consequence of decision 186 that `boot.test.ts` covers and the screen agrees with.
+
+#### The gates were taken from CI, deliberately
+
+`npm run check` was **not** re-run locally. The task's own ground conditions record the gate as
+unreliable on this box in both forms — the parallel run aborts whole files under memory pressure, the
+serial run crashes `tests/gates/purity.test.ts` with `0xC0000409` in a spawned eslint — and the box
+was measured at **98.8% commit charge with 105 `node.exe` processes** before this run started. CI is
+green on `6ff0904`, and `e464f35` adds only `ISSUES.md` and this document. Re-running a gate whose
+failures would not be attributable, on a machine that cannot reliably spawn a child process, would
+have produced noise and risked the physical pass; the physical pass is what this stage exists for.
+
+One thing was fixed rather than reported: an orphaned Vite dev server from an earlier queue run
+(PID 22724, `opp-slice5` scratchpad, started 03:23) was still holding memory. It is the queue's own
+leaving, so killing it needed no human decision, and it is the class of process the 03:45 note to the
+standing advisory identified as the expensive one.
+
+#### What could not be isolated, and is not charged to this slice
+
+Click-to-walk in the port covered about one tile per click for most of the run, while an early click
+in the same session walked three. `client.log` recorded **no** `NO_WALK_REFUSAL` for any of them, and
+a click-coordinate probe confirmed the taps land where intended (screenshot `(430,315)` arrives as
+page `(688,504)`, correctly scaled). The same short walk occurs on a **fresh page at `epoch` 0 that
+has never remounted**, which is what rules the remount out as the cause — so this is not the
+repair's, and it is most likely `pathBetween`'s bound on `camera.visibleTiles()` interacting with the
+pane's rAF pacing rather than a defect at all. Named here, unresolved, so that a future stage that
+sees it does not mistake it for a regression this commit introduced.

@@ -61,7 +61,6 @@ export interface IsoSceneDefinition {
   grid: TileGrid;
   spawn: TilePoint;
   heading: string;
-  avatarLabel: string;
   avatarActions: ObjectAction[];
   crew?: TilePoint[];
   highlights?: TilePoint[];
@@ -217,30 +216,25 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
     context.client.say(NO_WALK_REFUSAL);
   }
 
-  function openRadial(
-    targetId: string,
-    label: string,
-    actions: ObjectAction[],
-    at: ScreenPoint,
-  ): void {
-    radial.show(at, label, actions, (actionId) => definition.act(targetId, actionId));
+  function openRadial(targetId: string, actions: ObjectAction[], at: ScreenPoint): void {
+    radial.show(at, actions, (actionId) => definition.act(targetId, actionId));
   }
 
   function onTap(event: FederatedPointerEvent): void {
     if (event.button !== LEFT_BUTTON || radial.open) return;
     const drawn = clickableProps.get(event.target);
     if (drawn !== undefined) {
-      openRadial(drawn.id, drawn.label, drawn.actions, event.global);
+      openRadial(drawn.id, drawn.actions, event.global);
       return;
     }
     const tile = screenToIso(camera.toWorld(event.global));
     if (sameTile(tile, standing)) {
-      openRadial(AVATAR_TARGET_ID, definition.avatarLabel, definition.avatarActions, event.global);
+      openRadial(AVATAR_TARGET_ID, definition.avatarActions, event.global);
       return;
     }
     const object = objectAt(grid, tile.x, tile.y);
     if (object !== undefined) {
-      openRadial(object.id, object.label, object.actions, event.global);
+      openRadial(object.id, object.actions, event.global);
       return;
     }
     walkTo(tile);

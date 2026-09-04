@@ -11,6 +11,8 @@ import { GameClient } from '../../packages/view/src/client/client.ts';
 
 const SEED = 20260902;
 
+const OTHER_SEED = 77777777;
+
 test('the client opens on the same session the harness calls the pillage loop', () => {
   const client = GameClient.create({ seed: SEED, balance: BALANCE });
   const harnessed = createScenarioSim(SEED, PILLAGE_LOOP_SCENARIO);
@@ -103,4 +105,42 @@ test('a load that fails after the sim is built leaves the running game intact', 
   assert.equal(client.save(), running);
   client.advance(600);
   assert.equal(client.tick, 1200);
+});
+
+test('loading a save moves the world epoch so a mounted scene is rebuilt', () => {
+  const client = GameClient.create({ seed: SEED, balance: BALANCE });
+  client.advance(600);
+  const before = client.epoch;
+
+  const incoming = GameClient.create({ seed: OTHER_SEED, balance: BALANCE });
+  incoming.advance(600);
+  client.restore(incoming.save());
+
+  assert.ok(client.epoch > before);
+});
+
+test('starting a new game moves the world epoch', () => {
+  const client = GameClient.create({ seed: SEED, balance: BALANCE });
+  const before = client.epoch;
+
+  client.reset(OTHER_SEED);
+
+  assert.ok(client.epoch > before);
+});
+
+test('a load that fails leaves the world epoch where it was', () => {
+  const client = GameClient.create({ seed: SEED, balance: BALANCE });
+  client.advance(600);
+  const before = client.epoch;
+
+  const incoming = GameClient.create({ seed: OTHER_SEED, balance: BALANCE });
+  incoming.advance(1200);
+
+  const unsubscribe = client.subscribe(() => {
+    throw new Error('the panel be broken');
+  });
+  assert.throws(() => client.restore(incoming.save()));
+  unsubscribe();
+
+  assert.equal(client.epoch, before);
 });
