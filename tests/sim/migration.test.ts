@@ -24,7 +24,7 @@ const COMMITTED_V3_SAVE = fileURLToPath(
 const COMMITTED_V3_SCHEMA = 3;
 const COMMITTED_V3_SEED = 20260902;
 const COMMITTED_V3_TICK = 120;
-const COMMITTED_V3_CELLS = 144;
+const COMMITTED_V3_CELLS = 72;
 const COMMITTED_V5_SAVE = fileURLToPath(
   new URL('../../packages/fixtures/saves/bilge-session-v5.json', import.meta.url),
 );

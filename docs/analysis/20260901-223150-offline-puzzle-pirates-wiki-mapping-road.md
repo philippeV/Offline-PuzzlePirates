@@ -6240,3 +6240,433 @@ has never remounted**, which is what rules the remount out as the cause — so t
 repair's, and it is most likely `pathBetween`'s bound on `camera.visibleTiles()` interacting with the
 pane's rAF pacing rather than a defect at all. Named here, unresolved, so that a future stage that
 sees it does not mistake it for a regression this commit introduced.
+
+### 2026-09-04 — development, UI sweep slice D: the bilging board matches the real puzzle
+
+Task `20260903-235503-uisweep-d-bilging-board-fidelity`, branched from `agent/develop` at `53587bd`
+— the first commit that contains slice C, which is what the slice's ordering rule required. One
+commit, as decision 145 demands: the width change and every re-blessing land together, because the
+tree is red in between.
+
+`npm run check` exit 0 from cold, **584 pass / 0 fail** in 21.4s — the 581 on `agent/develop` plus
+the three new gesture tests. `npm run build` exit 0. `npm run smoke` **4 passed**, which is a
+stronger result than this slice expected and is decision 196 below.
+
+#### What changed
+
+- `balance.json` — `bilging.boardWidth` 12 to 6. `boardHeight` is untouched at 12; finding 12 says
+  the height was already right.
+- `scenes/puzzle.ts` — `DEFAULT_BOARD_WIDTH` and `DEFAULT_BOARD_HEIGHT` are gone, and `layout()`
+  falls back to `client.bilging.boardWidth`/`boardHeight` when there is no board to measure.
+- `client/client.ts` — a `bilging` getter beside `state`, `tick`, `scene` and `epoch`, returning
+  `this.balance.bilging`. This is what closes the `ISSUES.md` entry "a tunable copied into a scene":
+  the scene no longer holds a second copy of the number, it asks the world for it.
+- `scenes/bilgeGesture.ts` — a puffer whose swap partner is also a puffer answers `swap`. The seam
+  already received the whole board, so decision 146 needed no new gesture and no modifier.
+- `client/rules.ts` — re-exports `cellAt` and the `BilgingBalance` type. `cellAt` is the sim's own
+  bounds-checked reader, which is what makes the partner lookup safe at the right-hand edge without
+  the view inventing its own bounds arithmetic.
+- Re-blessed in the same commit: the scenario opening (`eacec55d7119e638`), the golden
+  (`a5cb384c468e93e3`), the replay trail (`fc9d9b44c6f41493`, 15 checkpoints), the committed v3
+  save, `COMMITTED_V3_CELLS` 144 to 72, and `tests/e2e/__screenshots__/puzzle.png`.
+
+#### The golden's patch was classified before it was blessed
+
+184 operations, and every one attributable: **1** on `/balance/bilging/boardWidth`, **180** under
+`/puzzle/board` as 144 cells and shapes become 72, and **3** on `/rngStreams/bilge.fill` — the fill
+stream cursor, exactly the coupling decision 145 named. Nothing outside those three roots moved,
+which is the evidence that a width change did not quietly become a behaviour change.
+
+`replays/marker-drift.json` was re-recorded as a control and came back **byte-identical**, as its
+`marker-field` scenario carries no balance. It is restored rather than committed.
+
+#### 195. The 12-wide board reached three sim tests through the harness `BALANCE`, and the analysis's blast radius missed them
+
+The enumerated radius — goldens, scenario and replay fixtures, the two saves, `COMMITTED_V3_CELLS`,
+four screenshots — is complete for *artefacts*, and incomplete for *tests*. `tests/puzzle/fixtures.ts`
+builds its sims with `BALANCE` from `packages/harness`, which is the committed `balance.json`, so
+three tests in `tests/puzzle/move.test.ts` were writing into the right-hand half of a board that no
+longer exists:
+
+- crabs placed at `x` 8 and 10 for the full-water bonus,
+- a puffer poked at `x` 5, whose three-by-three clear was clipped by the new edge and cleared six
+  cells instead of nine,
+- a jelly swapped at `x` 5, whose partner at `x` 6 is now off the board — the sim refused the command
+  with `swap-outside-board`.
+
+Each was moved inside a six-wide board with its intent intact: the puffer still clears nine cells,
+two crabs at full water still pay 36, the jelly still scores one point per swept cell. Only one
+expectation is genuinely different, and mechanically so — the count of cells sharing a colour on the
+quiet board falls from 36 to 18, which is 72 divided by the four quiet colours.
+
+Recorded as a decision because the next slice that moves a tunable should expect the same class of
+coupling, and looking only at `packages/fixtures` will miss it.
+
+#### 196. The smoke gate's long-standing red on `battle.png` was a squatted port, not a defect
+
+Every task file in this lineage has carried "the Playwright smoke gate is already red on
+`agent/develop` for `battle.png`" as a ground condition. It is not true of the code. `playwright.config.ts`
+sets `reuseExistingServer: !process.env.CI`, so with `CI` unset Playwright screenshots **whatever is
+already listening on 5178** rather than starting a server on the working tree — and 5178 has been
+squatted for days by a Vite serving an unrelated scratchpad checkout of slice 5. The gate was
+photographing another branch's app.
+
+The squatter was freed this run (it was a queue leaving, restarted at 05:39 by this very run's own
+subagent through `.claude/launch.json`, which pointed at that scratchpad and has been restored to
+its committed form). With 5178 free, the smoke gate on this branch reports **4 passed** with only
+`puzzle.png` needing a re-blessing. `port.png`, `deck.png` and `battle.png` all match untouched.
+
+The corollary matters more than the fix: a `reuseExistingServer` gate is only as trustworthy as the
+port it runs on, and a red baseline is not evidence about the code until that port is known to be
+the tree's own.
+
+#### 197. `bilging.boardWidth` stops being "invented" in the provenance block
+
+`balance.json` carries a provenance sentence per tunable, and the width's read "invented; the wiki
+never states the grid dimensions". That statement is now false in its operative half. It is replaced
+with the research finding 12 established — the YPPedia `Bilge.png` interior measuring six cells at
+45.5px, and two independent community solvers agreeing at six — while keeping the true part, that
+the wiki text itself never states it. `docs/wiki-map/01-duty-puzzles.md` is deliberately untouched:
+it is a map of what the wiki says, and what it says has not changed.
+
+#### 198. The water-line rule is confirmed in a running puzzle, not on paper
+
+The exit list asked for this rather than an inference. A `bilge-session` was stepped 12 000 ticks
+through the harness, sampling every 300, from an empty bilge to a full one (0 to 1000 per mille):
+`waterLineRow` moved through exactly **9 down to 3** and stopped there. At its driest that is three
+water rows on a twelve-row board; at its wettest the top three rows are still dry. Both published
+bounds hold on the narrower board, which is what a width change should never have touched and now
+demonstrably does not.
+
+#### What was deliberately not changed
+
+- **`packages/fixtures/saves/bilge-session-v5.json`.** No assertion compares it against a live run of
+  the current build — `tests/sim/migration.test.ts:197-222` checks its schema version, the absence of
+  `tokenSpawnPerMille`, `balance` becoming null, and a `balance-missing` rejection. Its 144 cells stay
+  internally consistent with its own recorded `width: 12`, so the loader's `width * height` guard is
+  satisfied. A genuine schema-5 save *would* have carried the tuning of its era, so regenerating it
+  against today's would make it less honest, not more. The two save fixtures therefore now disagree
+  about board width, on purpose.
+- **`tests/ship/meters.test.ts`'s inline `Balance` double.** It declares `boardWidth: 12` but is a
+  hand-written double that never reads a board dimension — its only use of `bilging` is duty-output
+  arithmetic. Changing it would be tidying, not re-blessing.
+
+#### The v3 save had to come from the build that wrote schema 3
+
+`packages/fixtures/saves/bilge-session-v3.json` is compared against `createScenarioSim(20260902,
+'bilge-session').step(120)` on **today's** build with **today's** tuning, so a width change reaches
+back into a schema-3 artefact. It cannot be produced by the current build, which emits schema 6, and
+decision 69 deleted a hand-stamped v3 for exactly that reason. It was regenerated the documented way:
+a detached worktree at `f5ee82a`, the tip of slice 2, with only `bilging.boardWidth` set to 6, run
+through that era's `createScenarioSim` and `step(120)`.
+
+Two notes for whoever does this next. The analysis's earlier advice to copy `node_modules` including
+`.bin` is not needed for this job — the sim's only bare specifier is `@opp/sim`, so two directory
+junctions under the worktree's own `node_modules/@opp` are enough and Node 24 strips the types
+itself; the copy is only needed when `tsc` or `eslint` must run. And `git worktree remove --force`
+leaves the directory behind when untracked junctions live inside it: unlink those with a call that
+does not follow the link before removing the tree, or the box gains its twentieth orphaned worktree.
+The worktree used here is verified gone.
+
+The new blob is 1414 bytes, single-line, LF, `schemaVersion` 3, board 6x12 = 72 cells — the same
+canonical key order as the file it replaces.
+
+### 2026-09-04 — independent review, UI sweep slice D (PR 13)
+
+Four lenses over `32c7c49`, run concurrently, none of them the agent that wrote the slice or the
+one that analysed it. **No blocking finding**; the slice goes to the test stage. Both CI checks are
+green on the head commit, which is the authority here because the task's own ground conditions
+record both local gate forms as unreliable on this box.
+
+The task set the review a specific question — *is every re-blessed byte explained by the width
+change, and nothing else?* The honest answer is **yes for the golden, and no for two artefacts**,
+in opposite directions: one changed less than it should have, one changed more.
+
+#### 199. The golden's classification is confirmed by re-derivation, and its absences are the real evidence
+
+Re-computed with the repo's own `jsonPatch` over `git show`-extracted blobs rather than taken from
+the PR: **184 state operations** — 144 `remove`, 40 `replace`, 0 `add` — across exactly
+`/balance/bilging` (1), `/puzzle/board` (180) and `/rngStreams/bilge.fill` (3). The 180 decompose as
+72 `remove` on `cells`, 72 `remove` on `shapes`, 35 `replace` on surviving cells and 1 on
+`board/width`. The envelope moves one operation, `stateHash`. The development run's figures are
+accurate as stated.
+
+What carries more weight than the match is what is **absent**: no `/tick`, no `/markers`, no
+`/schemaVersion`, no `/rngStreams/marker.drift`, no `add` under `/rngStreams` — so `bilge.refill`
+never appeared and the idle board cleared nothing — and no scoring field. `waterLineRow` 6,
+`bilgePerMille` 504, `starLevel` 1 and `totalScore` 0 are byte-identical to base. The flood and
+scoring pipelines are provably untouched by the width change, which is the property decision 145
+exists to protect.
+
+`puzzle.png` was decoded pixel-by-pixel as a second check: the board block goes from 12 x 51 = 612px
+to 6 x 56 = 336px about the same centre, reproducing the `cellSize` and `originX` arithmetic at
+`scenes/puzzle.ts:210-217` exactly. Its geometry is fully accounted for.
+
+#### 200. The replay fixture was re-hashed, not re-blessed, and now verifies a rejection
+
+This is the review's central finding and it corrects decision 145's completeness claim.
+`packages/fixtures/replays/bilge-session.json` had all 15 trail hashes and its `finalHash`
+re-recorded, but its `commands` array was left exactly as it was — and it still issues
+`{"tick":4,"command":{"op":"bilge.swap","x":10,"y":0}}`. On a six-wide board `x:10` is off the
+board. Replaying the committed fixture gives tick 0 accepted with 3 events, **tick 4 rejected
+`swap-outside-board`**, tick 9 accepted with 2 events. `dispatchIssuedAt`
+(`packages/harness/src/replay.ts:66-70`) calls `sim.dispatch(entry.command)` and throws the result
+away, so the rejection is swallowed and the trail still verifies bit-identically —
+`tests/harness/replay.test.ts` is 9/9 green.
+
+The artefact was therefore re-blessed into a weaker form, and the commit's diff on that file is
+hashes only, so nothing about the loss is visible to a reader. Ticks 4-8 now exercise idle stepping
+where they used to exercise the swap and resolve path.
+
+Judged **not blocking** under the contract's test: no gate is red, no product behaviour regressed,
+no data is at risk, and the swap path is still covered twice in this very fixture at ticks 0 and 9
+as well as by the golden and the migration test. But it is filed loudly rather than quietly, because
+a determinism gate that silently verifies less is precisely the failure mode the slice's own task
+file predicted re-blessing can hide, and because the diff cannot show it. The fix is cheap and
+belongs to the next slice that touches bilging: move the tick-4 command inside `x` 0-4 and re-record
+the trail.
+
+The general lesson, which outlives this slice: **re-blessing a replay means revisiting its inputs,
+not only its outputs.** A hash trail can be regenerated to green over a command set that no longer
+does anything, and every gate will agree.
+
+#### 201. Decision 195's blast radius is five tests, not three, and the screenshot carries a second fix
+
+Two further tests reach the six-wide sim board through the harness `BALANCE` and poke a puffer at
+`x:5`, which is now the last column, so the 3 x 3 detonation is clipped to 6 cells where it was an
+interior 9: `tests/puzzle/commands.test.ts:166` and `tests/puzzle/tokens.test.ts:183`. Both stay
+green because neither asserts a cell count, so only their silent meaning changed; their stated
+intents still hold, which is why this is filed rather than returned. Two lenses found
+`tokens.test.ts` independently. The count in decision 195 should read five.
+
+Separately, `puzzle.png`'s re-blessing absorbs a correction that has nothing to do with width. The
+`agent/develop` baseline still showed the hint `"Click a tile to swap it with the tile on its right.
+The last column cannot start a swap."`, while `agent/develop:packages/view/src/scenes/puzzle.ts:138`
+already read `"Click a puffer to pop it. …"`. The old baseline was photographing something that was
+not the tree's own code — which **corroborates decision 196's port-squatter diagnosis from a second
+and independent angle** rather than contradicting it. The review was asked to try to falsify 196 and
+instead found supporting evidence; `playwright.config.ts:24-29` with `reuseExistingServer:
+!process.env.CI` against port 5178 makes the mechanism plain.
+
+#### What the review checked and could not fault
+
+The gesture fix is **pinned by a real test**, established by mutation: reverting `scenes/bilgeGesture.ts`
+to its `agent/develop` form in a scratch worktree turns `tests/view/bilgeGesture.test.ts` red with
+`'poke' !== 'swap'`. That is worth recording explicitly because the equivalent experiment on the
+slice C repair came back green, and the difference is real rather than rhetorical.
+
+A legacy save is **not** corrupted by the width change. The board is persisted, never re-derived:
+`balance.bilging.boardWidth` is read at exactly one runtime site, `packages/sim/src/puzzle/bilging.ts:40`
+in `createBilgeBoard`, which runs only on `puzzle.start`. A schema-6 save built at 12 wide was loaded
+and played on this branch — board stays 12 x 12, hash stable, a swap at `x:8` accepted, round-trip
+byte-stable. `refuseSpoiltBoard` independently enforces `cells.length === width * height`.
+
+Three suspicions were raised and **discarded on evidence** rather than reported: `swapPartnerOf` was
+already exported at base and already used four times in `scenes/puzzle.ts`, so no new sim knowledge
+leaks into the view; it returns `{x: x+1, y}` unconditionally and `cellAt` guards through
+`isInsideBoard`, so a right-edge puffer degrades to `poke` with no wrap and no throw; and
+`client.bilging` cannot be undefined, because `GameClient.balance` is a readonly constructor-injected
+field distinct from the nullable `state.balance`. The `ISSUES.md` append-only convention was likewise
+confirmed real, so the surviving `DEFAULT_BOARD_WIDTH` entry is by design and was not filed as a
+finding.
+
+One review-side error is recorded for honesty: an ad-hoc replay script written during verification
+reported a final-hash mismatch, which was the script stepping on every tick where `verifyReplay`
+steps only `if (tick < lastTick)`. It was the script's defect, not the fixture's, and it was
+discarded rather than reported. The rejection at tick 4 is the part that survived independent
+checking.
+
+### 2026-09-04 — physical test, UI sweep slice D (PR 13)
+
+Task `20260904-071000-test-uisweep-d-bilging-board-fidelity`, against `194b842`. **No blocking
+failure. PR 13 merged to `agent/develop`.** Four non-blocking findings are in `ISSUES.md` under
+today's test heading.
+
+Every result below was taken in an **isolated worktree** with its own `node_modules` and its own dev
+server on port 5188 — not in the shared checkout, and not on port 5178. Decisions 206 and 207 explain
+why that was necessary, and they matter more than any single result here: the first set of
+measurements this run took were void, and the reason they were void is a trap the next stage will
+walk into as well.
+
+#### 206. The shared checkout had a live writer in it, and evidence taken from it is worthless
+
+Partway through this run another agent — working `agent/feature/opp-slice-5b-sloop-scenes-and-art`
+out of its own worktree — took the shared checkout `C:\Users\Verpo\projects\Offline PuzzlePirates\`
+and used it: at **08:03** it moved `HEAD` off this slice's feature branch onto `agent/develop`, at
+**08:08:24** it merged slice 5b in, at **08:10** it started its own vite on 5178, and at **08:14** it
+re-blessed `battle.png` and `puzzle.png` in the working tree without committing them. None of this
+was pushed.
+
+Two consequences, both caught before anything was published:
+
+- The **08:08:24** merge rewrote source files under a running dev server, which is what force-reloaded
+  the page mid-test. That reload is the only reason it was noticed at all.
+- The smoke gate this run first observed as **4 passed** was measured against slice-5b code and
+  against `battle.png` and `puzzle.png` baselines that had been **re-blessed fourteen minutes
+  earlier**. That is precisely the failure decision 196 describes — a baseline photographing
+  something that is not the tree under test — and it nearly became a *false confirmation* of 196
+  rather than a real one. **It was discarded, not published.**
+
+The lesson is general and it is not about this slice: **the shared checkout is not a test
+environment.** A stage that needs evidence must take it somewhere nothing else can write. A run that
+takes a measurement there cannot tell a green result from a coincidence.
+
+A test-record commit had also landed on the shared checkout's local `agent/develop` before this was
+understood. It was removed with `reset --mixed` followed by a path-scoped `checkout` of only this
+run's two files, so the other agent's merges and their two modified screenshots were left exactly as
+found; their branch is back at `9d856fb`.
+
+#### 207. A git worktree with a junctioned `node_modules` silently tests the wrong code
+
+The obvious way to isolate — `git worktree add`, then junction `node_modules` from the main checkout
+so the install is not repeated — **does not work in this repository, and it fails silently rather
+than loudly.** The root `package.json` declares `workspaces: ["packages/*"]`, so `node_modules/@opp/*`
+are junctions pointing at **the main checkout's** `packages/*`. A worktree that borrows that
+`node_modules` therefore resolves `@opp/view`, `@opp/sim` and the rest to the *other* tree's source
+while serving its own `packages/app`.
+
+That produced this run's second void measurement: the same smoke gate came back **0 of 4**, every
+scene failing on a systematic layout shift, which read exactly like a real regression and was
+nothing of the kind — it was slice-5b view code rendered against this branch's baselines. The
+correct construction is a worktree with its **own** `npm install` (31s here, since the npm cache is
+warm), after which `node_modules/@opp/*` point inside the worktree and the tree is genuinely
+self-contained. **Successors: do not junction `node_modules` into a worktree in this repo.**
+
+#### The layout was settled first, and the pane was fronted throughout
+
+Decision 187's trap was taken seriously. On arrival `window.innerWidth` read **0** and `client.tick`
+did not move between two reads — mounted, but rAF not running. The pane was fronted, `resize`
+dispatched, `innerWidth` confirmed at **1280**, and only then was anything judged; rAF was confirmed
+live by `client.tick` advancing between reads (381 to 447) rather than assumed.
+
+**205. A click issued without a screenshot in the same batch is silently dropped, and it looks
+exactly like a product defect.** The pane only renders while fronted, and PIXI processes pointer
+events off its own render loop, so a click sent while the pane is idle never reaches the scene: no
+move, no board change, no error. This manufactured a false negative during this run — clicking the
+right-hand puffer of a pair appeared to do nothing, contradicting `ISSUES.md`'s claim that it still
+pokes. Re-run with a screenshot immediately before the click in the same batch, the same click poked
+and cleared both puffers. **Rule for successors: every physical click must be preceded by a
+screenshot in the same batch, and its effect read back from state.** This extends decision 187 from
+"settle the layout" to "keep the pane rendering across the whole interaction".
+
+#### 1. The board is six wide on screen, and correctly proportioned
+
+Measured live: `cellSize` **56**, board block **336 x 672** at origin (160, 24) inside a 972 x 720
+canvas, cells exactly square, 6 columns and 12 rows counted on screen. That reproduces
+`scenes/puzzle.ts:210-217` and agrees with the review's pixel decode of `puzzle.png` (12 x 51 = 612px
+to 6 x 56 = 336px). Nothing is squashed, clipped or off-centre; the 672px board sits inside the 720px
+canvas with the 24px margin the code asks for. A human would agree the board looks right.
+
+**202. The chat overlay covers the bottom of the board, and the narrower board makes it worse — but
+it is not this slice's defect.** `.pp-chat` is an HTML overlay spanning y **574-710** and x 10-770
+(measured twice, on both trees, identical), while the board now spans y 24-696. The bottom **122px —
+about 2.2 of the 12 rows** — therefore sit behind it. This is pre-existing rather than new: at the
+51px cell the review measured on `agent/develop`, the 612px board sat at y 54-666 and the same
+overlay covered 92px, about 1.8 rows. The width change did not introduce the occlusion; it widened it
+by roughly half a row, because a six-wide board becomes height-bound and finally uses the full canvas
+height. It matters more than half a row sounds, because the rows it hides are the bottom ones and the
+bottom rows are the water: at the driest water line all three water rows are behind the chat panel.
+Not blocking — the panel is translucent, the water-line boundary itself was visible at every level
+tested, no gate is red, and the remedy is a decision about the chat overlay's placement rather than
+about board width.
+
+#### 2. The puffer-pair swap, and whether it reads as broken
+
+On a hand-built board restored through `save`/`restore` — puffers at (2,6) and (3,6) on an otherwise
+quiet field — clicking the **left** puffer changed **zero cells**, moved `moves` 0 to 1 and left
+`totalScore` at 0. Reproduced on both trees. The two tiles are pixel-identical before and after.
+
+**203. The no-op swap does read as broken, and the pair's right-hand puffer is the only thing that
+rescues it.** The task asked for a judgement, and this is it: a click that produces no visible change
+at all while the Moves counter increments is indistinguishable, to a player, from a mis-click or a
+frozen UI — and because bilging scores points per move over a rolling frame, that move is not neutral
+but negative. What stops it being a trap is that the **right-hand** puffer of the pair still pokes:
+verified physically, that click detonated, cleared both puffers, changed 20 cells and scored 4. The
+pair is always clearable and the player is never stuck; the cost of learning the rule is one wasted
+move. This is a finding about decision 146's ergonomics, not its correctness — 146 specified this
+deliberately from the wiki and the sim does what it says. Filed in `ISSUES.md` rather than returned
+to analysis, per this task's own instruction.
+
+#### 3. The boundary: puffers pop, including in the last column
+
+A lone puffer at (2,6) with an ordinary right-hand neighbour **popped**, and the change was confined
+to columns 1, 2 and 3 with rows 8-11 untouched — the exact signature of a 3x3 detonation centred on
+(2,6) with the cells above falling in; columns 0, 4 and 5 byte-identical. That result also validated
+the pixel geometry used for every other click in this run: the click landed on the cell the
+arithmetic predicted.
+
+A puffer in the **last column** at (5,4) also popped, changing 9 cells confined to columns 4 and 5 —
+the 3x3 clipped at the edge, with **no wrap to column 0 and no throw**. This is decision 147's
+boundary and the review's `cellAt`/`isInsideBoard` argument, now confirmed by execution.
+
+#### 4. The last-column refusal is clean, and free
+
+Clicking a plain tile in the last column dispatched the swap the sim refuses. The player sees **"That
+swap falls off the board."** written to the chat log on a `refused` channel in its own colour. The
+board did not change, **no move was charged** (`moves` stayed 0), and the console stayed empty — a
+player-facing message, not an error. On the doubled rate: the dead column goes from 1/12 of the board
+to 1/6, but a refusal costs nothing and explains itself in plain words, so the doubled rate is
+tolerable in play.
+
+#### 5. The water line, in the running client
+
+The live client was stepped 13 500 ticks with `advance`, sampling every 300. `bilgePerMille` went
+**0 to 1000** and `waterLineRow` moved **9 down to 3, monotonically**, then stopped. Across all 46
+samples there were never fewer than **3** water rows and the top **3** rows were never wet. Decision
+198's harness result is confirmed in the shipped client on the narrower board. At full flood the wavy
+water surface is drawn exactly at row 3 with the three rows above it bright and dry — photographed.
+
+#### 6. The save round-trip, through the player's own route
+
+**Ye > Save game** by real mouse click filled the save box with 9195 characters. Four further real
+moves were played to diverge the state — `moves` 1 to 4, `totalScore` 0 to 9, the duty rating visibly
+moving booched / excellent / fine / poor — and **Ye > Load game** restored the board
+**byte-identically** to the saved signature at 6 x 12 and 72 cells, with `moves` and `totalScore`
+back to their saved values and no `data-render-error`. A click after the load scored 6 and took
+`moves` to 2, so the restored board is playable and not merely displayed.
+
+**204. A legacy twelve-wide save renders intact, proved on screen and not only by construction.** The
+review established by reading that the board is persisted rather than re-derived. A schema-6 save
+carrying a 12 x 12, 144-cell board was restored into this branch and photographed: it renders as a
+full twelve-wide board with no render error, while `client.bilging.boardWidth` still reads **6**. The
+persisted board and the balance tunable are genuinely independent at runtime, so an existing player's
+save is not corrupted by this slice.
+
+#### 7. The smoke gate — decision 196 confirmed, and the red retired
+
+Taken in the isolated worktree, on **port 5188**, with its own `node_modules` and its own server that
+Playwright started itself. This is a stronger construction than the one the task asked for: rather
+than proving port 5178 empty at one instant and hoping it stayed that way, the shared port was
+removed from the experiment altogether — which is just as well, because 5178 was in fact re-occupied
+by the other agent at 08:10.
+
+Result: **4 passed** — `port.png`, `deck.png`, `puzzle.png` and **`battle.png` all green** — with the
+committed baselines left **untouched** afterwards (`git status` clean on `tests/e2e/__screenshots__`),
+so nothing was re-blessed into a pass. Decision 196 said the long-standing `battle.png` red was a
+squatted port and never a defect. That is now confirmed on a tree no other process could reach.
+**Task files in this lineage should stop carrying the red `battle.png` smoke gate as a ground
+condition — it is retired.**
+
+The two discarded measurements are recorded above rather than quietly dropped, because a green
+number and a meaningless number look identical in a log.
+
+#### Gates
+
+CI is green on both checks on `194b842` and is the gate authority per the task. In the isolated
+worktree the smoke gate is 4/4 as above, and a targeted `node --test` over the six files this slice
+touches or is pinned by — `tests/view/bilgeGesture.test.ts`,
+`tests/puzzle/{move,commands,tokens,critters}.test.ts` and `tests/harness/replay.test.ts` — is
+**52 pass / 0 fail**. Console clean across every scenario driven. The full `npm run check` was
+deliberately not run locally: this task's ground conditions record it being killed at 600s and
+exhausting host memory on this box, and CI covers it.
+
+#### About the previous attempt
+
+This task was reaped after its first claim died: that run stamped no heartbeat, wrote no journal
+line, made no commit, and left a vite listening on 5178. It had claimed at 07:20, when the box was at
+99.15% commit charge with a hook already failing to allocate. Nothing it produced was reused. One
+correction for the record: the reaping run called that leftover vite "provably the dead run's
+orphan" on the strength of its parent process. That was overstated — the parent is the long-lived
+desktop app process tree, which hosts many sessions, so parentage does not identify an owning
+session. The claim was correctly reaped on its lapsed lease; the inference about the process was
+weaker than stated.

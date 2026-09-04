@@ -60,3 +60,27 @@ test('a plain tile in the last column still asks for the swap the sim refuses', 
 
   assert.equal(gestureAt(board, { x: BOARD_WIDTH - 1, y: 0 }), 'swap');
 });
+
+test('a puffer beside a puffer swaps, as the wiki has it', () => {
+  const board = bilge();
+  place(board, 2, 3, PUFFER_CELL);
+  place(board, 3, 3, PUFFER_CELL);
+
+  assert.equal(gestureAt(board, { x: 2, y: 3 }), 'swap');
+});
+
+test('the second puffer of a pair still pops, its own partner being no puffer', () => {
+  const board = bilge();
+  place(board, 2, 3, PUFFER_CELL);
+  place(board, 3, 3, PUFFER_CELL);
+
+  assert.equal(gestureAt(board, { x: 3, y: 3 }), 'poke');
+});
+
+test('a puffer above a puffer pops, the pair being no swap partners', () => {
+  const board = bilge();
+  place(board, 2, 3, PUFFER_CELL);
+  place(board, 2, 4, PUFFER_CELL);
+
+  assert.equal(gestureAt(board, { x: 2, y: 3 }), 'poke');
+});
