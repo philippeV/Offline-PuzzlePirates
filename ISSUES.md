@@ -4,6 +4,111 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — independent review of the slice A repair, PR 14 (OPP-19), cycle 1
+
+Four lenses over `5454fd2` alone. **The repair is correct and nothing blocks.** The two rules are
+byte-identical to `53b5dd5` as claimed — verified by extracting both blocks and comparing them as
+UTF-8 bytes, including indentation, property order, colour literals and trailing whitespace — they
+are placed where the file's component-grouped, base-then-modifier convention puts them, and they win
+on source order against `.pp-button` as they must. Contrast computes to 12.3:1 for the chosen button
+and 7.8–11.0:1 across the sail gradient, all AAA. Every class `minimap.ts` emits was inventoried
+against the stylesheet and only `pp-chart-status` and `pp-chart-course` lack rules, both genuinely
+unstyled containers that encode no state, so no third instance of the defect survives. Scope
+discipline was exemplary: four files, additions only, and three known defects in the very test file
+being edited were deliberately left alone. What follows is what the lenses substantiated and judged
+not worth stopping for.
+
+- **The regression guard tests the wrong proposition, and five separate reintroductions of the
+  original defect leave it green.** `tests/view/minimap.test.ts:125-133` asserts that the string
+  `.<class> {` appears in `panels.css`. The invariant that actually broke is "the chosen voyage
+  renders differently from an unchosen one", and a substring in a file is not that. Confirmed by
+  execution against this repo's happy-dom, not by argument: the assertion still passes when the rule
+  exists but is **empty**; when it is **commented out**; when it is stripped to an irrelevant
+  declaration; when a later equal-specificity `.pp-chart-voyage { background: gray; font-weight: 400 }`
+  is appended, which computes the chosen button back to the unchosen appearance and restores the
+  defect in full; and when the **component renames the class** while the stylesheet is untouched.
+  The guard is not vacuous — reverting only the stylesheet does fail it, with the message the
+  changelog quotes, and that was verified — but it guards one direction only: the CSS being deleted.
+  It is blind to the direction that actually produced this defect, the component drifting away from
+  the CSS.
+
+  This is not hypothetical, and the commit says so itself: the analysis entry added by this very
+  commit records that slice B renames `pp-chart-sail` to `pp-chart-confirm`, that the rule will then
+  match nothing and the confirm control will silently lose its styling "exactly as it was lost the
+  first time", and that this guard will not catch it. So the repair ships with a written admission
+  that its guard does not survive the next merge, against the defect it exists to prevent. Recording
+  it is the right call under the blocking test — the fix is correct, CI is green, and returning a
+  cycle for test quality is the loop this queue exists to avoid — but the guard should be
+  re-pointed before slice B lands, which is the moment it will be needed.
+
+  A stronger mechanism is already within reach and about the same size. The test file's `before()`
+  hook (`:19-22`) already builds a happy-dom `Window`; injecting `panels.css` into a `<style>` there
+  and comparing the computed `fontWeight`/`backgroundColor` of a clicked voyage button against an
+  unclicked sibling closes every row above at once, with no new dependency and no hard-coded class
+  list — the cascade was verified to resolve correctly under happy-dom 20.14.0 in this repo.
+  Alternatively, and more in keeping with where this repo puts source-text gates, a
+  `tools/check-view-state-classes.ts` alongside `check-view-boundary.ts` could extract
+  `classList.toggle('pp-…')` literals from `packages/view/src/**/*.ts` and require a matching
+  selector, which would cover all five conditionally-toggled classes in the view rather than two.
+  The naive variant of that — requiring a rule for *every* `pp-*` class — was tried and flags 23
+  hook-only classes, so the sharp rule is toggled classes specifically.
+
+- **`STATEFUL_CHART_CLASSES` and the test's title are inaccurate for half their contents.**
+  `tests/view/minimap.test.ts:17` and `:125`. `classList.toggle`/`add` across `packages/view/src`
+  yields exactly five toggled classes: `pp-cell-route`, `pp-cell-here`, `pp-cell-selected`,
+  `pp-chart-voyage-chosen` and `pp-tab-active`. **`pp-chart-sail` is not among them** — it is applied
+  once at construction (`minimap.ts:167`) and never removed. So the constant named "stateful", the
+  title "the chart state the chooser *toggles*", and the failure message "so the chart *toggles* a
+  class that draws nothing" are all wrong for one of the two entries. It matters for maintenance
+  rather than correctness: the next reader extending the list has no correct rule to apply, because
+  the stated rule does not describe the list's actual membership.
+
+- **The guard's blast radius stops at the file on disk, not the stylesheet the app ships.**
+  `packages/view/src/panels/panels.ts:1` (`import './panels.css'`) is the only thing that gets the
+  file into the bundle, and nothing asserts it. Delete that import and every panel loses its styling
+  while this guard stays green. The computed-style approach above does not close this either; worth
+  knowing rather than worth fixing here.
+
+- **The L18 obligation was filed at the bottom of this file, under a heading that belongs to a
+  different PR.** This file's third line states its organising rule — non-blocking findings, newest
+  first — and the section this obligation belongs to, `## 2026-09-04 — independent review of slice A,
+  PR 14 (OPP-19)`, is the newest one at the top. The entry was instead appended at end of file, which
+  places it inside `### From the second independent review of PR 12, the slice C-repair` and under
+  `## 2026-09-02 — review of PR 1`. A reader arriving at that heading will read a slice-A merge
+  obligation as a PR-12 slice-C finding. L18 specified only that `ISSUES.md` is the right home
+  because it travels with the branch, so the heading was not dictated — but the file's own convention
+  was. Mitigating: the recent `2026-09-04` entries at the bottom were already bottom-appended the
+  same way, so this follows established bad practice rather than inventing it. The whole point of
+  the entry is to be found and trusted by someone who was not here.
+
+- **The convergence claim in that entry, and in decision L17, is overstated.** The entry says the two
+  implementations overlap "even though `panels.css` now will not", and L17 goes further: "when slice
+  5b reaches a PR the `.pp-chart*` block conflicts nowhere." Diffing the whole `.pp-chart {` to
+  `.pp-chat {` region between `53b5dd5` and `5454fd2` leaves four surviving divergences inside that
+  exact block: `.pp-chart` has `display: flex; flex-direction: column; max-height: 48vh` on 5b
+  against `overflow-y: auto` here; `.pp-chart-grid` has `min-height: 0; overflow-y: auto` against
+  `flex: 0 0 auto`; `.pp-chart-choice` carries `flex: 0 0 auto` only on 5b; and
+  `.pp-cell-island:disabled` exists only here. The true and narrower claim is that *the two new
+  rules* will not conflict. L17's own prose anticipates part of this and then contradicts itself, and
+  never mentions the dropped `.pp-chart-choice` declaration at all. Whoever merges 5b will hit a
+  `.pp-chart*` conflict regardless and must not assume the region is clean because the note said so.
+
+- **`.pp-chart-sail` pins `border-color` to gold, which removes the only hover affordance from the
+  panel's primary action.** `packages/view/src/panels/panels.css:369`. `.pp-button:hover` (`:104`)
+  gives feedback solely through `border-color: var(--pp-gold)`; before this commit Set sail sat at
+  `--pp-edge` and visibly turned gold on hover, and now it is gold at rest, so hovering does nothing.
+  The same applies to the chosen voyage button. Reported as an observation rather than a defect:
+  `.pp-tab-active` already establishes exactly this pattern in the codebase, and the block was taken
+  from `53b5dd5` character for character on purpose, so deviating here would defeat the convergence
+  the decision was made for. Worth a `:hover` refinement when the two branches are reconciled.
+
+- **The changelog's "591 tests" is not reconcilable with this file's own record of the suite.** An
+  entry above records the full serial run as 580/1 on this machine, failing
+  `tests/gates/purity.test.ts` with a child-spawn crash under the standing node-process-exhaustion
+  advisory. A clean 591 means either the flake did not fire or a different runner shape was used, and
+  the changelog does not say which. CI is green on the branch, so this is a reporting gap rather than
+  a doubt about the gate.
+
 ## 2026-09-04 — independent review of slice A, PR 14 (OPP-19)
 
 Nine non-blocking findings from the four-lens review. The one blocking finding — `pp-chart-voyage-chosen`

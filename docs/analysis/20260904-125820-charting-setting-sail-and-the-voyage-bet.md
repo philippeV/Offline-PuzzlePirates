@@ -503,3 +503,83 @@ styling, silently, exactly as it was lost the first time. Slice B's own `STATEFU
 guard will not catch it either, because slice B did not add one. Whoever merges the two must rename
 the CSS rule alongside the class and extend the guard. Recorded here rather than pre-emptively fixed:
 this branch has no `pp-chart-confirm` to style, and slice B is a separate open PR.
+
+### 2026-09-04 — independent review, slice A repair (OPP-19), cycle 1
+
+Four lenses over `5454fd2` alone; `ae8edbd` and earlier were passed at cycle 0 and were not
+re-reviewed. **Approved — no blocking findings.** Forwarded to the test stage.
+
+**The blocking cycle 0 finding is genuinely closed.** Verified rather than accepted:
+
+- **L17's byte-identity claim holds.** Both rule blocks were extracted from
+  `53b5dd5:packages/view/src/panels/panels.css` and from `5454fd2` and compared as UTF-8 bytes —
+  identical through indentation, property order, colour literals, gradient argument spacing and
+  trailing whitespace. The cited source range `:367-380` is also correct.
+- **The rules actually select the elements the component classes.** `dom.ts:25-30` builds every
+  button as `pp-button <className>`; the three voyage buttons carry `pp-chart-voyage` plus the
+  toggled `pp-chart-voyage-chosen`, and Set sail carries `pp-chart-sail`. All selectors are
+  specificity (0,1,0), so source order decides, and both new rules sit after `.pp-button` (`:94`) and
+  `.pp-chart-voyage` (`:356`) — correct. `.pp-chart-voyage` sets only `text-transform`, so there is
+  no property collision at all. The two higher-specificity button rules in the file are scoped to
+  `.pp-td`, which `minimap.ts` never creates.
+- **No element can carry both new classes**, so the `background` shorthand cannot collide:
+  `paintVoyageTypes` iterates only `voyageTypeControls`, and the sail button is never in that map.
+- `--pp-gold` and `--pp-raised` are declared on `.pp-overlay` and genuinely inherit into the chart.
+  Contrast is 12.3:1 for the chosen button and 7.8–11.0:1 across the sail gradient — all AAA.
+- **No regression anywhere.** Both class names occur only in `minimap.ts`, `panels.css`,
+  `minimap.test.ts` and prose; no class name is dynamically constructed with a `pp-chart-` prefix;
+  `panels.css` is 15 insertions and 0 deletions, a pure insertion. Baselines cannot move, because
+  the smoke suite screenshots `#stage canvas` and `#stage` is a sibling of `#panels`.
+- **Every class the component emits was inventoried against the stylesheet.** Only `pp-chart-status`
+  and `pp-chart-course` lack rules, and the "deliberately unstyled container" claim was checked
+  rather than accepted: both are plain divs created and appended once, never toggled, hidden or
+  conditionally classed, so neither encodes state, and their children carry their own styling. There
+  is no state of the chooser in which the defect survives.
+- **The guard is not vacuous.** `9ea910b`'s stylesheet contains neither class name, so reverting
+  only the CSS fails at the first entry with exactly the message the changelog quotes.
+- Scope was exactly the one blocking finding: four files, additions only, and three known
+  non-blocking defects in the very test file being edited were correctly left alone.
+- No dependency movement, no `eval`/dynamic import/`innerHTML`, and no `url()`, `@import` or
+  `@font-face` anywhere in the stylesheet. The test's `fileURLToPath(new URL(…, import.meta.url))`
+  is cwd-independent and is the established idiom in eight other test files; the repo's purity gate
+  is scoped to `packages/sim/src/**` and gate fixtures, not to test hermeticity — it performs
+  filesystem I/O and spawns processes itself — so the new read violates nothing.
+
+**The principal non-blocking finding, recorded because it will matter soon.** The guard asserts that
+the string `.<class> {` appears in `panels.css`, where the invariant that broke is "the chosen
+voyage renders differently from an unchosen one". Five reintroductions of the original defect were
+confirmed **by execution** to leave it green: an empty rule, a commented-out rule, a rule stripped to
+an irrelevant declaration, a later equal-specificity `.pp-chart-voyage` override that computes the
+chosen button back to the unchosen appearance, and a rename of the class in the component with the
+stylesheet untouched. The last is the one that matters: this commit's own changelog records that
+slice B renames `pp-chart-sail` to `pp-chart-confirm` and that this guard will not catch it. So the
+repair ships with a written admission that its guard does not survive the next merge, against the
+defect it exists to prevent.
+
+Judged not blocking under the contract's test — the fix itself is correct, CI is green, and
+returning a cycle for test quality is precisely the loop the queue is built to avoid — but the guard
+should be re-pointed before slice B lands. Two mechanisms are already within reach and about the
+same size: injecting `panels.css` into the `<style>` of the happy-dom `Window` the test file's
+`before()` hook already builds and comparing computed styles between a clicked and an unclicked
+button (the cascade was verified to resolve correctly under happy-dom 20.14.0 in this repo), or a
+`tools/check-view-state-classes.ts` alongside `check-view-boundary.ts` deriving the class list from
+`classList.toggle('pp-…')` literals, which would cover all five conditionally-toggled classes rather
+than two. Related and recorded with it: `STATEFUL_CHART_CLASSES` is misnamed, because
+`pp-chart-sail` is applied once at construction and is not toggled at all.
+
+**A correction to L17 and to the `ISSUES.md` entry L18 required.** Both claim the `.pp-chart*` block
+will not conflict when slice 5b reaches a PR — L17 says it "conflicts nowhere". Diffing the whole
+`.pp-chart {` to `.pp-chat {` region between `53b5dd5` and `5454fd2` leaves four divergences inside
+that exact block: `.pp-chart` (`display: flex` / `max-height: 48vh` against `overflow-y: auto`),
+`.pp-chart-grid` (`min-height: 0; overflow-y: auto` against `flex: 0 0 auto`), `.pp-chart-choice`
+(`flex: 0 0 auto` on 5b only) and `.pp-cell-island:disabled` (here only). The true claim is the
+narrower one: *the two new rules* will not conflict. Whoever merges 5b will hit a `.pp-chart*`
+conflict regardless. Separately, that entry was appended at the bottom of `ISSUES.md` under a
+heading belonging to PR 12, against the file's own newest-first rule.
+
+**The merge hazard is confirmed from this side too**, and is now recorded on both branches, in both
+PRs and in this document. Slice B renames `.pp-chart-sail` to `.pp-chart-confirm`; this repair
+correctly styles `.pp-chart-sail`, the class on *this* branch. Neither branch is wrong alone and
+there is no textual conflict, because slice B is based on slice A at `ae8edbd`, which predates this
+repair. Whoever brings slice B onto the repaired slice A must rename the rule and extend the guard,
+or the confirm control silently loses its primary styling.
