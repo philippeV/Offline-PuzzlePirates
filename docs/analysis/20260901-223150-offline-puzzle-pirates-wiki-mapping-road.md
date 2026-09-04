@@ -5577,3 +5577,97 @@ button cannot be reached by click or keyboard on a real sloop, that the refusal 
 with the chat overlay actually present rather than merely computed to be clear of it, that an empty
 token pool at turn 1 disables submit rather than refusing after the click, and that a lost battle
 shows the corrected message on both surfaces. Those are the test stage's.
+
+## 2026-09-04 — physical test, UI sweep slice B (PR 11)
+
+Driven in a real headless Chromium at 1280x720, deviceScaleFactor 2, against a dev server this
+stage started on port **5199**, not the squatted 5178 — decision 159's hazard is still live, the
+orphaned `opp-slice5` vite still holds 5178 (PID 39580). The in-app browser pane was tried first
+and abandoned: its `requestAnimationFrame` never fires (0 frames in 3.2s), and since the sim clock
+is rAF-driven the world does not tick there, so nothing time-dependent can be observed in it.
+
+The battle planner is drawn on the Pixi canvas, not in the DOM — there is no `pp-battle` class
+anywhere in `#panels` — so every planner assertion below is a real pointer event at a canvas
+coordinate plus an image, never an accessibility-tree read. The chat, chart and Ye/Vessel/Booty/
+Market widget *are* DOM and were read directly.
+
+### The four claims the review handed down
+
+**Finding 8, the hidden Rest — holds.** On the sloop all four phase rows carry `—`, `◄`, `▲`, `►`
+and nothing else. Clicking Rest's own slot — the last position, page (753.5, 199.5) — changes
+nothing: the draft stays all `—`, no refusal appears, submit stays enabled. There is no keyboard
+route either, and not because the button refuses focus: `#stage canvas` has `tabIndex` -1 and
+**zero DOM children**, so no planner button has any tab-order presence at all.
+
+**Finding 2, affordability — holds, with one nuance worth recording.** At battle open the pool is
+empty (`left`, `forward`, `right` all zero) and `Set the turn` is correctly *enabled*, because the
+opening all-`none` draft costs nothing and is affordable. The fix bites the moment a move is
+picked: clicking `▲` greys the button out and prints `Ye hold no such move token.` in red. Clicking
+the greyed button then left `turnIndex` at 0 — the refusal now arrives before the click, not after
+it, which is the whole point of the finding.
+
+**Finding 7, the chat overlap — holds, measured live.** `.pp-chat`'s top edge is at **573.16**.
+The refusal line renders at ~472 and the panel's last line at ~486. Clear by ~87px with the overlay
+physically stacked, not merely computed to be clear of it. This corroborates the review's 448-486.
+
+**Finding 4, the lost-battle message — holds on the surface that a player can see, and only that
+one.** A real end-of-battle was driven through the shipped `Break off` button (the disengage
+counter was zeroed through the save text so the button was live) and the log line rendered into the
+chat DOM: `The brigand slips away.` So `endedTextOf` reaches the player. The `player-lost` arm's
+string is pinned by `tests/view/log.test.ts`. The battle scene's veil is a different story — see
+decision 165.
+
+#### 163. Decision 161 is overturned on the facts: a player can reach a three-mover
+
+The premise "the shipped client only ever commissions a sloop, and nothing else in `packages/view`
+commissions a ship" is true and irrelevant, because commissioning is not the only way a hull enters
+`state.ships`. `Sim.load` is the other way, and the Ye panel exposes it as a first-class button
+with instructions. Verified physically, no devtools: `Save game` → change the one literal
+`"shipClass":"sloop"` to `"war-brig"` in the `Save text` box → `Load game`. Accepted, status
+`Yer voyage be restored.`, and the panel reads `Player · War brig` inside the running battle. Slice
+A's `refuseUnknownShipClasses` validates *known*, not *sloop*, so all ten three-movers pass.
+
+#### 164. The consequence the review drew from 161 does not follow, so nothing is sent back
+
+161 said the two Rest defects were latent; the test task said that if they were reachable they
+would be blocking. They are reachable and they are still not blocking, for two separate reasons
+established here rather than argued:
+
+- The Rest button at its new last index **works**. On the war-brig it renders in every row, clicking
+  it selects it, the opening refusal clears and `Set the turn` becomes enabled. One click recovers.
+  The `MOVE_OPTIONS` reorder introduced no index desync against `moveButtons`.
+- The opening refusal is **pre-existing**, not this branch's doing. At base `0222630`,
+  `planRejectionOf('war-brig', idlePlan())` already returns `plan-move-budget`; run directly, base
+  answers `null` for sloop and `plan-move-budget` for war-brig, junk and grand-frigate alike. This
+  slice changed that line only by appending `?? affordable(...)`, which is evaluated solely when
+  `planRejectionOf` returns null, and its `plan.ts` diff is a single `export` keyword.
+
+So what changed is the *knowledge* that the defect is reachable, not the defect. It stays in
+`ISSUES.md` with its priority raised, and `plan.ts:38`'s conflated reason remains the repair.
+
+#### 165. Decision 158's rationale is false: the `OUTCOME_TEXTS` veil is never presented
+
+158 justified extending finding 4 into `scenes/battle.ts` on the grounds that the veil is "shown at
+the same moment and more prominent" than the log line. It is not shown at all. `inBattle` is false
+the instant `outcome !== 'running'`, and `advance()` calls `syncScene()` — `battle` → `deck` —
+before `announce()`. Subscribing to the client across a real `Break off` recorded exactly **one**
+notification frame with scene `battle` and a finished outcome, and `deck` for every frame after.
+For an ending produced by a tick instead of a dispatch — which is how `player-won` and
+`player-lost` always arise, inside `runTurn` — `syncScene` runs before `announce` in the same call,
+so the veil paints zero frames. `The brigand carries the day.` is unreachable, and `returnButton`,
+visible only when `finished`, is unreachable with it.
+
+The extension is upheld anyway and 162 stands: the string was wrong, correcting it costs nothing,
+and the veil will become visible the day the battle scene holds the player until they dismiss it.
+But the *reason* given was not true and is corrected on the record, the same way 160 corrected 136's
+reason. The dead veil is filed in `ISSUES.md`, not repaired here — it is not this slice's scope.
+
+#### 166. The gates were measured by CI, because this machine could not run them
+
+`npm run build` is exit 0 locally. `npm run check` never completed in three attempts: the box was
+at 99.4% of its commit limit (669MB free of 15,790; commit 64,532 of 64,942) with about 100
+orphaned `node.exe` processes, and `node --test` children died with `spawn UNKNOWN` (errno -4094,
+`STATUS_COMMITMENT_LIMIT`) and `spawn ENOMEM` — 48 test *files* aborted before reporting a single
+subtest, with zero assertion failures among them. GitHub CI ran `npm run check` on `323594e` twice,
+both success. That is the measurement of record for this merge. The orphaned processes were left
+untouched: they belong to other sessions and reaping them is the human's call, not an agent's.

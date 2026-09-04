@@ -4,6 +4,55 @@ Non-blocking findings, newest first. Blocking findings never land here — they 
 analysis stage. Each entry says why it was judged not worth stopping for, and when it will start to
 matter.
 
+## 2026-09-04 — physical test of UI sweep slice B, PR 11
+
+Four claims were driven in a real headless Chromium at 1280x720, deviceScaleFactor 2, against a
+dev server on port 5199 rather than the squatted 5178. All four hold. Two statements made by
+earlier stages do not, and are corrected below rather than sent back, because neither is a
+regression this branch introduced.
+
+**Decision 161's premise is wrong: a player can reach a three-mover, with no devtools.** The Ye
+panel ships `Save game`, a `Save text` textarea and `Load game`, and its own note tells the player
+to paste the text back. `Save game` writes the whole world as JSON containing the literal
+`"shipClass":"sloop"`; changing those eight characters to `"war-brig"` and pressing `Load game` is
+accepted — status `Yer voyage be restored.` — and the battle panel then reads `Player · War brig`.
+Slice A's `refuseUnknownShipClasses` validates that a class is *known*, not that it is a sloop, so
+all ten three-movers pass it. Commissioning is not the only door into `state.ships`; `Sim.load` is
+the other, and it is a shipped button.
+
+**But the two Rest defects are not what that makes them.** On the war-brig, Rest renders as the
+last option of every phase row, clicking it selects it, the opening refusal clears and `Set the
+turn` becomes enabled — one click recovers, and the reorder introduced no index desync between
+`MOVE_OPTIONS` and `moveButtons`. And the opening refusal itself is **pre-existing**: at base
+`0222630`, `planRejectionOf('war-brig', idlePlan())` already returns `plan-move-budget`, and this
+slice changed that line only by appending `?? affordable(...)`, which fires solely when
+`planRejectionOf` returns null. The `plan.ts` diff is one `export` keyword. So the misleading
+opening message is older than this branch and stays filed; what is new is that it is now known to
+be *reachable*, which raises its priority for whichever slice next touches `plan.ts:38`.
+
+**Decision 158's rationale is wrong: the `OUTCOME_TEXTS` veil is never presented.** It is not
+"shown at the same moment and more prominent" than the log line. `GameClient.inBattle` is false the
+instant `outcome !== 'running'`, and `advance()` calls `syncScene()` — which moves the scene from
+`battle` to `deck` — before `announce()`. Measured by subscribing to the client across a real
+`Break off`: exactly **one** notification frame carried scene `battle` with a finished outcome,
+then every later frame was `deck`. For an ending produced by a tick rather than by a dispatch —
+which is how `player-won` and `player-lost` always arise, inside `runTurn` — `syncScene` runs
+before `announce` in the same call, so the veil paints zero frames. The corrected string
+`The brigand carries the day.` is therefore unreachable in the shipped client. The change is
+harmless and the unreachability predates it, so it is filed, not reverted; but the veil is dead
+code until the battle scene holds the player until they dismiss it, and `returnButton` — which the
+same branch only makes visible when `finished` — is dead with it.
+
+**The gates could not be measured on this machine, and CI was used instead.** `npm run build` is
+exit 0 locally. `npm run check` never completed in three attempts: the box sat at 99.4% of its
+commit limit (`FreePhysicalMB` 669 of 15,790; `CommitUsedMB` 64,532 of 64,942) with about 100
+orphaned `node.exe` processes, mostly `desktop-commander` MCP servers going back to 2026-09-02, and
+`node --test` children died with `spawn UNKNOWN` (errno -4094, `STATUS_COMMITMENT_LIMIT`) and
+`spawn ENOMEM`. Not one assertion failed; 48 whole test *files* aborted before reporting. GitHub
+CI ran `npm run check` on `323594e` twice, both success, in a clean runner — that is the
+measurement of record. The orphaned processes were left alone: they belong to finished sessions
+of other agents and killing them is the human's call.
+
 ## 2026-09-04 — independent review of UI sweep slice B, PR 11
 
 Four lenses, no blocking finding. The verification below was re-run from cold rather than inherited:
