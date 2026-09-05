@@ -74,7 +74,7 @@ export class GameClient {
   }
 
   get atSea(): boolean {
-    return this.sim.state.voyage !== null;
+    return this.sim.state.voyage?.phase === 'under-way';
   }
 
   get inBattle(): boolean {

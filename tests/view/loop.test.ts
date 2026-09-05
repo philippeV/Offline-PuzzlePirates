@@ -50,6 +50,9 @@ test('a player drives the whole pillage loop through the client', () => {
     'accepted',
   );
 
+  assert.ok(client.canEnter('port'), 'a charted course must not strand the player aboard');
+  assert.equal(client.dispatch({ op: 'voyage.sail' }).status, 'accepted');
+
   client.advance(1);
   assert.ok(client.atSea);
   assert.equal(client.canEnter('port'), false);
@@ -90,6 +93,7 @@ test('the client shows the player what happened on the voyage', () => {
     toIslandId: DESTINATION,
     voyageType: 'pillage',
   });
+  client.dispatch({ op: 'voyage.sail' });
   sailToDestination(driverOf(client), MAX_VOYAGE_TICKS);
   client.dispatch({ op: 'voyage.port' });
 
@@ -109,6 +113,7 @@ test('the client refuses to leave the deck for the port while at sea', () => {
     toIslandId: DESTINATION,
     voyageType: 'pillage',
   });
+  client.dispatch({ op: 'voyage.sail' });
 
   assert.equal(client.enterScene('port'), false);
   assert.equal(client.scene, 'port');

@@ -13,6 +13,8 @@ const WELL_SHAPED: [Command, string][] = [
     { op: 'voyage.chart', shipId: 1, toIslandId: 'doyle', voyageType: 'trade' },
     'world-not-started',
   ],
+  [{ op: 'voyage.sail' }, 'world-not-started'],
+  [{ op: 'voyage.abandon' }, 'world-not-started'],
   [{ op: 'voyage.port' }, 'world-not-started'],
   [{ op: 'market.buy', shipId: 1, commodityId: 'wood', units: 3 }, 'world-not-started'],
   [{ op: 'market.sell', shipId: 1, commodityId: 'wood', units: 0 }, 'world-not-started'],

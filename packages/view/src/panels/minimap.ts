@@ -41,7 +41,8 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
   const courseFacts = element('div', 'pp-chart-course');
   const voyageTypeControls = new Map(VOYAGE_TYPES.map((type) => [type, voyageTypeButton(type)]));
   const voyageTypeRow = actionRow([...voyageTypeControls.values()]);
-  const sailRow = actionRow([setSailButton()]);
+  const confirmRow = actionRow([chartCourseButton()]);
+  const abandonRow = actionRow([abandonCourseButton()]);
   let selectedIslandId: IslandId | null = null;
   let selectedVoyageType: VoyageType = DEFAULT_VOYAGE_TYPE;
 
@@ -50,8 +51,8 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
   root.tabIndex = -1;
   root.setAttribute('aria-label', 'Chart of the archipelago');
   grid.append(...cells.map((cell) => cell.node));
-  course.append(courseTitle, courseFacts, voyageTypeRow, sailRow);
-  chooser.append(status, course);
+  course.append(courseTitle, courseFacts, voyageTypeRow, confirmRow);
+  chooser.append(status, course, abandonRow);
   root.append(element('h2', 'pp-chart-title', 'Chart'), grid, chooser);
   host.append(root);
   refresh();
@@ -109,8 +110,14 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
   function paintChooser(atIslandId: IslandId | null): void {
     clear(status);
     const voyage = client.state.voyage;
+    const awaitingDeparture = voyage !== null && voyage.phase === 'charted';
     const toIslandId = voyage === null ? selectedIslandId : null;
     course.hidden = toIslandId === null;
+    abandonRow.hidden = !awaitingDeparture;
+    if (awaitingDeparture) {
+      status.append(note('Yer course be charted. Set sail at the helm.'));
+      return;
+    }
     if (voyage !== null) {
       status.append(
         factRow('Leg', `${voyage.legIndex} of ${voyage.route.length - 1}`),
@@ -140,12 +147,12 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
     if (route.length === 0) {
       courseFacts.append(note(fromIslandId === null ? 'Chart a course from port.' : 'No route runs there.'));
       voyageTypeRow.hidden = true;
-      sailRow.hidden = true;
+      confirmRow.hidden = true;
       return;
     }
     courseFacts.append(factRow('Leagues', String(route.length - 1)));
     voyageTypeRow.hidden = false;
-    sailRow.hidden = false;
+    confirmRow.hidden = false;
   }
 
   function paintVoyageTypes(): void {
@@ -163,8 +170,8 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
     });
   }
 
-  function setSailButton(): HTMLButtonElement {
-    return button('Set sail', 'pp-chart-sail', () => {
+  function chartCourseButton(): HTMLButtonElement {
+    return button('Chart course', 'pp-chart-confirm', () => {
       const toIslandId = selectedIslandId;
       const ship = context.playerShip();
       if (toIslandId === null || ship === undefined) return;
@@ -174,6 +181,12 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
         toIslandId,
         voyageType: selectedVoyageType,
       });
+    });
+  }
+
+  function abandonCourseButton(): HTMLButtonElement {
+    return button('Abandon course', 'pp-chart-abandon', () => {
+      client.dispatch({ op: 'voyage.abandon' });
     });
   }
 

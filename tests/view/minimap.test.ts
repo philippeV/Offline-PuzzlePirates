@@ -14,7 +14,7 @@ const SEED = 12648430;
 const PANELS_STYLESHEET = fileURLToPath(
   new URL('../../packages/view/src/panels/panels.css', import.meta.url),
 );
-const STATEFUL_CHART_CLASSES = ['pp-chart-voyage-chosen', 'pp-chart-sail'];
+const CHART_CLASS_PATTERN = /\.pp-chart[\w-]*/g;
 
 before(() => {
   const window = new Window();
@@ -46,6 +46,49 @@ function courseSection(host: HTMLElement): HTMLElement {
   return course;
 }
 
+function chartCourse(host: HTMLElement): void {
+  const confirm = courseSection(host).querySelector<HTMLButtonElement>('.pp-chart-confirm');
+  if (confirm === null) throw new Error('the chart has no confirm control');
+  confirm.click();
+}
+
+function abandonControl(host: HTMLElement): HTMLButtonElement {
+  const control = host.querySelector<HTMLButtonElement>('.pp-chart-abandon');
+  if (control === null) throw new Error('the chart has no abandon control');
+  return control;
+}
+
+function abandonRow(host: HTMLElement): HTMLElement {
+  const row = abandonControl(host).parentElement;
+  if (row === null) throw new Error('the abandon control sits in no row');
+  return row;
+}
+
+function chartClassesIn(host: HTMLElement, into: Set<string>): Set<string> {
+  for (const node of host.querySelectorAll('*')) {
+    for (const className of node.classList) {
+      if (className.startsWith('pp-chart')) into.add(className);
+    }
+  }
+  return into;
+}
+
+function renderedChartClasses(): Set<string> {
+  const { host, refresh } = mountChart();
+  const rendered = chartClassesIn(host, new Set());
+  islandCell(host, 'Doyle Island').click();
+  chartClassesIn(host, rendered);
+  chartCourse(host);
+  refresh();
+  return chartClassesIn(host, rendered);
+}
+
+function styledChartClasses(): Set<string> {
+  const stylesheet = readFileSync(PANELS_STYLESHEET, 'utf8');
+  const selectors = stylesheet.match(CHART_CLASS_PATTERN) ?? [];
+  return new Set(selectors.map((selector) => selector.slice(1)));
+}
+
 test('an island cell survives the simulation running under the pointer', () => {
   const { host, context, refresh } = mountChart();
   const doyle = islandCell(host, 'Doyle Island');
@@ -72,7 +115,7 @@ test('clicking an island offers that course, its voyage types and a confirm cont
   assert.equal(course.hidden, false);
   assert.match(course.textContent ?? '', /Course to Doyle Island/);
   assert.equal(course.querySelectorAll('.pp-chart-voyage').length, 3);
-  assert.equal(course.querySelectorAll('.pp-chart-sail').length, 1);
+  assert.equal(course.querySelectorAll('.pp-chart-confirm').length, 1);
 });
 
 test('the route the course would sail is previewed before the ship departs', () => {
@@ -108,7 +151,7 @@ test('the chart keeps keyboard focus while the simulation runs', () => {
   assert.ok(document.activeElement === doyle, 'the cell lost keyboard focus while the world ran');
 });
 
-test('the chosen voyage type and Set sail charts the course', () => {
+test('the chosen voyage type and Chart course charts the course', () => {
   const { host, context } = mountChart();
 
   islandCell(host, 'Doyle Island').click();
@@ -116,19 +159,48 @@ test('the chosen voyage type and Set sail charts the course', () => {
     (control) => control.textContent === 'trade',
   );
   trade?.click();
-  courseSection(host).querySelector<HTMLButtonElement>('.pp-chart-sail')?.click();
+  chartCourse(host);
 
   assert.equal(context.client.state.voyage?.type, 'trade');
   assert.ok((context.client.state.voyage?.route.length ?? 0) > 1);
 });
 
-test('the stylesheet renders the chart state the chooser toggles', () => {
-  const stylesheet = readFileSync(PANELS_STYLESHEET, 'utf8');
+test('charting a course leaves the pirate ashore until they set sail', () => {
+  const { host, context } = mountChart();
 
-  for (const className of STATEFUL_CHART_CLASSES) {
+  islandCell(host, 'Doyle Island').click();
+  chartCourse(host);
+
+  assert.equal(context.client.state.voyage?.phase, 'charted');
+  assert.equal(context.client.state.pirate?.atIslandId, 'alkaid');
+  assert.equal(context.client.atSea, false);
+});
+
+test('a charted course can be abandoned without leaving the island', () => {
+  const { host, context, refresh } = mountChart();
+
+  assert.equal(abandonRow(host).hidden, true);
+
+  islandCell(host, 'Doyle Island').click();
+  chartCourse(host);
+  refresh();
+
+  assert.equal(abandonRow(host).hidden, false);
+  assert.match(host.textContent ?? '', /Set sail at the helm\./);
+
+  abandonControl(host).click();
+
+  assert.equal(context.client.state.voyage, null);
+  assert.equal(context.client.state.pirate?.atIslandId, 'alkaid');
+});
+
+test('the stylesheet renders the chart state the chooser toggles', () => {
+  const rendered = renderedChartClasses();
+
+  for (const className of styledChartClasses()) {
     assert.ok(
-      stylesheet.includes(`.${className} {`),
-      `panels.css carries no rule for .${className}, so the chart toggles a class that draws nothing`,
+      rendered.has(className),
+      `panels.css styles .${className}, which the chart no longer renders`,
     );
   }
 });

@@ -10,6 +10,7 @@ import {
   type Command,
   type ShipClassId,
   type Snapshot,
+  type VoyagePhase,
   type WorldState,
 } from '../../packages/sim/src/index.ts';
 import { PILLAGE_LOOP_SCENARIO, createScenarioSim } from '../../packages/harness/src/scenarios.ts';
@@ -100,6 +101,13 @@ const SPOILT_SAVES: SpoiltSave[] = [
       state.voyage!.route[1] = UNCHARTED_LEAGUE_POINT;
     },
     message: 'save.voyage.route[1] must hold a known league point',
+  },
+  {
+    what: 'a voyage in a phase the world does not sail',
+    spoil: (state) => {
+      state.voyage!.phase = 'moored' as VoyagePhase;
+    },
+    message: 'save.voyage.phase must hold a known voyage phase',
   },
   {
     what: 'a voyage sailed by a ship that is not aboard',

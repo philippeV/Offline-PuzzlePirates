@@ -7,6 +7,10 @@ export type VoyageType = 'pillage' | 'trade' | 'evade';
 
 export const VOYAGE_TYPES: readonly VoyageType[] = ['pillage', 'trade', 'evade'];
 
+export type VoyagePhase = 'charted' | 'under-way';
+
+export const VOYAGE_PHASES: readonly VoyagePhase[] = ['charted', 'under-way'];
+
 export interface PirateState {
   poe: number;
   atIslandId: IslandId | null;
@@ -37,8 +41,13 @@ export interface VoyageState {
   legTicks: number;
   legTicksRequired: number;
   encounters: number;
+  phase: VoyagePhase;
 }
 
 export function isVoyageType(value: string): value is VoyageType {
   return VOYAGE_TYPES.includes(value as VoyageType);
+}
+
+export function isVoyagePhase(value: unknown): value is VoyagePhase {
+  return VOYAGE_PHASES.includes(value as VoyagePhase);
 }

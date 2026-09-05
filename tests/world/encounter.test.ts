@@ -46,7 +46,7 @@ function sailingState(seed: number, voyageType: VoyageType): WorldState {
   state.ships.push(ship);
   const charted = chartVoyage(state, ship, 'mcguffins-isle', voyageType);
   assert.ok(typeof charted !== 'string', String(charted));
-  state.voyage = charted;
+  state.voyage = { ...charted, phase: 'under-way' };
   return state;
 }
 

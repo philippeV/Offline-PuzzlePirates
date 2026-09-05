@@ -68,6 +68,8 @@ export function parseCommand(value: unknown): Command {
         toIslandId: domainId(fields, 'toIslandId'),
         voyageType: domainId(fields, 'voyageType'),
       };
+    case 'voyage.sail':
+    case 'voyage.abandon':
     case 'voyage.port':
       return { op };
     case 'market.buy':

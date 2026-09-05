@@ -254,6 +254,139 @@ All four slice stories were created under OPP-17 by this analysis.
 
 ## Changelog
 
+### 2026-09-04 — development, slice B merged onto agent/develop (OPP-20)
+
+Integration only. **No sim code was touched** — the abandon guard is correct and proven, and this
+slice's behaviour is unchanged. This entry exists because the integration itself carried a defect
+that no gate in the repository could see.
+
+**The task asked for a rebase; a rebase is not performable here.** Rebasing a branch that is already
+pushed rewrites published history and therefore requires a force-push, which `autonomous-queue` and
+`queue-development` both forbid outright. The permitted equivalent was used instead: `agent/develop`
+was **merged into** the feature branch, which resolves the same conflicts, makes PR 15 mergeable and
+pushes as a fast-forward. It is also this repository's established pattern (`a134c3b`, "merge
+agent/develop into slice 5b"). Only the mechanism changed; the substance of the task did not.
+
+**The predicted hazard was confirmed live, and it was worse than the hand-off assumed.** The merge
+conflicted in exactly four files — `ISSUES.md`, this document, `minimap.ts` and `minimap.test.ts` —
+while **`panels.css` auto-merged with no conflict at all**. Nobody resolving this merge would have
+been forced to open the stylesheet. It silently acquired slice A's `.pp-chart-sail` rule, which
+after the merge matched nothing, because slice B renders `pp-chart-confirm`. The confirm control
+would have shipped unstyled with every gate green.
+
+**Resolutions.** Both documentation conflicts kept both sides in full; the two branches had no
+overlapping changelog headings, so nothing was lost and nothing duplicated (13 entries).
+`minimap.ts` resolved to HEAD on the merits hunk by hunk: slice B branched **from** slice A's
+branch, so both sides already carry slice A's build-once-repaint-in-place refactor identically and
+`diff develop head` shows develop contributes nothing HEAD lacks — the resolution preserves slice A's
+repaint discipline rather than discarding it (`abandonRow.hidden` is toggled, not rebuilt).
+`minimap.test.ts` took HEAD except for slice A's stylesheet guard, which was re-added and rewritten.
+
+**`.pp-chart-sail` renamed to `.pp-chart-confirm`** in `panels.css`. No reference to the old class
+survives anywhere in the repository.
+
+**Slice A's guard was replaced, because it stayed green through exactly the rename that breaks the
+UI** — it only asserted that the substring `.pp-chart-sail {` still appeared in the file, driven by a
+hand-maintained constant. The replacement derives from the rendered DOM instead: it mounts the chart,
+walks it through three states, and asserts every `.pp-chart*` rule in the stylesheet is actually
+rendered. **Deviation recorded honestly:** this is the *stylesheet → DOM* direction, not the
+*DOM → stylesheet* direction the task asked for. The forward direction cannot be made green without
+inventing rules for `pp-chart-status`, `pp-chart-course` and `pp-chart-abandon`, which are
+structural or default-styled — or without reintroducing the very allowlist being removed. The
+consequence, filed in `ISSUES.md`, is that "a new control ships with no rule at all" is still
+uncaught. The guard was proved to bite: renaming the rule back makes it fail with
+`panels.css styles .pp-chart-sail, which the chart no longer renders`, and restoring makes it pass.
+
+**Verified in a real browser, because this defect is invisible to every other gate.** Dev server on
+port 5191 (5178 was already held by another session's server — deliberately not disturbed). Selecting
+Doyle Island reveals the confirm control, and its *computed* style carries the rule: border
+`rgb(255, 212, 121)`, `linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))`, weight 600, full width
+270.4px. Zero `.pp-chart-sail` nodes in the DOM. Slice A's `.pp-chart-voyage-chosen` also resolves
+correctly post-merge (gold background on the selected voyage type). The whole slice B loop then ran:
+charting logged "Course set for Doyle Island, 2 leagues", the status became "Yer course be charted.
+Set sail at the helm", the abandon control appeared, and abandoning logged "Course struck. Ye bide at
+Alkaid Island."
+
+**Gates:** `npm run check` exit 0, **609 pass / 0 fail** — the expected 608 plus the one new guard
+test. `npm run smoke` 4 passed with all four baseline PNGs md5-identical; nothing re-blessed. One
+TypeScript fix was needed en route, in the new test only: `matchAll` destructuring produced
+`Set<string | undefined>` under the repo's strict indexed access, rewritten as `match()` + `slice(1)`.
+
+**A trap worth knowing about, filed in `ISSUES.md`:** the first smoke run reported 4 failures that
+had nothing to do with this change. A dev server for the *main* working tree was listening on 5178
+and Playwright's `reuseExistingServer` screenshotted that app — including unpushed slice-5b art. It
+was proved unrelated by reverting the merge's view changes and re-running to byte-identical failure
+counts, then avoided by running on another port under `CI=1`.
+
+### 2026-09-04 — test, slice B repair (OPP-20), PR 15, cycle 1
+
+**Testing passes. No blocking failure.** The guard does what the repair claims, it does not
+over-refuse, and the stranding it exists to close is genuinely closed. **PR 15 was deliberately not
+merged** — see the merge decision at the end.
+
+Exercised in an isolated worktree at `04df362` with its own `npm install`, not in the main working
+tree: that tree is dirty and another live session is editing it, and `node_modules/@opp/*` are
+**absolute** symlinks into it, so a shared install would have silently tested `agent/develop` code
+rather than this branch.
+
+**Gates, run twice.** `npm run check` exit 0, **608 pass / 0 fail** (24.6s, then 21.1s).
+`npm run smoke` 4 passed, and all four `tests/e2e/__screenshots__` PNGs are **md5-identical before
+and after** — nothing was re-blessed. The second run of both was taken after the probe work had
+restored `dispatch.ts` byte-for-byte, so no mutation window can be mistaken for a clean result.
+CI on `04df362` is the single passing `push` run, as expected while the PR is `CONFLICTING`.
+
+**The three physical checks, at the sim/harness boundary.**
+
+- **The guard holds, and both objects survive intact.** `voyage.abandon` against a running battle is
+  refused `battle-running`, and `state.battle` and `state.voyage` each **deep-equal** their
+  `structuredClone` snapshot — outcome still `running`, berths `[1,2]`, hulls `[1,2]`, brigand
+  damage `12345`, `bootyCargoUnits` 700. Proved by structural equality rather than the
+  `notEqual(..., null)` the existing test settles for.
+
+- **The battle is still settleable afterwards**, which is the actual point of the fix. Concluding it
+  and settling emits `cargo.plundered` for 700 units of pokeweed-berries, takes `bootyCargoUnits`
+  700 → 0, strikes the brigand (`hulls [1,2] → [1]`) and clears `state.battle`. **One correction to
+  the record:** this path materialises **cargo only**. `bootyPoe` is untouched (0 → 0) — dividing
+  poe is `booty.divide`'s job, not settlement's — so "the plunder materialises" should not be read
+  as poe moving.
+
+- **The guard does not over-refuse** — the gap the review flagged hardest, defended by no test in
+  the repository. **All three** concluded outcomes (`player-won`, `player-lost`, `disengaged`) are
+  **accepted**; the voyage clears, the battle clears, the brigand is struck, and the `player-won`
+  case emits `cargo.plundered` **inside the accepted result, ahead of `voyage.abandoned`**, proving
+  `settleConcludedEncounter` runs within `abandon()`. No regression.
+
+**Mutation check — two mutants, both killed by the probe, both invisible to the suite.** A blanket
+`state.battle !== null` guard produces the exact over-refusal; a mutant that refuses correctly while
+corrupting `battle.ships` and `voyage.legIndex` fails only on deep equality. **Under both, all 608
+existing tests stay green.** That confirms *by execution* the review's non-blocking findings that
+neither behaviour is defended today. Both were already filed in `ISSUES.md`; nothing was fixed here.
+Stated honestly: the probe's union exhaustiveness was typed, not machine-checked, since node's type
+stripping does not typecheck — it was verified by reading the `BattleOutcome` declaration.
+
+**The merge is blocked, and the conflict set is not what the hand-off assumed.** Computed with
+`git merge-tree --write-tree --name-only a70a81b 04df362` (merge base `8e016f3e`), the conflicts are
+exactly four files: `ISSUES.md`, this analysis document, `packages/view/src/panels/minimap.ts` and
+`tests/view/minimap.test.ts`. **`panels.css` auto-merges cleanly and is not among them.** The
+hand-off reasoned that "the conflict set does include `panels.css` … so a rebase forces someone to
+*open* those files" — it does not. Nobody is forced to open it. It silently gains slice A's
+`.pp-chart-sail` rule, which then matches nothing, while the conflicted `minimap.ts` resolves to
+`pp-chart-confirm`.
+
+The hazard is also defended less than it looks. Slice A's guard is **two** things: a
+stylesheet-substring assertion (`tests/view/minimap.test.ts`, asserts `panels.css` contains
+`.pp-chart-sail {`) and DOM assertions querying `.pp-chart-sail`. This branch's own
+`minimap.test.ts` has **no stylesheet guard at all** and queries `.pp-chart-confirm`. So the natural
+resolution keeps slice A's substring guard — still green, because the rule is present and merely
+matches nothing — and takes this branch's renamed DOM queries, also green. Net: every gate green,
+the confirm control silently unstyled.
+
+**Decision: the test stage did not rebase, and forwarded a development task for it instead.** The
+rebase changes production CSS and markup classes, must rename the rule and extend slice A's guard so
+it asserts the invariant rather than a substring, and has a failure mode no automated gate in this
+repository detects. Doing it here would put an unreviewed production change straight onto
+`agent/develop`, which is what the review stage exists to prevent. Testing passes on the branch as it
+stands; the merge waits on that separate, reviewed change.
 ### 2026-09-04 — analysis, slice A (OPP-19), cycle 1
 
 **Scope.** Only the one blocking finding from the cycle 0 review is re-analysed here: `minimap.ts:155`
@@ -459,6 +592,359 @@ pathspec. It was **not pushed**, because pushing requires first merging `origin/
 that merge would overwrite the other agent's uncommitted `puzzle.png`. Reconciling that divergence is
 left to the human or to whichever run owns those baselines.
 
+### 2026-09-04 — development, slice B (OPP-20)
+
+Charting and departure are now two acts. `VoyageState` carries `phase: 'charted' | 'under-way'`
+(decision L3); `chartVoyage` returns `'charted'` and no longer nulls `pirate.atIslandId`;
+`stepVoyage` refuses to advance anything not under way; `voyage.sail` and `voyage.abandon` join
+`voyage.chart` and `voyage.port`. `SCHEMA_VERSION` is 7, migrated from 6 by marking every existing
+voyage `'under-way'` (decision L4), with `refuseSpoiltVoyage` extended to the new field.
+
+Decisions taken during development, in this lineage's register. They are numbered from L20
+because slice A's cycle 1 analysis claimed L17 to L19 on its own branch while this slice was in
+flight; this entry was written against a base that predated it and had to be renumbered.
+
+| #   | Decision                                                                        | Rationale                                                                                                                        |
+| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| L20 | Branched from slice A's feature branch, not `agent/develop`                      | PR 14 was open and unmerged; the task's own precondition prescribes this, and slice A's chart fix is what makes charting testable. |
+| L21 | Two fixtures committed, not one: `voyage-under-way-v6` and `voyage-charted-v7`   | The v6 one is what actually exercises the migration; the v7 one pins the new shape, which is what the task and OPP-20 asked for.   |
+| L22 | Both fixtures generated from running code, the v6 one before any edit was made   | A hand-written "old" save proves only that the migration handles what its author imagined. The v6 artefact predates the change.    |
+| L23 | `client.atSea` redefined as `phase === 'under-way'` rather than `voyage !== null` | Otherwise charting alone flips `atSea`, `syncScene` evicts the player from port and `canEnter('port')` locks them aboard.          |
+| L24 | `deck.moored()` reduced to `pirate.atIslandId !== null`                          | The old third clause `voyage === null` would hide the gangplank the moment a course was charted. Only `voyage.sail` nulls the id.  |
+| L25 | The helm control is an `ObjectAction`, statically present, refused by the sim     | The deck is PIXI and is not rebuilt after a dispatch, so a conditionally-present action would go stale. The rule stays in the sim. |
+| L26 | `voyage.abandon` calls `settleConcludedEncounter` before clearing the voyage      | Exactly what `voyage.port` does. Without it, abandoning with a concluded battle standing would widen decision 129's hole.          |
+| L27 | The wrong-facing `no-voyage-running` copy at an empty helm went to `ISSUES.md`    | The string is shared with `voyage.port`; the real fix is a new rejection reason, which is scope this slice was not given.          |
+
+**The road document audit the task required, restated rather than assumed.** Decisions 153 and 154
+rest on `voyage.chart` having exactly one call site (confirmed by decision 155). That premise was
+never the bare count but the property it established: the voyage ship is always the player hull.
+`voyage.chart` still has exactly one production dispatch site, still passing `context.playerShip()`.
+**The two new commands cannot weaken it, because neither carries a `shipId`** — `sail(state)` and
+`abandon(state)` take only state, and the harness parses both as a bare `{ op }`. `sail` reads
+`voyage.shipId` off the voyage `charter` already created, so no new path can put a brigand hull
+there. **Decision 153 holds.** Decision 154 is unaffected in substance but its gating sentence is now
+too narrow, and is filed in `ISSUES.md` (see L27's neighbour entry).
+
+**A state combination that could not exist before.** A pirate may now hold a voyage *and* be at an
+island simultaneously. `trade` and `divide` guard only on `atIslandId`, so a charted-but-moored
+pirate can still trade — judged correct and intended, since the ship has not left. `charter` refuses
+a second course with `voyage-already-running`, so `voyage.abandon` is the only exit from that
+window, which is precisely why decision L5 required it.
+
+**Verification.** `npm run check` green from cold, 607 tests. `npm run smoke` 4 passed with
+`tests/e2e/__screenshots__` untouched — no baseline was re-taken, and none needed to be, because the
+chooser is collapsed at rest on the `port` baseline and the helm menu is closed. The golden, the
+scenario fixture and the three replays were re-blessed through the repo's own tooling; the change is
+schema-version-only, proven by the golden's two-line diff (`schemaVersion` and its dependent
+`stateHash`) and by every changed line in both replays being a hash field.
+
+**Driven physically in a browser** on `?seed=12648430&scene=port`, because the helm control has no
+automated coverage — the deck is PIXI and the radial menu is not reachable from a DOM test. A real
+pointer click selected Doyle and opened the chooser (slice A's fix still holds); `Chart course` left
+the pirate at Alkaid in phase `charted` with `canEnter('port')` still true; 600 ticks moved the
+voyage not at all; the Navigation station's radial menu offered `Set sail`; clicking it set
+`under-way`, nulled `atIslandId` and logged "Lines cast off, bound for Doyle Island."; 600 further
+ticks advanced `legTicks` to 600. `Abandon course` cleared the voyage, left the pirate at Alkaid and
+allowed an immediate re-chart.
+
+The soak suite dropped from ~217s to ~7s. Not a weakened test: every seed previously charted a
+voyage that never moved and burned the full 4,000,000-tick budget before being recorded as `stuck`.
+
+### 2026-09-04 — independent review, slice B repair (OPP-20), PR 15, cycle 1
+
+Four lenses over `f0fb4cc` only. **Approved — no blocking findings.** The cycle 0 blocker is closed
+and the fix is the right one. Eight non-blocking findings went to `ISSUES.md`.
+
+**The load-bearing claims were re-derived from source, not accepted from the commit message.**
+
+- **L28's placement is correct and sufficient, and the argument is stronger than the changelog
+  states it.** `VoyagePhase` is a closed union of exactly two values (`world/state.ts:10`) and
+  `.phase` is assigned in exactly one place in the whole of `packages/*/src` — `world/dispatch.ts:82`,
+  inside `sail()`. So the pre-existing `under-way` refusal eliminates one of the two phases and
+  `charted` is the only phase that ever reached `state.voyage = null`. Separately,
+  `pirate.atIslandId = null` is also written in exactly one place, `world/dispatch.ts:83`, the line
+  immediately after it — therefore `charted` implies `atIslandId !== null`, and the new guard at
+  `:97` **cannot shadow the `not-at-island` refusal below it**. Every pre-existing refusal reason is
+  unchanged, which is what the decision claimed. Placing the guard first, by contrast, genuinely
+  would change two refusal reasons — so the chosen placement is the strictly safer one, not merely an
+  equivalent one.
+
+- **The `running` discriminator is exact, not incidental.** `BattleOutcome` is
+  `'running' | 'player-won' | 'player-lost' | 'disengaged'` (`battle/state.ts:9`);
+  `concludedEncounterOf` (`world/session.ts:26`) returns null exactly when the outcome is `running`,
+  and `settleEncounter` clears `state.battle` unconditionally for all three concluded values. So
+  `outcome === 'running'` is the precise complement of "settleable" and there is **no
+  concluded-but-unsettled outcome the guard misses** — a blanket `state.battle !== null` guard would
+  have been wrong in the other direction, blocking the settle path `abandon()` reaches at `:102`.
+
+- **The fix is complete for its class.** `state.voyage` is assigned at exactly three sites
+  (`dispatch.ts:58, 103, 130`); `charter()` refuses outright if a voyage already runs, and both
+  clears are now guarded and both call `settleConcludedEncounter` first. `state.battle = null` exists
+  at exactly one site in the repository, `world/session.ts:40`. Nothing in `packages/view` or
+  `packages/harness` writes either field. No unrecorded stranding path was found.
+
+- **The L29 revert is complete.** `f0fb4cc` is three files, **69 insertions and zero deletions** —
+  the zero proves no rename, reformat or tidy-up rode along. `packages/sim/src/commands.ts` and
+  `packages/view/src/client/log.ts` have **no diff hunks at all**, and `voyage-not-under-way` has
+  **zero occurrences anywhere outside `docs/`**, where it survives only as the prose recording the
+  withdrawal. `REFUSALS` is typed `Record<RejectionReason, string>`, so an orphan in either direction
+  would fail the build; union and map are at exact parity. No trace leaked.
+
+- **The test is a genuine guard, proved by execution, not by reading.** With the guard line deleted
+  the new test fails and the pre-fix behaviour is visible in the assertion output — the abandon is
+  *accepted* and the voyage cleared with the battle still running — while the other 24 tests in the
+  file still pass. This lineage had reason to check: slice A's cycle 1 review found a guard that
+  stayed green against five reintroductions of its own defect. This one is not that.
+
+**What the review found that the development step had not recorded**, all filed as non-blocking:
+the guard's outcome discriminator and L28's placement are each pinned by **no** test (both mutations
+leave 608/608 green), the new test's `notEqual(..., null)` assertions survive a mutant that refuses
+correctly while corrupting both the battle and the voyage, and the soak driver — which asserts that
+battles resolve — never dispatches `voyage.abandon` at all, which is why nothing caught the cycle 0
+blocker earlier.
+
+**One correction to the record.** The changelog entry below overstates the defect it repairs, and it
+should not be used to triage the still-open `port()` gap. It says the strand was permanent, plunder
+lost, and `inBattle` stuck true; none of the three holds. `inBattle` is computed as
+`outcome === 'running'` (`view/src/client/client.ts:82`), so it goes false the moment the battle
+concludes and the view returns to `deck` (`:165`); `charter()` has no battle guard and `abandon()`
+leaves the pirate in port, so a new chart is always reachable; and once a voyage exists again the
+next tick settles the stale battle and materialises the plunder **late rather than never**. The cost
+was a bounded window — phantom brigand hull, encounter spawning suppressed — which is the same shape
+already recorded for the `port()` variant. The fix remains correct; only its stated severity was
+wrong.
+
+**Gates confirmed rather than assumed**, from cold in a clean worktree: `npm run check` exit 0,
+**608 pass / 0 fail**, run twice with identical results and no `purity.test.ts` flake; `npm run smoke`
+4 passed with all four baseline PNGs md5-identical before and after, so nothing was re-blessed. The
+single CI check on `f0fb4cc` is the `push`-triggered run; the `pull_request` run cannot fire while
+the PR is `CONFLICTING`, and that is expected rather than missing coverage.
+
+**States noted, not treated as defects in this diff:** PR 15 remains `CONFLICTING` against
+`agent/develop` and was deliberately not rebased; the `.pp-chart-sail` → `pp-chart-confirm` CSS
+hazard remains live and is not fixable from this branch; the `port()` phase gap remains open and
+filed. None is a finding against `f0fb4cc`.
+
+
+### 2026-09-04 — development, slice B repair (OPP-20), cycle 1
+
+Repaired on the existing branch so PR 15 updates in place — no second branch, no second PR, no
+rebase, as the task specified.
+
+**The blocking finding is closed by one line**, at `packages/sim/src/world/dispatch.ts:97`, placed
+per decision L28 immediately after `abandon()`'s existing `under-way` refusal:
+
+```ts
+if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
+```
+
+No new refusal reason and no new message: `battle-running` and "Not while the guns are out." already
+existed. One test added to `tests/world/dispatch.test.ts`, mirroring the shape of the existing
+"porting out of a running battle is refused, so the world is never stranded".
+
+**The test was proved red before it was allowed to pass.** With the guard reverted and the test in
+place, it failed — and so did the L29 test — while the pre-existing `port()` battle-running test
+still passed, which is what makes this a guard and not a decoration.
+
+**Decision L29 is withdrawn. It was wrong, and the error was mine at the analysis step.** The
+analysis claimed the `port()` phase check was "verified safe" because every existing test expecting
+an accepted `voyage.port` operates on an under-way voyage. That verification was not sound: it
+counted `voyage.sail` occurrences per *file* and inspected `tests/world/encounter.test.ts`'s helper,
+which said nothing about individual tests inside `tests/world/dispatch.test.ts`. Two tests there —
+"porting announces the island the voyage ended at, not the one it left" and "a refused porting
+settles nothing, so the battle outlives the command that failed" — dispatch `voyage.chart` and then
+set `legIndex` **directly**, never calling `voyage.sail`, so they sit in `phase: 'charted'` and the
+new guard refused them.
+
+Withdrawn rather than accommodated. Rewriting two existing tests to suit an explicitly non-blocking,
+optional change is scope the task did not ask for, and the task named this outcome in advance
+("if L29 cascades further than the analysis predicts, drop it"). The `port()` phase gap therefore
+**remains open and remains filed in `ISSUES.md`**, unchanged. Reverted in full: the guard, the
+`voyage-not-under-way` reason, its log message and its test — the diff carries no trace of it.
+
+Worth recording for whoever closes it later: the gap is real, but closing it means deciding what
+those two tests should assert, because they currently encode porting from a state that slice B's own
+phase model says cannot arise. That is a larger question than a one-line guard.
+
+**Gates, from cold in a clean worktree:**
+
+- `npm run check` — **exit 0, 608 pass / 0 fail** (607 before, plus the one new test), 21.6s.
+- `npm run smoke` — **4 passed**, all four baselines md5-identical, nothing re-blessed.
+
+The `purity.test.ts` child-spawn flake did not fire.
+
+**PR 15 is now `CONFLICTING` against `agent/develop`, and this was left alone deliberately.** Slice A
+merged as `a70a81b` while this branch remained based on `ae8edbd`. Files changed on both sides since
+the merge base: `ISSUES.md`, this analysis document, `packages/view/src/panels/minimap.ts`,
+`packages/view/src/panels/panels.css`, `tests/view/minimap.test.ts`, `package.json`,
+`package-lock.json`, `tsconfig.json` and `tests/view/ticker.test.ts`. The task forbids rebasing here
+and the rebase carries the CSS hazard with it, so it belongs to one deliberate pass rather than being
+smuggled into a guard fix. **The conflict set includes exactly the hazard files**, which means the
+rebase will at least force a human or agent to look at `panels.css` and `minimap.ts` together —
+though it will not force them to notice that `.pp-chart-sail` has stopped matching anything, because
+that failure is silent and slice A's guard stays green through the rename.
+
+### 2026-09-04 — analysis, slice B (OPP-20), cycle 1
+
+The PR 15 review returned one blocking finding. Re-analysed only that, per the contract; the ten
+non-blocking findings stay in `ISSUES.md` and are not revisited here.
+
+**The finding is real, and I verified its mechanism from the source rather than accepting the
+review's account.** `state.battle` is assigned in five places, and exactly one of them *clears* it:
+`settleEncounter` (`packages/sim/src/world/session.ts:40`). The other four are
+`battle/dispatch.ts:46` and `world/encounter.ts:59`, which both *start* a battle, `state.ts:45`,
+which is initial state, and `save.ts:16`, which is the schema-3 migration. `settleEncounter` is
+private and reachable only through `concludedEncounterOf`, which returns `null` whenever
+`voyage === null` (`session.ts:23-27`); `stepWorld` also returns `[]` at `session.ts:10` on a null
+voyage. So once `abandon()` clears the voyage with a battle still `running`, there is no code path
+left in the repository that can ever settle it, and none that can clear `state.battle` short of
+loading another save or starting a new game. The review's conclusion holds exactly as written.
+
+**Why the window exists at all.** `abandon()` already refuses a voyage that is `under-way`
+(`world/dispatch.ts:96`), and encounters can only spawn from the phase-gated `stepVoyage`. So the
+vulnerable state is *only* `phase: 'charted'` with a battle running — which the shipped view cannot
+produce, but the harness surface this slice widened can, as can a loaded save.
+
+**Decision L28 — the guard goes *after* the phase check, not where `port()` puts it.** The task
+suggested copying `port()`, which tests `battle-running` immediately after its null-voyage check. Not
+doing that, for a reason worth recording: in `abandon()` the `under-way` refusal at `:96` already
+prevents that path from ever reaching the clear, so the only unprotected window is the charted one.
+Placing the new guard *after* `:96` therefore guards exactly the broken case and leaves every
+existing refusal reason unchanged; placing it before would silently change the refusal for
+"under way **and** in a battle" from `voyage-already-under-way` to `battle-running`, which is a
+behaviour change nothing asked for. Smallest change that closes the defect.
+
+The line itself is the one already in `port()` at `:119`:
+
+```ts
+if (state.battle !== null && state.battle.outcome === 'running') return refused('battle-running');
+```
+
+No new refusal reason, no new message: `battle-running` and its log line "Not while the guns are out."
+(`view/src/client/log.ts:44`) both already exist.
+
+**Decision L29 — close the `port()` phase gap in the same pass, and it is safe to do so.** The task
+offered this as optional. Taking it, because it is the same one-line shape in the same file and
+because the alternative is to leave a command that silently discards a charted course and then
+*reports an arrival that never happened* ("Ye make port at …"), which is a false statement to the
+player rather than a matter of taste. It also falsifies the slice B changelog's own claim that
+`voyage.abandon` is the only exit from the charted window.
+
+**Verified safe rather than assumed:** every existing test that expects `voyage.port` to be
+`accepted` operates on an under-way voyage. `tests/world/encounter.test.ts` was the only candidate
+risk — it dispatches `voyage.port` four times and never calls `voyage.sail` — but its `sailingState`
+helper sets `phase: 'under-way'` explicitly at `:49`. The other five files all sail first. So the new
+guard changes no existing expectation.
+
+This one *does* cost a new refusal reason, `voyage-not-under-way`, the natural counterpart to the
+existing `voyage-already-under-way`. That means `packages/sim/src/commands.ts` (union member) and
+`packages/view/src/client/log.ts` (message). The message map is typed
+`Record<RejectionReason, string>`, so the compiler will refuse to build until the message is written
+— the vocabulary cannot drift.
+
+**Rejected alternative — settle the battle inside `abandon()` instead of refusing.** It would avoid
+a refusal the player might find obstructive, but it invents a policy the rest of the world does not
+have: `port()` refuses in the identical situation, and the sim has exactly one settlement path,
+driven by the battle concluding on its own. Making `abandon` a second, implicit settler would widen
+the very surface the review flagged. Refusing keeps the two sibling commands consistent.
+
+**Scope for the development stage.** One slice, on the existing branch so PR 15 updates in place —
+no second branch, no second PR, no rebase, exactly as the slice A cycle 1 repair did. Both guards
+plus a test each, mirroring `tests/world/dispatch.test.ts:415` ("porting out of a running battle is
+refused, so the world is never stranded"), which sets `state.battle = createBattle([], false)` and
+asserts both the refusal reason and that `state.voyage` survives.
+
+**Unchanged and still not fixable from this branch alone — the CSS merge hazard.** Slice A merged to
+`agent/develop` this cycle as `a70a81b`, so the "PR 15 must not merge before PR 14" constraint is
+satisfied. But `agent/develop` now carries a `.pp-chart-sail` rule while this branch renames that
+control to `pp-chart-confirm` (`view/src/panels/minimap.ts:174`) and defines neither class. The rule
+will merge without conflict and then match nothing, and slice A's guard — which only asserts the
+substring `.pp-chart-sail {` is present in the file — stays green on the broken state. Whoever
+rebases must rename the rule and extend the guard, and confirm by eye, because no automated gate in
+this repo can see panel styling. **Deliberately not folded into this fix:** it belongs to the rebase,
+not to a `dispatch.ts` guard, and mixing them would make both harder to review.
+
+### 2026-09-04 — independent review, slice B (OPP-20), PR 15
+
+Four lenses over `ae8edbd..35665ca`, cycle 0. **Changes requested on one blocking finding.** The
+slice does what this document says it does, and the two things most likely to have gone wrong did
+not: the `client.atSea` narrowing (L23) was traced to every one of its readers and is correct at all
+four, and the schema-7 migration was checked against a fixture independently reconstructed from the
+build rather than against its author's description.
+
+**Blocking — `voyage.abandon` clears the voyage with no `battle-running` guard, and the battle can
+then never be settled.** `abandon` (`world/dispatch.ts:90-105`) sets `state.voyage = null` without
+the guard its sibling `port` carries twelve lines below (`:119`). `state.battle = null` is written in
+exactly one place in the repository, `settleEncounter` (`world/session.ts:40`), and both routes into
+it — `stepWorld` (`:10`) and `settleConcludedEncounter` via `concludedEncounterOf` (`:26`) — return
+early when `state.voyage === null`. So once the voyage is cleared with a *running* battle standing,
+nothing can ever clear that battle: `materialisePlunder` never runs and the winnings are lost, the
+brigand hull is never filtered out of `state.ships`, and `client.inBattle` stays true forever, which
+leaves `canEnter` permitting only `battle` and `puzzle` — an unrecoverable soft-lock short of loading
+another save. `abandon`'s own `settleConcludedEncounter` call (decision L26) is the *concluded* case
+and is a no-op for a running one, so L26 is correct and this is a separate, missing guard rather than
+a fault in it. Reproduced independently by two lenses through `world.start` → `ship.commission` →
+`battle.start` → `voyage.chart` → `voyage.abandon`, which returns `accepted` and leaves the battle
+running with no voyage.
+
+Not reachable from the shipped view today, by three separate accidents: encounters spawn only from
+`stepVoyage`, which this slice gated on `under-way`; the view's only `battle.start` is the
+`sea-battle` opening, which never dispatches `world.start`; and the abandon control is hidden unless
+charted. It is reachable through the harness command surface — which *this diff widened*, adding
+`voyage.abandon` to `packages/harness/src/commands.ts` — and through a loaded save. Judged blocking
+rather than filed: the consequence is terminal state corruption with data loss, the repository treats
+the harness as a first-class tested surface rather than a debug backdoor, and the three accidents
+protecting it are exactly the kind that evaporate when slice C gives the passage encounters of its
+own. The fix is one line copied verbatim from `port`.
+
+**Corrections to the slice B entry above.** Three of its claims are not supported by the code they
+describe. They are recorded here rather than edited out, because the register is append-only.
+
+1. "`voyage.abandon` is the only exit from that window" is **false**. `port()` is the one voyage
+   command with no `phase` check, and dispatched while charted it is accepted — `route[legIndex]` is
+   `route[0]`, the origin island's own point, so it re-sets `atIslandId` to where the pirate already
+   stands, nulls the course and reports an arrival for a voyage that never sailed. Benign in outcome
+   and unreachable from the UI, so it is filed in `ISSUES.md` rather than returned as blocking, but
+   the invariant decision L5 was justified by does not hold at the sim level.
+2. The soak suite's "~217s to ~7s … every seed previously charted a voyage that never moved" cannot
+   describe this PR's baseline. At `ae8edbd` charting departed immediately; and had voyages truly
+   stalled there, `soak.test.ts:210-222` asserts no run is `stuck`, so the suite would have been red
+   rather than slow. The figure describes the mid-development build after the phase gate landed but
+   before `voyage.sail` was added to the soak harness. The conclusion stands — the test is not
+   weakened — but not for the reason given.
+3. L27's rationale, that a new rejection reason "is scope this slice was not given", is refuted by
+   the slice's own diff, which adds `voyage-already-under-way` and its copy. Filing the empty-helm
+   wording may still be the right call on cost; the scope argument is not why.
+
+Additionally, the design's stated requirement to extend `FIELD_KINDS` was correctly dropped —
+`FIELD_KINDS` is `Record<keyof WorldState, FieldKind>` and describes top-level fields only, so
+`phase`, nested inside `voyage`, is already covered by `voyage: 'an object or null'`. The
+implementation is right and the design sentence was wrong; the changelog recorded the action but not
+the finding, which leaves a later reader diffing design against code and finding a guard missing with
+no explanation.
+
+**What the review verified rather than accepted.** The fixture re-blessing claim was checked by
+recomputing the golden's hash from first principles: forcing `schemaVersion` back to 6 in the *new*
+state reproduces the *old* declared `stateHash` byte-for-byte, which proves the only semantic change
+is the version bump. All three replays changed in hash fields only, and the deliberately-diverged
+tick-5 hash in `marker-drift-diverged-at-tick-5.json` was correctly left un-reblessed. Both save
+fixtures were reconstructed from the current build and match canonically, so `voyage-under-way-v6`
+genuinely predates the change and decision L22 holds in substance — though the test named for that
+provenance asserts only shape. The decisions 153/155 audit was re-run rather than trusted: `voyage.chart`
+still has exactly one production dispatch site passing `context.playerShip()`, and neither new command
+carries a `shipId`, so decision 153 holds for the reason given. Decision 129 is not widened, because
+`stepWorld` settles a concluded encounter on the branch *before* it delegates to the phase-gated
+`stepVoyage`. No dependency was added, and no assertion was weakened — thirteen tests added, none
+removed, and the load-bearing ones were confirmed to fail against `ae8edbd` rather than merely to
+pass now.
+
+**A merge hazard between this lineage's two open PRs, carried forward.** Slice B renames
+`.pp-chart-sail` to `.pp-chart-confirm`; slice A's cycle 1 repair (`5454fd2`, PR 14) installs a CSS
+rule for `.pp-chart-sail`. There is no textual conflict, because slice B is based on slice A at
+`ae8edbd`, which predates the repair — but the moment slice B is brought onto the repaired slice A,
+that rule matches nothing and the confirm control silently loses its primary styling, which is the
+same defect class the repair exists to fix. Slice B has no stylesheet guard to catch it. Whoever
+performs that merge must rename the rule and extend slice A's guard to the new class name.
 ### 2026-09-04 — development, slice A repair (OPP-19), cycle 1
 
 The cycle 1 analysis had already settled every question, so this stage installed its three decisions
@@ -652,3 +1138,139 @@ correctly styles `.pp-chart-sail`, the class on *this* branch. Neither branch is
 there is no textual conflict, because slice B is based on slice A at `ae8edbd`, which predates this
 repair. Whoever brings slice B onto the repaired slice A must rename the rule and extend the guard,
 or the confirm control silently loses its primary styling.
+
+### 2026-09-04 — independent review, integration merge (OPP-20), PR 15, `18b937a`
+
+Four lenses over the merge commit only. **No blocking findings. Forwarded to the test stage.**
+Reviewed by a different run from the one that authored `18b937a`, so independence holds.
+
+**What was verified from source rather than accepted from the hand-off.** The merge's own record is
+accurate on every checkable claim. `packages/sim/**` is untouched: the combined diff (`git show --cc`)
+is *identical* to `diff 2c24ad2..18b937a`, 656 insertions and 0 deletions across exactly `ISSUES.md`,
+this document, `panels.css` and `tests/view/minimap.test.ts`. The minimap crux resolves in the
+merge's favour — `diff a70a81b..18b937a` on `minimap.ts` is purely additive slice B work plus the
+`setSailButton` → `chartCourseButton` rename; build-once (`minimap.ts:49,53`) and repaint-in-place
+(`paintGrid` mutating via `classList.toggle`, no `clear(grid)`, no `drawGrid`) both survive, so no
+player-clickable node is destroyed by a tick. The check was widened past what the task asked: **all
+nine files `agent/develop` changed since the base are byte-identical to develop in the merged tree**,
+so nothing was dropped anywhere, not only in `minimap.ts`. The test set is the exact union of both
+parents (7 + 8 → 9), `git diff --diff-filter=D` is empty against both, and there are no conflict
+markers. The changelog carries 14 dated entries, the two shared ones appearing once each; `ISSUES.md`
+lost zero lines from either parent.
+
+**Corrections to the task's own framing, recorded because the next stage inherits it.** The task
+names four conflicted files including `minimap.ts` and excluding `panels.css`. The true combined diff
+is the inverse: `minimap.ts` is absent (resolved to a parent verbatim) and `panels.css` is present
+(hand-edited). This confirms the correction the first, later-reaped review attempt had already made.
+
+**The one finding worth the human's attention, non-blocking.** The replacement guard dropped the
+`DOM → stylesheet` assertion its parent had, and the rationale recorded for that is overstated: the
+defect being fixed was the *substring* check, not the hand-maintained allowlist. A converse assertion
+narrowed to classes applied via `classList.toggle` — today exactly one — is principled, not an
+allowlist. Deleting the `.pp-chart-voyage-chosen` rule today fails the old guard and passes the new
+one. Judged non-blocking because the production stylesheet is correct as it stands, so what was lost
+is guard strength rather than behaviour. Filed in `ISSUES.md` with the narrower assertion as the
+suggested follow-up, alongside three further blind spots (the `pp-cell*`/`pp-here-mark` classes the
+`pp-chart` prefix does not cover and which no test references at all; `app.css` never being scanned;
+the raw-text regex treating a `.pp-chart` in a CSS comment as a phantom rule) and the test title that
+now asserts the opposite of its body — itself a half-addressed prior finding.
+
+**The stylesheet → DOM deviation is accepted as-is.** It is a genuine behavioural test rather than a
+tautology: it reads the shipped stylesheet from disk and drives the real `createMinimap`, comparing
+two independently produced sets. It demonstrably catches the defect that actually reached the
+pipeline, where the substring check could not. Its limits are recorded honestly by the merge itself.
+
+**Environment note for the next stage.** The *local* ref
+`agent/feature/20260904-132301-opp17-slice-b-charting-and-setting-sail` is stale at `04df362`; the
+merge lives on the remote at `18b937a`. This review committed from a detached worktree and pushed
+`HEAD:` to the branch. Anyone checking that branch out locally must fetch first or they will silently
+work on a tree that predates the merge. The stale ref was deliberately left alone rather than
+force-updated, because another live session is working in this repository.
+
+## 2026-09-05 — test stage, integration merge (OPP-20), PR 15, head `2fee216`
+
+Physical test of the slice B integration merge. **No blocking failures. PR 15 merged into
+`agent/develop`.** Tested `2fee216` (the review's docs commit on top of merge `18b937a`), in an
+isolated detached worktree with its own `npm install`, after confirming every `node_modules/@opp/*`
+symlink resolved into that worktree rather than the main one — otherwise the run would have been
+testing the main checkout's code instead of the branch.
+
+### The gates, from cold
+
+- `npm run check` — exit 0, **609 tests, 609 pass, 0 fail**. The count matches the claim (608 plus
+  the new stylesheet guard).
+- `npm run smoke` — **4 passed**, and the four baseline PNGs are md5-identical before and after, so
+  nothing was silently re-blessed.
+
+Port 5178 was in fact squatted by another session's dev server during this run, and
+`packages/app/vite.config.ts` sets `strictPort: true`, so the documented trap was live rather than
+theoretical. It was avoided **without editing any committed file** — an untracked
+`pw.isolated.config.ts` on port 5191 with `reuseExistingServer: false`, deleted afterwards. The
+previous stage edited `vite.config.ts` and had to revert it; there is nothing to revert this way.
+
+### What was exercised in a real browser
+
+The two acts are genuinely separate, which is the whole point of the slice:
+
+- **Charting leaves the ship moored.** After *Chart course*: `phase: 'charted'`, `route: [1,2,8]`,
+  yet `pirate.atIslandId` is still `alkaid`, `atSea` is `false` and the scene is still `port`. Log
+  line `Course set for Doyle Island, 2 leagues.`; status reads `Yer course be charted. Set sail at
+  the helm.`
+- **Departure only happens at the helm.** *Set sail* was clicked as the actual control — the Pixi
+  radial spoke on the Navigation station in the `deck` scene, by canvas coordinate, not by
+  dispatching the command — because the control has no DOM selector and a dispatched command would
+  not have proved the control exists. Result: `Lines cast off, bound for Doyle Island.`,
+  `phase: 'under-way'`, `atSea: true`, `atIslandId: null`.
+- **A charted course can be abandoned.** *Abandon course* from the charted state gives
+  `Course struck. Ye bide at Alkaid Island.`, clears the voyage to `null`, and leaves the pirate
+  ashore at Alkaid in the port scene. The control is visible only while `phase === 'charted'`.
+- **The lifecycle guards hold.** Abandoning or sailing again while under way are both refused with
+  `She be under way already.`, and the voyage is left intact rather than corrupted.
+- **Decision L12 holds visibly.** Alkaid's own chart cell renders with `pp-cell-here` and
+  `disabled: true` — offered-but-refused was genuinely replaced by not-offered.
+
+### The defect the merge exists to repair, confirmed in the browser
+
+`.pp-chart-confirm` computes `border: 0.8px solid rgb(255, 212, 121)` and
+`background-image: linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))` on the rendered control, at
+270px wide, weight 600. This is the one thing every gate stayed green through while the UI was
+broken, so it was checked on the live element rather than in the stylesheet.
+
+`.pp-chart-voyage-chosen` was checked by eye and by computed style, because the replacement guard
+cannot speak for it: the chosen option is gold-filled (`rgb(255, 212, 121)`, weight 600) against
+`rgb(43, 35, 23)`/weight 400 for the unchosen ones, and the marker **moves** — clicking `trade` took
+the class and the styling off `pillage` and put it on `trade`, with exactly one chosen at a time.
+
+### Backward compatibility, which the task did not ask for
+
+The task listed four checks; the analysis document's own "done when" for slice B also requires
+departure from the helm and that existing saves still load, so both were tested. Loaded through the
+real Ye-panel path (`.pp-save-text` + *Load game*), not by calling the sim directly:
+
+- `voyage-under-way-v6.json`, a genuine pre-slice save with **no `phase` key**, restores as
+  `schemaVersion: 7` with `phase: 'under-way'` and `route`, `legTicks`, `type` and `shipId` carried
+  through verbatim — decision L4 behaving exactly as written.
+- `voyage-charted-v7.json` stays `charted` and moored at Alkaid.
+
+### Non-blocking findings, filed in `ISSUES.md`
+
+Three, all proven by execution rather than inferred from source. A v6 voyage with an empty `route`
+loads and migrates into an un-abandonable, un-advancing "under way" state — unreachable from
+`chartVoyage` and no worse than before the slice, so not blocking. A v6 save with the `voyage` key
+omitted is refused rather than migrated, and the client rolls back safely. And `COMMITTED_SAVES` in
+`tests/sim/save.test.ts` was never extended with the two fixtures this slice added, so they skip the
+guard sweep.
+
+### One correction to the hand-off
+
+The task predicted `legTicksRequired: 25200` for the first leg. The running game reports **5040** —
+the seeded sloop has speed 9 of 10, not the 0 the estimate assumed. Nothing depends on it; recorded
+so the next stage does not read 5040 as a regression.
+
+### Environment
+
+The stale local ref noted by the review is still stale and was again left alone; this stage worked
+from a detached worktree and pushed `HEAD:` to the branch. Session note: this run was suspended for
+roughly 23 hours mid-test and resumed on 2026-09-05. The claim was re-verified as unreaped and the
+PR head re-checked as unchanged at `2fee216` before anything was merged, so no result reported here
+was carried over from a tree that had moved.

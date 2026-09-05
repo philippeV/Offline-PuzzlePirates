@@ -48,12 +48,14 @@ export function chartVoyage(
     legTicks: 0,
     legTicksRequired: legTicksRequiredOf(ship, orientationCostOf(route, 0)),
     encounters: 0,
+    phase: 'charted',
   };
 }
 
 export function stepVoyage(state: WorldState): SimEvent[] {
   const voyage = state.voyage;
   if (voyage === null) return [];
+  if (voyage.phase !== 'under-way') return [];
   if (state.battle !== null && state.battle.outcome === 'running') return [];
   const ship = findShip(state.ships, voyage.shipId);
   if (ship === undefined) return [];

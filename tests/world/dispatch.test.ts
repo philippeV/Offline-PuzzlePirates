@@ -102,6 +102,47 @@ test('chartering announces the ship, the destination and the legs the route actu
   assert.equal(state.voyage?.route.length, LEGS_TO_DESTINATION + 1);
 });
 
+test('chartering leaves the pirate ashore with nothing sailed but a course', () => {
+  const [state, ship] = startedWorldOf();
+
+  assert.equal(
+    applyWorldCommand(state, {
+      op: 'voyage.chart',
+      shipId: ship.id,
+      toIslandId: DESTINATION,
+      voyageType: 'trade',
+    }).status,
+    'accepted',
+  );
+
+  assert.equal(state.voyage?.phase, 'charted');
+  assert.equal(state.pirate?.atIslandId, HOME_ISLAND);
+});
+
+test('setting sail announces the destination and takes the pirate out of port', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'trade');
+
+  const events = eventsOf(applyWorldCommand(state, { op: 'voyage.sail' }));
+
+  assert.deepEqual(events, [
+    { type: 'voyage.sailed', tick: TICK, shipId: ship.id, toIslandId: DESTINATION },
+  ]);
+  assert.equal(state.voyage?.phase, 'under-way');
+  assert.equal(state.pirate?.atIslandId, null);
+});
+
+test('abandoning a charted course strikes it out and leaves the pirate where it stood', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'trade');
+
+  const events = eventsOf(applyWorldCommand(state, { op: 'voyage.abandon' }));
+
+  assert.deepEqual(events, [{ type: 'voyage.abandoned', tick: TICK, islandId: HOME_ISLAND }]);
+  assert.equal(state.voyage, null);
+  assert.equal(state.pirate?.atIslandId, HOME_ISLAND);
+});
+
 test('porting announces the island the voyage ended at, not the one it left', () => {
   const [state, ship] = startedWorldOf();
   assert.equal(
@@ -241,6 +282,8 @@ test('every world command before the world starts is refused for want of a world
     ),
     'world-not-started',
   );
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.sail' })), 'world-not-started');
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.abandon' })), 'world-not-started');
   assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.port' })), 'world-not-started');
   assert.equal(
     reasonOf(
@@ -316,6 +359,48 @@ test('porting with no voyage under way is refused', () => {
   assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.port' })), 'no-voyage-running');
 });
 
+test('setting sail or abandoning with no course charted is refused', () => {
+  const [state] = startedWorldOf();
+
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.sail' })), 'no-voyage-running');
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.abandon' })), 'no-voyage-running');
+});
+
+test('setting sail twice is refused, so a voyage is never departed twice', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'trade');
+  assert.equal(applyWorldCommand(state, { op: 'voyage.sail' }).status, 'accepted');
+
+  assert.equal(
+    reasonOf(applyWorldCommand(state, { op: 'voyage.sail' })),
+    'voyage-already-under-way',
+  );
+  assert.equal(state.pirate?.atIslandId, null);
+});
+
+test('abandoning a voyage already under way is refused rather than teleporting it home', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'trade');
+  assert.equal(applyWorldCommand(state, { op: 'voyage.sail' }).status, 'accepted');
+
+  assert.equal(
+    reasonOf(applyWorldCommand(state, { op: 'voyage.abandon' })),
+    'voyage-already-under-way',
+  );
+  assert.notEqual(state.voyage, null);
+  assert.equal(state.pirate?.atIslandId, null);
+});
+
+test('abandoning a charted course during a running battle is refused, so the battle is never stranded', () => {
+  const [state, ship] = startedWorldOf();
+  state.voyage = chartedOf(state, ship, 'pillage');
+  state.battle = createBattle([], false);
+
+  assert.equal(reasonOf(applyWorldCommand(state, { op: 'voyage.abandon' })), 'battle-running');
+  assert.notEqual(state.voyage, null);
+  assert.notEqual(state.battle, null);
+});
+
 test('a voyage of a type the world does not sail is refused by name', () => {
   const [state, ship] = startedWorldOf();
 
@@ -344,6 +429,7 @@ test('porting out of a running battle is refused, so the world is never stranded
     }).status,
     'accepted',
   );
+  assert.equal(applyWorldCommand(state, { op: 'voyage.sail' }).status, 'accepted');
   sailedToPortOf(state);
   state.battle = createBattle([], false);
 
@@ -407,6 +493,7 @@ test('porting in open water between two islands is refused as no island at all',
     }).status,
     'accepted',
   );
+  assert.equal(applyWorldCommand(state, { op: 'voyage.sail' }).status, 'accepted');
   const voyage = state.voyage;
   assert.ok(voyage !== null);
   voyage.legIndex = OPEN_WATER_LEG_INDEX;

@@ -29,6 +29,15 @@ const COMMITTED_V5_SAVE = fileURLToPath(
   new URL('../../packages/fixtures/saves/bilge-session-v5.json', import.meta.url),
 );
 const COMMITTED_V5_SCHEMA = 5;
+const COMMITTED_V6_SAVE = fileURLToPath(
+  new URL('../../packages/fixtures/saves/voyage-under-way-v6.json', import.meta.url),
+);
+const COMMITTED_V6_SCHEMA = 6;
+const COMMITTED_V7_SAVE = fileURLToPath(
+  new URL('../../packages/fixtures/saves/voyage-charted-v7.json', import.meta.url),
+);
+const COMMITTED_V7_ISLAND = 'alkaid';
+const COMMITTED_V7_IDLE_TICKS = 120;
 
 function committedV2Save(): string {
   return readFileSync(COMMITTED_V2_SAVE, 'utf8');
@@ -40,6 +49,14 @@ function committedV3Save(): string {
 
 function committedV5Save(): string {
   return readFileSync(COMMITTED_V5_SAVE, 'utf8');
+}
+
+function committedV6Save(): string {
+  return readFileSync(COMMITTED_V6_SAVE, 'utf8');
+}
+
+function committedV7Save(): string {
+  return readFileSync(COMMITTED_V7_SAVE, 'utf8');
 }
 
 function saveAtSchemaVersion(version: number): string {
@@ -219,6 +236,46 @@ test('a migrated schema version five save refuses to start a puzzle', () => {
 
   assert.equal(started.status, 'rejected');
   assert.equal(started.reason, 'balance-missing');
+});
+
+test('the committed schema version six save is a genuine schema version six artefact', () => {
+  const raw = JSON.parse(committedV6Save()) as Record<string, unknown>;
+  const voyage = raw['voyage'] as Record<string, unknown>;
+  const pirate = raw['pirate'] as Record<string, unknown>;
+
+  assert.equal(raw['schemaVersion'], COMMITTED_V6_SCHEMA);
+  assert.equal('phase' in voyage, false);
+  assert.equal(pirate['atIslandId'], null);
+});
+
+test('migrating a schema version six save puts the voyage it was already sailing under way', () => {
+  const raw = JSON.parse(committedV6Save()) as Record<string, unknown>;
+  const voyage = raw['voyage'] as Record<string, unknown>;
+
+  const migrated = deserialise(committedV6Save());
+
+  assert.equal(migrated.schemaVersion, SCHEMA_VERSION);
+  assert.equal(migrated.voyage?.phase, 'under-way');
+  assert.deepEqual(migrated.voyage, { ...voyage, phase: 'under-way' });
+});
+
+test('the committed current-schema save loads its charted course untouched', () => {
+  const loaded = deserialise(committedV7Save());
+
+  assert.equal(loaded.schemaVersion, SCHEMA_VERSION);
+  assert.equal(loaded.voyage?.phase, 'charted');
+  assert.equal(loaded.pirate?.atIslandId, COMMITTED_V7_ISLAND);
+  assert.equal(loaded.voyage?.legTicks, 0);
+});
+
+test('a charted course reloaded from the committed save still waits for the helm', () => {
+  const sim = Sim.load(committedV7Save());
+
+  sim.step(COMMITTED_V7_IDLE_TICKS);
+
+  assert.equal(sim.state.voyage?.legTicks, 0);
+  assert.equal(sim.state.voyage?.legIndex, 0);
+  assert.equal(sim.state.pirate?.atIslandId, COMMITTED_V7_ISLAND);
 });
 
 test('a save one schema version behind with no puzzle running migrates untouched', () => {

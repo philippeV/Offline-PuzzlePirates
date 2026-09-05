@@ -169,6 +169,19 @@ export interface VoyageChartedEvent {
   legs: number;
 }
 
+export interface VoyageSailedEvent {
+  type: 'voyage.sailed';
+  tick: number;
+  shipId: EntityId;
+  toIslandId: IslandId;
+}
+
+export interface VoyageAbandonedEvent {
+  type: 'voyage.abandoned';
+  tick: number;
+  islandId: IslandId;
+}
+
 export interface VoyageLegReachedEvent {
   type: 'voyage.legReached';
   tick: number;
@@ -243,6 +256,8 @@ export type PuzzleEvent =
 export type WorldEvent =
   | WorldStartedEvent
   | VoyageChartedEvent
+  | VoyageSailedEvent
+  | VoyageAbandonedEvent
   | VoyageLegReachedEvent
   | VoyagePortedEvent
   | EncounterSpawnedEvent

@@ -103,6 +103,9 @@ test('a ship that spends its magazine in a battle restocks at a dock and sails a
   });
   assert.equal(charted.status, 'accepted');
 
+  const sailed = await dispatch({ op: 'voyage.sail' });
+  assert.equal(sailed.status, 'accepted');
+
   const battles = await pillageToDestination();
   const magazineSpent = await readNumber('/ships/0/cannonballs');
 
@@ -137,12 +140,15 @@ test('a ship that spends its magazine in a battle restocks at a dock and sails a
   });
   assert.deepEqual(oversized, { status: 'rejected', reason: 'wrong-cannon-ball-size' });
 
-  const sailedAgain = await dispatch({
+  const chartedAgain = await dispatch({
     op: 'voyage.chart',
     shipId,
     toIslandId: HOME_ISLAND,
     voyageType: 'pillage',
   });
+  assert.equal(chartedAgain.status, 'accepted');
+
+  const sailedAgain = await dispatch({ op: 'voyage.sail' });
   assert.equal(sailedAgain.status, 'accepted');
   assert.equal(await readNumber('/voyage/shipId'), shipId);
 });

@@ -2,9 +2,9 @@
   "scenario": "bilge-session",
   "seed": 12648430,
   "ticks": 3600,
-  "stateHash": "a5cb384c468e93e3",
+  "stateHash": "a2bb069dd933190a",
   "state": {
-    "schemaVersion": 6,
+    "schemaVersion": 7,
     "seed": 12648430,
     "tick": 3600,
     "nextEntityId": 2,
