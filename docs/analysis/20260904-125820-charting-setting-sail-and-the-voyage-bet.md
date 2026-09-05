@@ -1186,3 +1186,91 @@ merge lives on the remote at `18b937a`. This review committed from a detached wo
 `HEAD:` to the branch. Anyone checking that branch out locally must fetch first or they will silently
 work on a tree that predates the merge. The stale ref was deliberately left alone rather than
 force-updated, because another live session is working in this repository.
+
+## 2026-09-05 — test stage, integration merge (OPP-20), PR 15, head `2fee216`
+
+Physical test of the slice B integration merge. **No blocking failures. PR 15 merged into
+`agent/develop`.** Tested `2fee216` (the review's docs commit on top of merge `18b937a`), in an
+isolated detached worktree with its own `npm install`, after confirming every `node_modules/@opp/*`
+symlink resolved into that worktree rather than the main one — otherwise the run would have been
+testing the main checkout's code instead of the branch.
+
+### The gates, from cold
+
+- `npm run check` — exit 0, **609 tests, 609 pass, 0 fail**. The count matches the claim (608 plus
+  the new stylesheet guard).
+- `npm run smoke` — **4 passed**, and the four baseline PNGs are md5-identical before and after, so
+  nothing was silently re-blessed.
+
+Port 5178 was in fact squatted by another session's dev server during this run, and
+`packages/app/vite.config.ts` sets `strictPort: true`, so the documented trap was live rather than
+theoretical. It was avoided **without editing any committed file** — an untracked
+`pw.isolated.config.ts` on port 5191 with `reuseExistingServer: false`, deleted afterwards. The
+previous stage edited `vite.config.ts` and had to revert it; there is nothing to revert this way.
+
+### What was exercised in a real browser
+
+The two acts are genuinely separate, which is the whole point of the slice:
+
+- **Charting leaves the ship moored.** After *Chart course*: `phase: 'charted'`, `route: [1,2,8]`,
+  yet `pirate.atIslandId` is still `alkaid`, `atSea` is `false` and the scene is still `port`. Log
+  line `Course set for Doyle Island, 2 leagues.`; status reads `Yer course be charted. Set sail at
+  the helm.`
+- **Departure only happens at the helm.** *Set sail* was clicked as the actual control — the Pixi
+  radial spoke on the Navigation station in the `deck` scene, by canvas coordinate, not by
+  dispatching the command — because the control has no DOM selector and a dispatched command would
+  not have proved the control exists. Result: `Lines cast off, bound for Doyle Island.`,
+  `phase: 'under-way'`, `atSea: true`, `atIslandId: null`.
+- **A charted course can be abandoned.** *Abandon course* from the charted state gives
+  `Course struck. Ye bide at Alkaid Island.`, clears the voyage to `null`, and leaves the pirate
+  ashore at Alkaid in the port scene. The control is visible only while `phase === 'charted'`.
+- **The lifecycle guards hold.** Abandoning or sailing again while under way are both refused with
+  `She be under way already.`, and the voyage is left intact rather than corrupted.
+- **Decision L12 holds visibly.** Alkaid's own chart cell renders with `pp-cell-here` and
+  `disabled: true` — offered-but-refused was genuinely replaced by not-offered.
+
+### The defect the merge exists to repair, confirmed in the browser
+
+`.pp-chart-confirm` computes `border: 0.8px solid rgb(255, 212, 121)` and
+`background-image: linear-gradient(rgb(74, 58, 24), rgb(43, 35, 23))` on the rendered control, at
+270px wide, weight 600. This is the one thing every gate stayed green through while the UI was
+broken, so it was checked on the live element rather than in the stylesheet.
+
+`.pp-chart-voyage-chosen` was checked by eye and by computed style, because the replacement guard
+cannot speak for it: the chosen option is gold-filled (`rgb(255, 212, 121)`, weight 600) against
+`rgb(43, 35, 23)`/weight 400 for the unchosen ones, and the marker **moves** — clicking `trade` took
+the class and the styling off `pillage` and put it on `trade`, with exactly one chosen at a time.
+
+### Backward compatibility, which the task did not ask for
+
+The task listed four checks; the analysis document's own "done when" for slice B also requires
+departure from the helm and that existing saves still load, so both were tested. Loaded through the
+real Ye-panel path (`.pp-save-text` + *Load game*), not by calling the sim directly:
+
+- `voyage-under-way-v6.json`, a genuine pre-slice save with **no `phase` key**, restores as
+  `schemaVersion: 7` with `phase: 'under-way'` and `route`, `legTicks`, `type` and `shipId` carried
+  through verbatim — decision L4 behaving exactly as written.
+- `voyage-charted-v7.json` stays `charted` and moored at Alkaid.
+
+### Non-blocking findings, filed in `ISSUES.md`
+
+Three, all proven by execution rather than inferred from source. A v6 voyage with an empty `route`
+loads and migrates into an un-abandonable, un-advancing "under way" state — unreachable from
+`chartVoyage` and no worse than before the slice, so not blocking. A v6 save with the `voyage` key
+omitted is refused rather than migrated, and the client rolls back safely. And `COMMITTED_SAVES` in
+`tests/sim/save.test.ts` was never extended with the two fixtures this slice added, so they skip the
+guard sweep.
+
+### One correction to the hand-off
+
+The task predicted `legTicksRequired: 25200` for the first leg. The running game reports **5040** —
+the seeded sloop has speed 9 of 10, not the 0 the estimate assumed. Nothing depends on it; recorded
+so the next stage does not read 5040 as a regression.
+
+### Environment
+
+The stale local ref noted by the review is still stale and was again left alone; this stage worked
+from a detached worktree and pushed `HEAD:` to the branch. Session note: this run was suspended for
+roughly 23 hours mid-test and resumed on 2026-09-05. The claim was re-verified as unreaped and the
+PR head re-checked as unchanged at `2fee216` before anything was merged, so no result reported here
+was carried over from a tree that had moved.

@@ -4713,3 +4713,29 @@ follows is what the lenses substantiated and judged not worth stopping for.
   `reuseExistingServer` will silently screenshot *that* app instead of the branch under test — which
   produced four spurious smoke failures during this work until it was diagnosed. Anyone running
   `npm run smoke` on this machine should confirm which server they are shooting.
+
+- **A v6 voyage with an empty `route` migrates into a stranded, un-abandonable state.** Proven in a
+  real browser, not inferred: hand-editing `voyage-under-way-v6.json` to `route: []` and loading it
+  through the Ye panel reports `Yer voyage be restored.`, migrates to `phase: 'under-way'` and sets
+  `atSea`, which evicts the player from the port scene. `stepVoyage` then bails immediately
+  (`legIndex 0 >= route.length - 1 === -1`) so the voyage never advances, and `voyage.abandon` is
+  refused with `She be under way already.` because abandon only accepts `phase: 'charted'`. The
+  player is stuck at sea with no route and no way out. **Not blocking and not a regression**: it is
+  unreachable from `chartVoyage`, which refuses a route shorter than two points, and a v6 save with
+  an empty route was equally inert before the slice. The migration and `refuseSpoiltVoyage` simply
+  do not rule the shape out. A one-line route-length check in the guard would close it.
+
+- **A v6 save with the `voyage` key omitted entirely is refused rather than migrated.**
+  `departedVoyageOf` guards `null` and non-objects, but `undefined` spreads back as
+  `voyage: undefined`, which the guard then rejects: the Ye panel shows
+  `That save be spoiled: save.voyage must hold an object or null`. Verified in the browser, including
+  that the client rolls the whole restore back and keeps the previously loaded state — so the failure
+  is safe, just not a migration. Unreachable from a save the game itself wrote, since
+  `createWorldState` always emits `voyage: null`. Recorded for completeness, not as a defect.
+
+- **The two new save fixtures skip the guard sweep.** `COMMITTED_SAVES` in `tests/sim/save.test.ts`
+  is still `['marker-field-v2', 'bilge-session-v3', 'bilge-session-v5']`; neither
+  `voyage-under-way-v6.json` nor `voyage-charted-v7.json` was added, so the "committed saves still
+  load through the deepened guard" test does not cover the two fixtures this slice introduced. They
+  are loaded by `tests/sim/migration.test.ts`, so the migration itself is covered — it is the guard
+  sweep that is not. Missing coverage for paths this task did not change, so non-blocking.
