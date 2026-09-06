@@ -4859,3 +4859,58 @@ turned up that is *not* blocking, recorded here rather than looped.
   `eslint.config.js`): `packages/view/src/app.ts:11` puts `./scenes/sea.ts` before
   `./scenes/puzzle.ts`, and `packages/view/src/scenes/isoScene.ts:4` splits the `client/` group with
   an `iso/atlas.ts` import.
+
+## 2026-09-06 — analysis, slice C review blockers (OPP-21), cycle 1
+
+Two items deliberately left out of the cycle-1 repair, both discovered while deriving the fix for
+review finding B3. Recorded here rather than widened into a repair that is already touching three
+blocking defects. Decisions M11 and the "deliberately not in scope" section of the
+`2026-09-06 — analysis, slice C review blockers` entry in
+`docs/analysis/20260904-125820-charting-setting-sail-and-the-voyage-bet.md` carry the reasoning.
+
+### The camera never learns the grid extent, so any constants can produce void
+
+`createCamera` (`packages/view/src/iso/camera.ts:22`) receives only a content container. `camera.ts`
+imports nothing but `projection.ts` and a `Viewport` type — it has no access to `TileGrid`, `width` or
+`height`, and there is no clamp anywhere in the code path against the edge of the world. The only
+clamp is `clampToAnchor` (`camera.ts:31-35`), which keeps the *anchor* 96 px from the viewport edge
+and says nothing about whether the diamond still covers the window.
+
+The consequence is structural: **every** iso scene depends on its constants happening to be generous
+enough, and nothing catches it when they are not. Review finding B3 is the second time the sea scene's
+constants have been wrong for exactly this reason. Cycle 1 fixes the constants and asserts the
+inequalities in a unit test (analysis decisions M8 to M10), which catches a third wrong value — but it
+does not remove the class.
+
+The stronger fix is tractable and was costed while deriving B3. The four conditions
+`u_min >= 0`, `u_max <= W`, `v_min >= 0`, `v_max <= H` are linear in `(view.x, view.y)`, and in the
+rotated coordinates `a = view.y/TILE_HEIGHT + view.x/TILE_WIDTH`,
+`b = view.y/TILE_HEIGHT - view.x/TILE_WIDTH` they form a plain axis-aligned box — so the clamp is two
+`between` calls in the same shape as the existing `clampToAnchor` (`camera.ts:98-101`). With it in
+place:
+
+- the course *placement* question disappears entirely, and the only surviving requirement is the
+  extent one, `SEA_WIDTH >= VH/TILE_HEIGHT + VW/TILE_WIDTH = 37.6875` and likewise per axis — met by a
+  40x40 grid, which is *cheaper* than both the current 52x44 and the repaired 49x49;
+- right-drag panning (`isoScene.ts:255-263`) becomes void-proof, which no choice of constants can
+  achieve — defending against it with constants alone needs a 77x77 grid, 2.5 times the paint cost;
+- the benefit reaches every `createIsoScene` caller, not just the sea.
+
+The cost is that the ship stops being exactly centred when it approaches the grid edge, which is
+standard camera behaviour and arguably better. Not blocking: the cycle-1 constants and their assertion
+make the sea scene correct today. This is the change that would make the whole class impossible.
+
+### The sea scene's heading is evaluated once and can never update
+
+`packages/view/src/scenes/sea.ts:66` passes `heading` to `createIsoScene` as a **string**, computed at
+scene construction, not as a callback the way `follow` is passed at `:69`. `passageHeadingOf`
+(`sea.ts:43-49`) names `route[route.length - 1]`, the final destination, so the banner reads "Bound
+for Doyle Island" for the entire voyage — including after arrival, when the ship is sitting at the
+destination waiting for the player to press `Port`.
+
+Cycle 1 fixes the *position* on arrival (review finding B2) but leaves the text, so after the repair
+the ship correctly sits at `COURSE_END` under a heading that still says it is bound for the place it
+has reached. That is a smaller discrepancy than the teleport it replaces, and fixing it properly means
+changing `IsoSceneDefinition`'s shape so `heading` can be re-derived per frame like `follow` — a change
+to shared machinery, which the cycle-1 guardrails keep out of the diff. Worth doing when the sea scene
+is next opened, most naturally alongside the traffic work in slice D.
