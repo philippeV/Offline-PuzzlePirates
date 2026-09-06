@@ -1345,3 +1345,129 @@ hijack the scene into `battle` mid-capture.
 
 `npm run check` 622 passing, 0 failing, from cold in an isolated worktree. `npm run smoke` 5 passed;
 the four pre-existing baselines are md5-identical before and after, so only `sea.png` is new.
+
+## 2026-09-06 — independent review of PR 16 (slice C, OPP-21): four blocking findings
+
+Reviewed at head `5d35a9e` against `agent/develop` at `c25a2a5` (merge-base equals the base head, so
+no drift). PR `MERGEABLE`/`CLEAN`, both CI check runs green. Four lenses were run as separate
+subagents; every finding below was then re-verified against the code by hand, because two lenses
+reached **opposite** conclusions from the same files and one of them was wrong.
+
+### The contradiction, resolved, because it decides the fix
+
+One lens reported "the sea scene is unreachable in normal play"; another reported the mirror image,
+"the deck becomes unreachable for the whole voyage". Both cannot hold. Resolved by grep rather than
+by argument:
+
+- No `enter-scene` intent anywhere targets `'sea'`. The complete set on this branch is `deck`
+  (`battle.ts:294`, `port.ts:47`), `puzzle` (`deck.ts:58`), `port` (`deck.ts:108`) and whatever
+  `puzzle.ts:420` computes — never `sea`.
+- `voyage.sail` is dispatched from exactly one place in the whole view layer:
+  `packages/view/src/scenes/deck.ts:90`, the helm's `SAIL_ACTION` — a prop in the **deck** scene.
+
+So the first lens was right and the second was inverted. The correction matters for the repair: the
+deck is not the thing that becomes unreachable, the sea is.
+
+### B1 — the sea scene cannot be reached by playing the game
+
+`syncScene`'s new line is `if (this.atSea && this.current === 'port') this.current = 'sea';`
+(`packages/view/src/client/client.ts:182`). It is the only transition into `'sea'` in the tree. To
+set sail the player must already be standing at the helm, which is on the deck, so at the instant
+`atSea` flips true `current` is `'deck'` — never `'port'` — and the guard never fires. The location
+panel states the intended flow itself: *"Chart a course on the map, then set sail at the helm."*
+
+The player therefore sails the entire passage looking at the deck, exactly as before this slice. The
+only way into the new scene is the `?scene=sea` URL, which is how every test and the smoke baseline
+reach it. This is the same failure shape as the `shipId: 1` defect the development stage caught and
+recorded — the feature works on the test path and not on the player path — and it is why the tests
+all pass: `tests/view/sea.test.ts` and `loop.test.ts:117` reach `'sea'` by dispatching `voyage.sail`
+while `current === 'port'`, a state the UI cannot produce.
+
+Note for whoever repairs it: once the scene *is* reachable, there is no control that leaves it. At
+sea the location panel offers only `Port`; "Board the ship" is gated on `atIslandId !== null`. So the
+repair has to add both the way in and a way back to the deck, or the bilging station, the helm and
+`voyage.abandon` become unreachable for the duration of a voyage.
+
+### B2 — on arrival the ship teleports back to the start of the course
+
+`legProgressPerMilleOf` treats `legTicksRequired <= 0` as "no progress" and returns 0
+(`scenes/sea.ts:30`), which `berth()` renders as `COURSE_START`. On the tick that completes the final
+leg, `stepVoyage` sets `legTicks = 0`, increments `legIndex` to `route.length - 1`, and recomputes
+`legTicksRequired = legTicksRequiredOf(ship, orientationCostOf(route, legIndex))`
+(`packages/sim/src/world/voyage.ts:71-74`). `orientationCostOf` reads `route[legIndex + 1]`, finds
+`undefined`, and returns `0` (`voyage.ts:92-94`); `legTicksRequiredOf(ship, 0)` is
+`Math.floor(seconds * TICKS_PER_SECOND * 0 / PER_MILLE)` = **0** (`voyage.ts:23-29`).
+
+So the moment the ship arrives it jumps from ~1000‰ back to tile `{21, 26}` and parks there — camera
+following — while the heading still reads "Bound for Doyle Island" and the panel says *"Port her once
+the last league be astern."* The player is told they have arrived and shown a ship that never left.
+It persists until they press `Port`, because `stepVoyage` then bails permanently on
+`legIndex >= route.length - 1`. The divide-by-zero guard is correct as a guard and wrong as a
+rendering answer: "no leg" and "no progress" are not the same state.
+
+`tests/view/sea.test.ts:94-107` drives the client into exactly this state and asserts the scene and
+the island, never the position.
+
+### B3 — the "edge of the world" fix is ineffective, and the committed baseline proves it
+
+The development entry above states the grid *"is now sized from the iso projection so a 972×720
+viewport stays on water for the whole course"*, verified in a browser at both ends of a leg. It is
+not. Decoding `tests/e2e/__screenshots__/sea.png` straight out of the object store and counting
+pixels exactly equal to `BACKDROP = 0x0a1622`:
+
+```
+backdrop-exact pixels within the 972-wide stage: 576
+bounding box: x 0-51, y 694-719
+corners: TL water(47,111,159)  TR water  BR water  BL BACKDROP(10,22,34)
+```
+
+The blessed baseline contains the void, in the bottom-left, at the *start* of the leg — the frame was
+taken ~94 ticks into 25 200, essentially at `COURSE_START`. The smoke passes because the defect was
+photographed and blessed, not because it is absent.
+
+The recorded derivation is also the wrong shape. `SEA_WIDTH + SEA_HEIGHT >= 78` is a **sum**
+condition, and the requirement is per-axis: a sum is equally satisfied by a degenerate 70×8 grid that
+would be almost all void. The camera is also centred on the *ship*, not on the diamond, so the
+binding case is the ship at a course endpoint, not the diamond's extent. `52` and `44` happen to
+satisfy the per-axis form on one axis and not the other. The corrected constraint and the resulting
+constants are left to the analysis stage rather than asserted here; what is established is that the
+current rule cannot be the right one and the current constants leave visible backdrop.
+
+### B4 — the analysis document overstates what was verified
+
+B3's claim is recorded as verified in a browser at both ends of a leg, and the artefact committed in
+the same breath falsifies it. Recorded not to score a point but because the next agent will otherwise
+trust the same sentence. The rest of the development entry held up well under checking — the
+`shipId` defect, the false stranding, the deliberate revert and the baseline nondeterminism were all
+volunteered accurately, and the revert is genuinely on the branch (`client.ts:181` reads `'deck'`,
+with no remnant of the alternative).
+
+### What was checked and found sound
+
+- **Blast radius of the shared-machinery change is genuinely nil.** `port.ts` and `deck.ts` are the
+  only other `createIsoScene` callers (`puzzle` and `battle` do not use it) and neither passes
+  `follow` or `avatarArt`; `followTarget` returns immediately when `follow` is undefined, and
+  `avatarArt ?? 'avatar'` preserves the old art. Walking, warping, the radial and `announceArrival`
+  are unchanged on those scenes.
+- **`create` and `reset` do not diverge on scene state.** `reset` calls `syncScene()` after setting
+  `current = 'port'`, so both converge. (They *do* diverge on refusal logging — recorded in
+  `ISSUES.md`, not blocking.)
+- **Decisions L8, L9 and L13 are met.** `atlas.ts` is genuinely absent from the diff and no new art
+  is introduced; the ship's position has exactly one source of truth; one new baseline, the four
+  pre-existing ones untouched, and `maxDiffPixelRatio` correctly not widened.
+- **No security or data-safety findings.** `current` is not persisted, so a save taken at sea
+  re-derives its scene through `syncScene` on load and no reachable pair leaves the client in a scene
+  its own `canEnter` would refuse; `restore`'s rollback still holds. The URL is the only untrusted
+  boundary and both `scene` and `seed` are allowlisted and range-checked. No manifest or lockfile
+  changed; nothing new reads the filesystem, spawns a process or evaluates a string.
+- **`syncScene` strands nobody** across the reachable `(inBattle, atSea, current)` combinations, and
+  fractional tile coordinates cause no throw anywhere they flow — `announceArrival` is unreachable in
+  the sea scene, and would early-return on an `undefined` tile if it were.
+
+### Routing
+
+Cycle 0 to 1. Blocking findings B1-B3 returned to analysis as
+`20260906-140000-analysis-opp21-slice-c-review-blockers`; B4 is corrected by this entry. Non-blocking
+findings — the dead avatar radial and the walk-refusal on every click, the duplicated opening block,
+the misleading `COURSE_*` names, six test-coverage gaps and two import-order slips — are in
+`ISSUES.md` under a dated heading. PR 16 stays open and unmerged.

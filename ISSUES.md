@@ -4739,3 +4739,123 @@ follows is what the lenses substantiated and judged not worth stopping for.
   load through the deepened guard" test does not cover the two fixtures this slice introduced. They
   are loaded by `tests/sim/migration.test.ts`, so the migration itself is covered — it is the guard
   sweep that is not. Missing coverage for paths this task did not change, so non-blocking.
+
+## 2026-09-06 — independent review of PR 16 (slice C, the passage is a place, OPP-21)
+
+Four blocking findings went back to analysis as
+`20260906-140000-analysis-opp21-slice-c-review-blockers`. What follows is everything the review
+turned up that is *not* blocking, recorded here rather than looped.
+
+### The sea scene's own interaction model is dead, but it has a working alternative
+
+- **The sea scene's avatar radial can never open, and every click emits a walk refusal.**
+  `followTarget` (`packages/view/src/scenes/isoScene.ts:174-181`) overwrites `standing` with
+  `coursePositionOf(...)`, which is fractional for every progress value except exactly 0 and 1000
+  (`x = 21 + 9p/1000`). The click handler gates the radial on
+  `sameTile(screenToIso(...), standing)` (`isoScene.ts:243`), and `screenToIso` floors to integers
+  (`packages/view/src/iso/projection.ts:26`), so the comparison is never true under way. The two
+  declared actions in `packages/view/src/scenes/sea.ts:22-25` — `Chart a course` and `Vessel` — are
+  therefore unreachable by click. The click then falls through to `walkTo`; the grid is entirely
+  `water`, which is in `HAZARD_TILES` (`scenes/grid.ts:34`), so `traversable` is false everywhere,
+  `pathBetween` returns `null`, and the scene says *"Avast! I can't find a way to walk there."* on
+  **every** click anywhere in the sea. **Not blocking** only because both panels remain reachable
+  from the persistent tab strip, so no capability is actually lost. Named in the analysis task as
+  worth repairing in the same pass, since it shares a root cause with the blocking findings.
+
+- **`followTarget`'s walk-state reset never fires today.** The three lines clearing `stepTo` and
+  `queued` (`isoScene.ts:176-180`) are pre-emptive: on an all-water grid nothing can ever be queued.
+  Harmless, but a reader will hunt for the interaction that needs them.
+
+### Duplication, and the one worth acting on
+
+- **`create` and `reset` now carry the same opening-voyage block, and they diverge.**
+  `packages/view/src/client/client.ts:52-55` uses `client.dispatch` (which records refusals into the
+  log) and `161-166` uses `this.sim.dispatch` (which swallows them). The silent-refusal failure mode
+  that this very slice was written to fix — a charted `shipId` refused with no error anywhere — is
+  therefore still live on the `reset` path. One private helper collapses both. This is the strongest
+  dedup candidate in the diff, well ahead of the per-mille helpers.
+
+- **`legProgressPerMilleOf` vs `progressPerMilleOf` in `panels/minimap.ts`: leave them alone.** The
+  review agrees with the author's conclusion but not the reason given. Nothing enforces "a scene must
+  not import a panel" — `tools/check-view-boundary.ts` polices only the sim facade — so that is an
+  instinct, not a rule. The real reasons are that the two have different signatures and different
+  contracts (unclamped vs clamped to `[0, 1000]`), and the genuinely shared part is one line of
+  integer arithmetic. Worth noting that `minimap`'s copy is the untested one.
+
+- **`passageHeadingOf`'s route-to-island lookup (`scenes/sea.ts:45-48`) duplicates `destinationOf`
+  (`packages/sim/src/world/dispatch.ts:108-112`) line for line.** That one is domain knowledge and a
+  better unification candidate than the arithmetic, but it needs exporting through the sim facade.
+
+### Naming that misleads
+
+- **`COURSE_START`, `COURSE_END` and `coursePositionOf` describe a voyage but mean a single leg.**
+  `legProgressPerMilleOf` next to them is honest, and the chart panel calls the same thing "Leg 1 of
+  2". `alkaid` to `doyle` routes as `[1, 2, 8]` — two legs — so the ship crosses the drawn course
+  twice per voyage, and a reader of these three names would conclude it crosses once. `LEG_START` /
+  `LEG_END` / `legPositionOf` would say the truth.
+
+- **`berth()` (`scenes/sea.ts:52`)** is the ship's live position under way; a berth is a mooring,
+  which is precisely what it is not.
+
+- **`SEA_WIDTH`, `SEA_HEIGHT` and the two course endpoints are unexplained constants**
+  (`scenes/sea.ts:8-11`). The constraint that produced them lives only in the analysis document, and
+  the derivation recorded there is wrong (see the blocking findings). Both endpoints also sit on
+  `x + y === 47`, which is what keeps the course screen-horizontal, and nothing in the code says so.
+
+### Test coverage
+
+- **The new test's `while` loop is an unbounded copy of a bounded helper the repo already owns.**
+  `tests/view/sea.test.ts:96-99` advances 1000 ticks at a time until `legIndex` reaches the end of
+  the route. It terminates today and it cannot silently exit having tested nothing. But `stepVoyage`
+  returns immediately when `phase !== 'under-way'` (`packages/sim/src/world/voyage.ts:58`), so if a
+  future change ever leaves the opening charted-but-not-sailed — exactly the class of defect this
+  slice already hit once — the loop spins forever, and `node --test` has no default per-test timeout,
+  so CI would hang instead of failing. `sailToDestination(driver, maxTicks)` in
+  `tests/world/loop.ts:74` is the same loop, bounded, throwing a clear message, and already used by
+  `tests/view/loop.test.ts`. A three-line change.
+
+- **`reset()` with the `'under-way'` opening is new code that nothing exercises.** `boot.test.ts`
+  resets only the default opening and checks only the epoch. It is a real user path (`?scene=sea`
+  plus New Game) and it is the half of the duplicated block that swallows refusals.
+
+- **The `follow` wiring — the one genuinely new mechanism — is untested.** All 13 tests exercise the
+  three exported pure helpers plus `GameClient`; nothing mounts `createSeaScene`. That matches repo
+  convention (pixi does not run under node), but the smoke baseline gives thin cover here: `sea.png`
+  was blessed roughly 94 ticks into a 25 200-tick leg, essentially at `COURSE_START`, so **deleting
+  `follow` from `sea.ts:69` would produce a near-identical screenshot and pass everything.** A
+  baseline taken mid-leg would be the cheap fix. `avatarArt` is genuinely pinned.
+
+- **`coursePositionOf` is asserted only at its two endpoints.** `coursePositionOf(500)` should be
+  `{x: 25.5, y: 21.5}`; a change that floored the result to whole tiles — killing the smooth glide,
+  which is the entire point of the feature — would pass every test in the file, including the
+  direction-only assertions in `'the ship advances along the course as the leg is sailed'`.
+
+- **The partial-`VoyageState` casts give slightly false confidence.**
+  `{ legTicks, legTicksRequired } as never` (`tests/view/sea.test.ts:31,36,41`) omits six real
+  fields. If `legTicksRequired` were renamed the helper would read `undefined`, produce `NaN`, and
+  fail with a baffling `NaN !== 250` rather than a type error. `as never` appears nowhere else in the
+  repo as a partial-object stand-in. A local `voyageWith(legTicks, legTicksRequired)` factory
+  returning a complete `VoyageState` would keep the compile-time coupling.
+
+- **`passageHeadingOf` with an empty `route` is untested and, unusually, reachable** — ISSUES.md
+  already records a stranded `route: []` v6 save that migrates to `phase: 'under-way'`. The sea scene
+  handles it gracefully (`OPEN_SEA`); nothing pins that it keeps doing so.
+
+- **`'under-way'` is the first opening with no harness twin.** `boot.test.ts:17,35` pin
+  `'pillage-loop'` and `'sea-battle'` against scenarios in `packages/harness/src/scenarios.ts` via
+  `save()` equality; the new opening's session shape is not pinned anywhere.
+
+### Baseline durability
+
+- **`sea.png` is the first baseline with moving content.** The other four are all taken with
+  `voyage === null`; this one contains a live tick counter and a ship drifting ~2.7 px/s through
+  Playwright's settling. The author's arithmetic that this sits well inside `maxDiffPixelRatio: 0.01`
+  is sound, and the threshold was correctly not widened. But the drift grows with settle time, so
+  this is the first baseline that can flake on a loaded machine. Worth watching rather than changing.
+
+### Style
+
+- **Import order broken in two files**, neither lint-enforced (no import-sort rule in
+  `eslint.config.js`): `packages/view/src/app.ts:11` puts `./scenes/sea.ts` before
+  `./scenes/puzzle.ts`, and `packages/view/src/scenes/isoScene.ts:4` splits the `client/` group with
+  an `iso/atlas.ts` import.
