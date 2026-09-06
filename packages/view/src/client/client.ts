@@ -1,6 +1,11 @@
 import { Sim } from '@opp/sim';
 
-import { DEFAULT_OPENING, openingCommands, type Opening } from './boot.ts';
+import {
+  DEFAULT_OPENING,
+  openingCommands,
+  openingVoyageCommands,
+  type Opening,
+} from './boot.ts';
 import { linesOf, refusalOf, type LogLine } from './log.ts';
 import type {
   Balance,
@@ -11,7 +16,7 @@ import type {
   WorldState,
 } from './rules.ts';
 
-export type SceneId = 'port' | 'deck' | 'puzzle' | 'battle';
+export type SceneId = 'port' | 'deck' | 'puzzle' | 'battle' | 'sea';
 
 export interface ClientOptions {
   seed: number;
@@ -44,6 +49,10 @@ export class GameClient {
     const sim = Sim.create({ seed: options.seed, balance: options.balance });
     const client = new GameClient(sim, options.balance, opening);
     for (const command of openingCommands(opening, options.balance)) client.dispatch(command);
+    const player = sim.state.ships.find((ship) => ship.allegiance === 'player');
+    if (player !== undefined) {
+      for (const command of openingVoyageCommands(opening, player.id)) client.dispatch(command);
+    }
     client.lines = [];
     client.syncScene();
     return client;
@@ -115,6 +124,7 @@ export class GameClient {
   canEnter(scene: SceneId): boolean {
     if (this.inBattle) return scene === 'battle' || scene === 'puzzle';
     if (scene === 'battle') return false;
+    if (scene === 'sea') return this.atSea;
     if (scene === 'port') return !this.atSea;
     return true;
   }
@@ -148,6 +158,12 @@ export class GameClient {
   reset(seed: number): void {
     this.sim = Sim.create({ seed, balance: this.balance });
     for (const command of openingCommands(this.opening, this.balance)) this.sim.dispatch(command);
+    const player = this.sim.state.ships.find((ship) => ship.allegiance === 'player');
+    if (player !== undefined) {
+      for (const command of openingVoyageCommands(this.opening, player.id)) {
+        this.sim.dispatch(command);
+      }
+    }
     this.lines = [];
     this.current = 'port';
     this.worldEpoch += 1;
@@ -163,7 +179,8 @@ export class GameClient {
   private syncScene(): void {
     if (this.inBattle && this.current !== 'puzzle') this.current = 'battle';
     if (!this.inBattle && this.current === 'battle') this.current = 'deck';
-    if (this.atSea && this.current === 'port') this.current = 'deck';
+    if (this.atSea && this.current === 'port') this.current = 'sea';
+    if (!this.atSea && this.current === 'sea') this.current = 'deck';
   }
 
   private record(events: SimEvent[]): void {

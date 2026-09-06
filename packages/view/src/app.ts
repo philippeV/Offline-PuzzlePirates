@@ -8,6 +8,7 @@ import { createPanelDeck, type PanelDeck } from './panels/panels.ts';
 import { createBattleScene } from './scenes/battle.ts';
 import { createDeckScene } from './scenes/deck.ts';
 import { createPortScene } from './scenes/port.ts';
+import { createSeaScene } from './scenes/sea.ts';
 import { createPuzzleScene } from './scenes/puzzle.ts';
 import type { Intent, Scene, SceneContext, SceneFactory } from './scenes/scene.ts';
 import { createTicker, type Ticker } from './ticker.ts';
@@ -19,6 +20,7 @@ const SCENE_FACTORIES: Record<SceneId, SceneFactory> = {
   deck: createDeckScene,
   puzzle: createPuzzleScene,
   battle: createBattleScene,
+  sea: createSeaScene,
 };
 
 export interface MountOptions {

@@ -103,7 +103,7 @@ test('the client shows the player what happened on the voyage', () => {
   assert.ok(spoken.some((text) => text.startsWith('Ported at')));
 });
 
-test('the client refuses to leave the deck for the port while at sea', () => {
+test('setting sail carries the player out of the port and onto the sea', () => {
   const client = GameClient.create({ seed: SEED, balance: BALANCE });
   const ship = shipOf(client.state, 'player');
 
@@ -118,5 +118,6 @@ test('the client refuses to leave the deck for the port while at sea', () => {
   assert.equal(client.enterScene('port'), false);
   assert.equal(client.scene, 'port');
   client.advance(1);
-  assert.equal(client.scene, 'deck');
+  assert.equal(client.scene, 'sea');
+  assert.equal(client.canEnter('port'), false);
 });

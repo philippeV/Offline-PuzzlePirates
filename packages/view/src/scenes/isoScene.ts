@@ -1,6 +1,7 @@
 import { Container, Graphics, Rectangle, Sprite, Text, type FederatedPointerEvent } from 'pixi.js';
 
 import type { SceneId } from '../client/client.ts';
+import type { PropArt } from '../iso/atlas.ts';
 import type { ShipState, WorldState } from '../client/rules.ts';
 import { createCamera } from '../iso/camera.ts';
 import {
@@ -62,6 +63,8 @@ export interface IsoSceneDefinition {
   spawn: TilePoint;
   heading: string;
   avatarActions: ObjectAction[];
+  avatarArt?: PropArt;
+  follow?(): TilePoint;
   crew?: TilePoint[];
   highlights?: TilePoint[];
   act(targetId: string, actionId: string): void;
@@ -93,7 +96,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
   root.hitArea = new Rectangle(0, 0, 1, 1);
   root.addChild(camera.view, heading, radial.view);
 
-  const avatar = Sprite.from(context.atlas.texture('avatar'));
+  const avatar = Sprite.from(context.atlas.texture(definition.avatarArt ?? 'avatar'));
   avatar.anchor.set(0.5, 1);
 
   let standing: TilePoint = definition.spawn;
@@ -166,6 +169,15 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
     avatar.x = from.x + (to.x - from.x) * progress;
     avatar.y = from.y + (to.y - from.y) * progress - bob;
     avatar.zIndex = depthOf(target, AVATAR_DEPTH);
+  }
+
+  function followTarget(): void {
+    if (definition.follow === undefined) return;
+    const tile = definition.follow();
+    standing = tile;
+    stepFrom = tile;
+    stepTo = null;
+    queued = [];
   }
 
   function announceArrival(): void {
@@ -278,6 +290,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
       heading.position.set(HEADING_MARGIN_PX, HEADING_MARGIN_PX);
     },
     update(elapsedMs: number): void {
+      followTarget();
       advanceWalk(elapsedMs);
       placeAvatar();
       camera.keepVisible(standing);

@@ -1,12 +1,13 @@
-import type { Balance, Command, IslandId, StationSlot } from './rules.ts';
+import type { Balance, Command, EntityId, IslandId, StationSlot } from './rules.ts';
 
-export type Opening = 'pillage-loop' | 'sea-battle';
+export type Opening = 'pillage-loop' | 'sea-battle' | 'under-way';
 
 export const DEFAULT_OPENING: Opening = 'pillage-loop';
 export const HOME_ISLAND: IslandId = 'alkaid';
 export const OPENING_STATION: StationSlot = 'bilging';
 
 const BILGING_PUZZLE = 'bilging';
+const PASSAGE_DESTINATION: IslandId = 'doyle';
 
 export function openingCommands(opening: Opening, balance: Balance): Command[] {
   if (opening === 'sea-battle') return seaBattleCommands(balance);
@@ -18,6 +19,14 @@ function pillageLoopCommands(balance: Balance): Command[] {
     { op: 'puzzle.start', puzzle: BILGING_PUZZLE },
     { op: 'world.start', islandId: HOME_ISLAND },
     playerSloop(balance),
+  ];
+}
+
+export function openingVoyageCommands(opening: Opening, shipId: EntityId): Command[] {
+  if (opening !== 'under-way') return [];
+  return [
+    { op: 'voyage.chart', shipId, toIslandId: PASSAGE_DESTINATION, voyageType: 'evade' },
+    { op: 'voyage.sail' },
   ];
 }
 

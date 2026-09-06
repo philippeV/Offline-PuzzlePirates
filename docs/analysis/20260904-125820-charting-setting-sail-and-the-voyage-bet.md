@@ -1274,3 +1274,74 @@ from a detached worktree and pushed `HEAD:` to the branch. Session note: this ru
 roughly 23 hours mid-test and resumed on 2026-09-05. The claim was re-verified as unreaped and the
 PR head re-checked as unchanged at `2fee216` before anything was merged, so no result reported here
 was carried over from a tree that had moved.
+
+## 2026-09-05 — development, slice C (OPP-21), the passage is a place
+
+Slice C implemented on `agent/feature/20260904-132302-opp17-slice-c-the-passage-is-a-place`, branched
+from `agent/develop` at `c25a2a5` — slice B had reached `agent/develop` earlier the same run, so the
+task's first branching option applied.
+
+**Repository note, recorded because `queue-development` step 2 assumes otherwise:** this repository
+has **no `develop` branch**. The remote carries `main` and `agent/develop` only. There is therefore
+nothing to sync `agent/develop` from; it is already the integration base, and `main` was not touched.
+
+### What was built
+
+A `sea` scene (decision L7) drawn from nothing but the existing `water` tile and `sloop` prop
+(decision L8) — `packages/view/src/iso/atlas.ts` was not edited. The ship's place on the passage is
+`legTicks / legTicksRequired` and nothing else (decision L9), so there is no second source of truth
+for where the ship is; a new `sea` opening charts and sails so `?scene=sea` has a voyage to draw.
+
+**The player is the ship at this scale.** `createIsoScene` always draws an avatar at the tile the
+camera is anchored to, and a pirate figure standing on open water would be wrong. Rather than build a
+parallel scene, `IsoSceneDefinition` gained two optional fields — `avatarArt` and `follow` — so a
+scene may name the art its avatar is drawn with and re-derive its position each frame. The sea scene
+sets `avatarArt: 'sloop'` and follows leg progress; every other scene is untouched, both fields being
+optional. This also makes the camera track the voyage for free.
+
+### Three defects found by running it, not by reading it
+
+- **The opening silently did nothing.** The first implementation hardcoded the charted `shipId` to
+  `1`, on the reasoning that the player sloop is the first hull commissioned. It is entity **2**, so
+  `voyage.chart` was refused — and because `GameClient.create` clears the log after the opening, the
+  refusal was invisible: `?scene=sea` would have rendered an empty sea with no error anywhere. The id
+  is now derived from the player hull (`openingVoyageCommands`), mirrored in `reset`, and pinned by a
+  test that fails loudly if the opening ever stops leaving port.
+- **Sailing revealed the edge of the world.** `camera.keepVisible` pans once the ship nears the
+  viewport margin, and at 95 % of a leg the first grid (24×18, later 40×32) left dark void beside the
+  water. The grid is now sized from the iso projection so a 972×720 viewport stays on water for the
+  whole course: an iso diamond only covers the viewport when `SEA_WIDTH + SEA_HEIGHT >= 78`, hence
+  52×44 with the course centred on the diamond. Verified in a browser at both ends of a leg.
+- **A stranding that was not one.** After `voyage.port` the scene appeared stuck on `sea`. It is not:
+  `syncScene` runs on `advance`, and the sim clock was simply not running, because requestAnimationFrame
+  is paused while the browser pane is hidden. One tick returns the player to the deck. Recorded
+  because it looked exactly like a blocking defect and is not.
+
+### Deviation, deliberately not taken
+
+An earlier edit also sent a player whose battle ends while still at sea back to the passage rather
+than the deck. Concluding a battle in a test needs the disengage counter to run down, and shipping an
+untested behaviour change outside this slice's scope is worse than leaving it, so that line was
+reverted to its original `'deck'`. A player at sea who finishes a battle lands on their deck exactly
+as before. Worth revisiting when slice D gives battles at sea a natural home.
+
+### Determinism of the `sea` baseline, declared rather than discovered later
+
+Decision L13 asks for the baseline to be taken deliberately. Two things in the `sea` frame genuinely
+move between runs, and neither is noise:
+
+- The chart panel is mounted in **every** scene, and while under way it renders a live tick counter
+  and progress bar (`94/25200` in the blessed frame). Those digits will differ on the next run. The
+  existing four baselines are unaffected because all four are taken with `voyage === null`.
+- The ship drifts roughly 2.7 px/s between mount and capture, as the rAF ticker keeps advancing
+  through Playwright's own screenshot settling.
+
+Both are far inside the project's existing `maxDiffPixelRatio: 0.01` — order a few hundred pixels
+against roughly 9 200 of slack — so the baseline holds. The threshold was **not** widened. The smoke
+voyage uses `voyageType: 'evade'`, whose encounter chance is structurally zero, so no brigand can
+hijack the scene into `battle` mid-capture.
+
+### Verification
+
+`npm run check` 622 passing, 0 failing, from cold in an isolated worktree. `npm run smoke` 5 passed;
+the four pre-existing baselines are md5-identical before and after, so only `sea.png` is new.
