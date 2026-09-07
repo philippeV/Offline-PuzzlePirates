@@ -7,8 +7,9 @@ import type { PuzzleState } from './puzzle/session.ts';
 import type { ShipState } from './ship/state.ts';
 import { createRngStreams, type RngStreams } from './rng.ts';
 import type { IslandMarket, PirateState, VoyageState } from './world/state.ts';
+import type { TrafficShip } from './world/traffic.ts';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export interface Marker {
   id: EntityId;
@@ -28,6 +29,7 @@ export interface WorldState extends EntityIdCounter {
   battle: BattleState | null;
   pirate: PirateState | null;
   voyage: VoyageState | null;
+  traffic: TrafficShip[];
   markets: IslandMarket[];
 }
 
@@ -45,6 +47,7 @@ export function createWorldState(seed: number, balance: Balance | null): WorldSt
     battle: null,
     pirate: null,
     voyage: null,
+    traffic: [],
     markets: [],
   };
 }

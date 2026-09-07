@@ -17,6 +17,7 @@ import {
   SEA_WIDTH,
   coursePositionOf,
   passageHeadingOf,
+  trafficProgressPerMilleOf,
   voyageProgressPerMilleOf,
 } from '../../packages/view/src/scenes/sea.ts';
 
@@ -170,4 +171,19 @@ test('a battle at sea takes the scene from the passage', () => {
   client.advance(1);
   assert.equal(client.scene, 'battle');
   assert.equal(client.canEnter('sea'), false);
+});
+
+test('a traffic ship on the leg is placed on the same whole-passage scale as the player', () => {
+  assert.equal(trafficProgressPerMilleOf(null, 500), 0);
+  assert.equal(trafficProgressPerMilleOf(voyageAt(0, 0, 25200), 0), 0);
+  assert.equal(trafficProgressPerMilleOf(voyageAt(0, 0, 25200), PROGRESS_PER_MILLE), 500);
+  assert.equal(trafficProgressPerMilleOf(voyageAt(1, 0, 25200), PROGRESS_PER_MILLE), PROGRESS_PER_MILLE);
+});
+
+test('a traffic ship astern of the player is placed behind the start of the course', () => {
+  const astern = trafficProgressPerMilleOf(voyageAt(0, 0, 25200), -400);
+
+  assert.ok(astern < 0, `astern traffic was clamped to ${String(astern)}`);
+  assert.ok(coursePositionOf(astern).x < COURSE_START.x);
+  assert.ok(coursePositionOf(astern).y > COURSE_START.y);
 });

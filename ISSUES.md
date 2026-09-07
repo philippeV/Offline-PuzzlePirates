@@ -5142,3 +5142,163 @@ harmless, and per the entry above the test would not stop it. A name such as
   on the left when you sail from the start and on the right when you enter the passage afresh at the
   arrival end. Non-blocking and already covered by M11, but the size is the argument for pulling M11
   forward: at a maximised 1080p window about a tenth of the play area is flat backdrop.
+
+## From slice D, 2026-09-07 (traffic and battle by range, OPP-22)
+
+- **Pillage encounters are 43 per cent more frequent than before this slice.** Measured over 60 seeds:
+  0.825 spawns per leg before, 1.179 after — 4.95 against 7.08 over a six-leg voyage. This is the
+  specified mechanism, not a defect: the analysis says a traffic ship crossing into range rolls, and a
+  leg offers up to `world.trafficShipsPerLegMax` crossings where arrival offered exactly one roll. It
+  was deliberately not hidden by retuning, because `world.encounterChancePerMille`'s `_sources` entry
+  documents "a quarter of legs carrying a brigand ... a voyage rather than a gauntlet" and that
+  sentence would silently stop being true. The remedy is one data value — lower
+  `world.encounterChancePerMille` — once someone decides what the rate should be now that the trigger
+  has moved. Note the base constant was already not the effective pillage rate: the pillage bonus and
+  difficulty weighting put the old effective chance near 80 per cent a leg, so the `_sources` sentence
+  describes the base number rather than pillage.
+- A battle now requires a ship to actually close, so a short pillage is no longer certain to fight: a
+  two-leg run meets a brigand 85.5 per cent of the time against an eight-leg run's 100 per cent. That
+  is the point of battle-by-range, but any test that assumes a voyage always fights is now seed
+  dependent — `tests/harness/restocking.test.ts` was one and needed its seed moved.
+- `packages/sim/src/world/traffic.ts` `trafficEnteringRange` takes the previous progress of every ship
+  as a parallel array supplied by the caller. It is correct and allocation-cheap, but the pairing of
+  `traffic[i]` with `passedProgress[i]` is a positional contract between two files that nothing
+  enforces; if traffic ever stops being rebuilt wholesale per tick, this is where it breaks.
+- Traffic sprites are drawn from the `sloop` art with no tint or scale, so a neutral passing ship and
+  the ship that is about to turn hostile look identical. Distinguishing them needs something beyond the
+  art key, which `atlas.ts` does not currently parameterise and this slice was barred from touching.
+
+## From the review stage, 2026-09-07 (slice D, traffic and battle by range, PR 17, cycle 0)
+
+Four lenses, no blocking findings. Two lenses independently proposed the first item below as blocking;
+it is recorded here as non-blocking with the reasoning, because the reasoning is the part that matters.
+
+### `seedTraffic` draws from `world.encounter` rather than its own stream
+
+`packages/sim/src/world/voyage.ts:112` opens `ENCOUNTER_STREAM` and `packages/sim/src/world/traffic.ts:38-56`
+draws `1 + 3 x count` values from it on the first tick of every leg, before any encounter roll. This is
+decision L11 implemented exactly as written, so the code conforms to its spec. It is recorded here rather
+than sent back because it is not a correctness defect: determinism is preserved — a mid-leg save/reload
+plus 40,000 further ticks reproduces an identical hash — and the queue's blocking test puts architectural
+coupling in the non-blocking column.
+
+**The premise L11 was defended on is false, and that is the part worth your attention.** The development
+entry argues the reuse is safe because "every pinned fixture runs a scenario with no voyage". Three pinned
+artefacts carry voyages: `packages/fixtures/saves/voyage-charted-v7.json`, `voyage-under-way-v6.json`, and
+`tests/e2e/__screenshots__/sea.png`, whose `?scene=sea` opening charts and sails an `evade` voyage
+(`packages/view/src/client/boot.ts`, `openingVoyageCommands`) and therefore does seed traffic from
+`world.encounter`. What survives is the narrower claim: the four RNG-hash-pinned artefacts — the golden,
+both replays and the scenario — have no voyage, and the golden's `/rngStreams` subtree is byte-identical.
+So no re-bless masked a stream shift. The gate did not fire because nothing it watches sails, not because
+the discipline held.
+
+Against that sit three recorded rules: road decision 52, which gave critters `bilge.critters` precisely so
+new draws would not shift a pinned order; the road document's stated invariant "No world code draws from a
+pre-existing stream", which is now untrue; and `.claude/skills/pp-golden-state`, whose remedy for this exact
+diagnosis is "give the new consumer its own stream name". L11's own rationale — that a new stream "would
+change every existing seed's outcomes" — is backwards, as the development entry itself concedes, and is
+contradicted by decision 52.
+
+The remedy is a `TRAFFIC_STREAM` constant beside `ENCOUNTER_STREAM` and one changed argument. It gets more
+expensive with every seed pinned against the current draw order, and it is the reason
+`tests/harness/restocking.test.ts` will keep needing its seed moved: any future change to traffic spawn
+count re-shifts the encounter cursor. Recommended before this reaches `develop`, as a decision made on the
+corrected premise rather than the recorded one.
+
+### Confirmed defects, one line each
+
+- **`voyage.port` mid-leg orphans the traffic array.** `packages/sim/src/world/dispatch.ts:130` sets
+  `state.voyage = null` with no phase guard and without clearing `state.traffic`. `port` is accepted on
+  leg 0, whose point is the origin island, so it is reachable while under way — the UI offers the button
+  whenever `client.atSea` (`packages/view/src/panels/location.ts:111`). Reproduced twice independently
+  (seed 7919 pillage to `mcguffins-isle`, 5000 ticks, `voyage.port` accepted leaving `traffic.length === 2`).
+  The save then carries ships on a passage nobody is sailing. Determinism is unaffected — the next leg
+  overwrites wholesale — and the sea scene is unreachable with no voyage, so impact is a stale save field
+  plus a possible one-frame ghost sloop after the next `voyage.sail`. `dispatch.ts` is untouched by this PR:
+  the path is newly reachable, not newly written, the same shape as slice C's `main.ts` finding.
+- **The save guard does not validate traffic elements.** `packages/sim/src/save.ts:43` declares
+  `traffic: 'an array'` and stops, while `refuseSpoiltVoyage` validates every `voyage.route` league point.
+  `traffic[i].fromPointId` / `toPointId` are the same `LeaguePointId` type and get no check. A save holding
+  `[null]` or `["x"]` loads clean and then throws an uncaught `TypeError` out of `advanceTraffic` on the next
+  tick instead of being refused at load. This matches the `markets` posture rather than the `ships` posture,
+  but `markets` carries no id referencing a fixed enum.
+- **Only the first crossing per tick is honoured.** `packages/sim/src/world/traffic.ts:76` uses `find`. If
+  two ships cross into range on the same tick, the second is thereafter inside the window and can never
+  trigger, because re-triggering needs an out-to-in transition. Narrower than decision N2 as written.
+- **A ship holding station at the range boundary can roll repeatedly.** Player and traffic progress both
+  advance in integer per-mille steps, and the speed band 25-60 deliberately straddles the player's ~40, so a
+  matched-speed ship can oscillate across the range edge and present a fresh out-to-in edge on many separate
+  ticks. `tests/world/traffic.test.ts:95` is named for the property this breaks but only covers the clean
+  crossing. A plausible second contributor to the declared 43 per cent rise, which is currently attributed
+  solely to there being up to three crossings a leg.
+
+### Balance file hazards, all reachable by hand-editing `balance.json`
+
+The six new keys are validated only by `Number.isSafeInteger` (`packages/sim/src/balanceParse.ts:161-171`) —
+no range, ordering or magnitude check. Executed against the real code:
+
+- A span of 2^32 or more makes `rng.ts:38` compute `unbiasedLimit === 0`, and the rejection loop at
+  `rng.ts:40` never exits. `"trafficShipsPerLegMax": 4294967296` hangs `seedTraffic` permanently.
+- `count` is an unbounded loop bound (`traffic.ts:41`). `"trafficShipsPerLegMax": 1000000000` drew
+  217,120,325 ships at seed 20260907, each a six-field object pushed into `state.traffic` and then serialised
+  into every save. This is the sim's first balance-driven loop count with no natural bound; `battle/setup.ts`
+  self-limits because `drawOpenTile` returns `null` once the board fills.
+- A reversed min/max pair throws `RangeError` out of `stepWorld` mid-tick, after the count draw has already
+  advanced the persisted cursor — so the tick is torn and each retry burns a draw. The throw shape is
+  pre-existing house style (`battle/booty.ts:69`), but the min/max pair is new and is the easiest of these
+  to get wrong by hand.
+
+`encounterRangePerMille` is safe at negative, zero and huge values — pure arithmetic in `withinRange`, and a
+huge range simply never fires because entering requires being out of range first.
+
+### Coverage and test-integrity notes
+
+- **No golden or replay covers a voyage at all**, so the whole traffic subsystem — the state field, the six
+  tunables and the moved trigger — has zero whole-state coverage and is pinned only by targeted assertions.
+  This is the structural reason the stream reuse is invisible to the fixture gate. A voyage golden is the
+  natural companion to this slice.
+- **Nothing serialises a non-empty `traffic` array in the suite.** Every updated golden and replay carries
+  `"traffic": []`. The round trip was verified by hand and is correct; no test would catch a future regression.
+- **`tests/harness/restocking.test.ts` seed 2026 to 2028 is a legitimate fixture choice, not a weakened test.**
+  Both assertions are byte-identical, nothing was relaxed or made conditional, and the whole downstream
+  purse-arithmetic chain still runs. But the test now depends on a hand-picked seed satisfying an 85.5 per cent
+  stochastic property, and will break again on any change that shifts the `world.encounter` draw order. Worth
+  converting to a construction that guarantees a battle rather than one that happens to draw one.
+- **`progressAccumulator` is never asserted at a non-zero value.** Every `advanceTraffic` loop in the suite
+  runs a whole multiple of 1000 ticks at an integer speed, so the remainder lands on 0 at every assertion
+  point. Replacing the modulo-and-floor carry with plain integer division breaks nothing in the suite.
+- `trafficStillOnLeg` pins the positive bound kept and both neighbours dropped, but never the exact negative
+  bound kept.
+- `trafficEnteringRange`'s `before === undefined` guard is unreachable from the only production caller, which
+  seeds before it captures `passedProgress`. Dead branch.
+- `tests/e2e/__screenshots__/sea.png` was re-taken (68684 to 72129 bytes). Expected — traffic now renders —
+  but an image baseline carries none of the classification evidence a golden patch does.
+
+### Dead surface and duplication
+
+- `TrafficShip` re-exported at `packages/view/src/client/rules.ts:89` has zero references anywhere under
+  `packages/view` or `tests/view`; `sea.ts` infers the element type from `context.client.state.traffic`.
+- All six traffic exports at `packages/sim/src/index.ts:327-335` are unconsumed — the tests import by relative
+  path. More to the point, `world/voyage.ts` and `world/encounter.ts` are deliberately kept off the barrel, so
+  putting the mutating tick-step functions `seedTraffic`, `advanceTraffic` and `trafficStillOnLeg` on the
+  public API departs from that pattern for no consumer.
+- `TrafficShip.fromPointId` and `toPointId` are written at `traffic.ts:49-50` and never read anywhere. They
+  are persisted in every save and folded into every state hash for nothing.
+- `trafficProgressPerMilleOf` (`packages/view/src/scenes/sea.ts:57`) is a near-verbatim copy of
+  `voyageProgressPerMilleOf` above it, and the two disagree on a degenerate leg: the view treats a leg that
+  costs no ticks as nothing sailed, the sim's `legProgressPerMilleOf` treats it as fully sailed. Two
+  conventions for one concept, in two files, each pinned by its own test.
+
+### Undescribed behaviour, correct but unrecorded
+
+Traffic is frozen for the duration of a battle (`voyage.ts:67` returns before `advanceTraffic`). A voyage
+restored mid-leg gets an empty passage for the remainder of that leg, because seeding is gated on
+`legTicks === 0`. Traffic consumes the global `EntityId` counter, so `nextEntityId` inflates over a voyage.
+And the design prose says a traffic ship is "promoted to a real brigand hull"; there is no promotion —
+`encounter.ts:52` mints a fresh hull unaware of the closing ship, and `voyage.ts:130` deletes the traffic
+entry by id. The net effect matches; the identity does not.
+
+Finally, roughly a quarter of legs open with zero traffic (the count is drawn from zero to three inclusive;
+measured 32 of 132 legs), so alongside the declared 43 per cent rise the pacing is now lumpier in both
+directions — some legs structurally cannot produce an encounter, others offer three chances. Documented
+mechanism, but `world.encounterChancePerMille`'s `_sources` prose describes a game that no longer exists.

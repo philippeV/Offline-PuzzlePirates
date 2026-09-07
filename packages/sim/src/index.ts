@@ -324,3 +324,12 @@ export {
   type VoyageState,
   type VoyageType,
 } from './world/state.ts';
+export {
+  advanceTraffic,
+  legProgressPerMilleOf,
+  seedTraffic,
+  trafficEnteringRange,
+  trafficStillOnLeg,
+  withinRange,
+  type TrafficShip,
+} from './world/traffic.ts';

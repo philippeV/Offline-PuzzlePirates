@@ -36,6 +36,7 @@ const COMMITTED_V6_SCHEMA = 6;
 const COMMITTED_V7_SAVE = fileURLToPath(
   new URL('../../packages/fixtures/saves/voyage-charted-v7.json', import.meta.url),
 );
+const COMMITTED_V7_SCHEMA = 7;
 const COMMITTED_V7_ISLAND = 'alkaid';
 const COMMITTED_V7_IDLE_TICKS = 120;
 
@@ -259,7 +260,21 @@ test('migrating a schema version six save puts the voyage it was already sailing
   assert.deepEqual(migrated.voyage, { ...voyage, phase: 'under-way' });
 });
 
-test('the committed current-schema save loads its charted course untouched', () => {
+test('the committed schema version seven save is a genuine schema version seven artefact', () => {
+  const raw = JSON.parse(committedV7Save()) as Record<string, unknown>;
+
+  assert.equal(raw['schemaVersion'], COMMITTED_V7_SCHEMA);
+  assert.equal('traffic' in raw, false);
+});
+
+test('migrating a schema version seven save gives it an empty passage', () => {
+  const migrated = deserialise(committedV7Save());
+
+  assert.equal(migrated.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(migrated.traffic, []);
+});
+
+test('the committed schema version seven save loads its charted course untouched', () => {
   const loaded = deserialise(committedV7Save());
 
   assert.equal(loaded.schemaVersion, SCHEMA_VERSION);

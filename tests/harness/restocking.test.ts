@@ -7,7 +7,7 @@ import { HOME_ISLAND, PILLAGE_LOOP_SCENARIO } from '../../packages/harness/src/s
 import { agentPlanOf, shipOf } from '../world/loop.ts';
 import { resultOf, startHarness, type Harness } from './client.ts';
 
-const SEED = 2026;
+const SEED = 2028;
 const DESTINATION = 'doyle';
 const RESTOCKED_BALL = 'small-cannon-ball';
 const OVERSIZED_BALL = 'large-cannon-ball';

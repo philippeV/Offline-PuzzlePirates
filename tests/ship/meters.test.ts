@@ -99,6 +99,12 @@ const BALANCE: Balance = {
     pillageSpawnBonusPerMille: 300,
     tradeSpawnPenaltyPerMille: 400,
     brigandCrewCount: 5,
+    trafficShipsPerLegMax: 3,
+    trafficSpawnAheadMinPerMille: 120,
+    trafficSpawnAheadMaxPerMille: 900,
+    trafficSpeedMinPerMillePerThousandTicks: 25,
+    trafficSpeedMaxPerMillePerThousandTicks: 60,
+    encounterRangePerMille: 60,
   },
   market: {
     rawBasePricePoe: 12,
