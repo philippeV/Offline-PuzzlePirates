@@ -1274,3 +1274,785 @@ from a detached worktree and pushed `HEAD:` to the branch. Session note: this ru
 roughly 23 hours mid-test and resumed on 2026-09-05. The claim was re-verified as unreaped and the
 PR head re-checked as unchanged at `2fee216` before anything was merged, so no result reported here
 was carried over from a tree that had moved.
+
+## 2026-09-05 — development, slice C (OPP-21), the passage is a place
+
+Slice C implemented on `agent/feature/20260904-132302-opp17-slice-c-the-passage-is-a-place`, branched
+from `agent/develop` at `c25a2a5` — slice B had reached `agent/develop` earlier the same run, so the
+task's first branching option applied.
+
+**Repository note, recorded because `queue-development` step 2 assumes otherwise:** this repository
+has **no `develop` branch**. The remote carries `main` and `agent/develop` only. There is therefore
+nothing to sync `agent/develop` from; it is already the integration base, and `main` was not touched.
+
+### What was built
+
+A `sea` scene (decision L7) drawn from nothing but the existing `water` tile and `sloop` prop
+(decision L8) — `packages/view/src/iso/atlas.ts` was not edited. The ship's place on the passage is
+`legTicks / legTicksRequired` and nothing else (decision L9), so there is no second source of truth
+for where the ship is; a new `sea` opening charts and sails so `?scene=sea` has a voyage to draw.
+
+**The player is the ship at this scale.** `createIsoScene` always draws an avatar at the tile the
+camera is anchored to, and a pirate figure standing on open water would be wrong. Rather than build a
+parallel scene, `IsoSceneDefinition` gained two optional fields — `avatarArt` and `follow` — so a
+scene may name the art its avatar is drawn with and re-derive its position each frame. The sea scene
+sets `avatarArt: 'sloop'` and follows leg progress; every other scene is untouched, both fields being
+optional. This also makes the camera track the voyage for free.
+
+### Three defects found by running it, not by reading it
+
+- **The opening silently did nothing.** The first implementation hardcoded the charted `shipId` to
+  `1`, on the reasoning that the player sloop is the first hull commissioned. It is entity **2**, so
+  `voyage.chart` was refused — and because `GameClient.create` clears the log after the opening, the
+  refusal was invisible: `?scene=sea` would have rendered an empty sea with no error anywhere. The id
+  is now derived from the player hull (`openingVoyageCommands`), mirrored in `reset`, and pinned by a
+  test that fails loudly if the opening ever stops leaving port.
+- **Sailing revealed the edge of the world.** `camera.keepVisible` pans once the ship nears the
+  viewport margin, and at 95 % of a leg the first grid (24×18, later 40×32) left dark void beside the
+  water. The grid is now sized from the iso projection so a 972×720 viewport stays on water for the
+  whole course: an iso diamond only covers the viewport when `SEA_WIDTH + SEA_HEIGHT >= 78`, hence
+  52×44 with the course centred on the diamond. Verified in a browser at both ends of a leg.
+- **A stranding that was not one.** After `voyage.port` the scene appeared stuck on `sea`. It is not:
+  `syncScene` runs on `advance`, and the sim clock was simply not running, because requestAnimationFrame
+  is paused while the browser pane is hidden. One tick returns the player to the deck. Recorded
+  because it looked exactly like a blocking defect and is not.
+
+### Deviation, deliberately not taken
+
+An earlier edit also sent a player whose battle ends while still at sea back to the passage rather
+than the deck. Concluding a battle in a test needs the disengage counter to run down, and shipping an
+untested behaviour change outside this slice's scope is worse than leaving it, so that line was
+reverted to its original `'deck'`. A player at sea who finishes a battle lands on their deck exactly
+as before. Worth revisiting when slice D gives battles at sea a natural home.
+
+### Determinism of the `sea` baseline, declared rather than discovered later
+
+Decision L13 asks for the baseline to be taken deliberately. Two things in the `sea` frame genuinely
+move between runs, and neither is noise:
+
+- The chart panel is mounted in **every** scene, and while under way it renders a live tick counter
+  and progress bar (`94/25200` in the blessed frame). Those digits will differ on the next run. The
+  existing four baselines are unaffected because all four are taken with `voyage === null`.
+- The ship drifts roughly 2.7 px/s between mount and capture, as the rAF ticker keeps advancing
+  through Playwright's own screenshot settling.
+
+Both are far inside the project's existing `maxDiffPixelRatio: 0.01` — order a few hundred pixels
+against roughly 9 200 of slack — so the baseline holds. The threshold was **not** widened. The smoke
+voyage uses `voyageType: 'evade'`, whose encounter chance is structurally zero, so no brigand can
+hijack the scene into `battle` mid-capture.
+
+### Verification
+
+`npm run check` 622 passing, 0 failing, from cold in an isolated worktree. `npm run smoke` 5 passed;
+the four pre-existing baselines are md5-identical before and after, so only `sea.png` is new.
+
+## 2026-09-06 — independent review of PR 16 (slice C, OPP-21): four blocking findings
+
+Reviewed at head `5d35a9e` against `agent/develop` at `c25a2a5` (merge-base equals the base head, so
+no drift). PR `MERGEABLE`/`CLEAN`, both CI check runs green. Four lenses were run as separate
+subagents; every finding below was then re-verified against the code by hand, because two lenses
+reached **opposite** conclusions from the same files and one of them was wrong.
+
+### The contradiction, resolved, because it decides the fix
+
+One lens reported "the sea scene is unreachable in normal play"; another reported the mirror image,
+"the deck becomes unreachable for the whole voyage". Both cannot hold. Resolved by grep rather than
+by argument:
+
+- No `enter-scene` intent anywhere targets `'sea'`. The complete set on this branch is `deck`
+  (`battle.ts:294`, `port.ts:47`), `puzzle` (`deck.ts:58`), `port` (`deck.ts:108`) and whatever
+  `puzzle.ts:420` computes — never `sea`.
+- `voyage.sail` is dispatched from exactly one place in the whole view layer:
+  `packages/view/src/scenes/deck.ts:90`, the helm's `SAIL_ACTION` — a prop in the **deck** scene.
+
+So the first lens was right and the second was inverted. The correction matters for the repair: the
+deck is not the thing that becomes unreachable, the sea is.
+
+### B1 — the sea scene cannot be reached by playing the game
+
+`syncScene`'s new line is `if (this.atSea && this.current === 'port') this.current = 'sea';`
+(`packages/view/src/client/client.ts:182`). It is the only transition into `'sea'` in the tree. To
+set sail the player must already be standing at the helm, which is on the deck, so at the instant
+`atSea` flips true `current` is `'deck'` — never `'port'` — and the guard never fires. The location
+panel states the intended flow itself: *"Chart a course on the map, then set sail at the helm."*
+
+The player therefore sails the entire passage looking at the deck, exactly as before this slice. The
+only way into the new scene is the `?scene=sea` URL, which is how every test and the smoke baseline
+reach it. This is the same failure shape as the `shipId: 1` defect the development stage caught and
+recorded — the feature works on the test path and not on the player path — and it is why the tests
+all pass: `tests/view/sea.test.ts` and `loop.test.ts:117` reach `'sea'` by dispatching `voyage.sail`
+while `current === 'port'`, a state the UI cannot produce.
+
+Note for whoever repairs it: once the scene *is* reachable, there is no control that leaves it. At
+sea the location panel offers only `Port`; "Board the ship" is gated on `atIslandId !== null`. So the
+repair has to add both the way in and a way back to the deck, or the bilging station, the helm and
+`voyage.abandon` become unreachable for the duration of a voyage.
+
+### B2 — on arrival the ship teleports back to the start of the course
+
+`legProgressPerMilleOf` treats `legTicksRequired <= 0` as "no progress" and returns 0
+(`scenes/sea.ts:30`), which `berth()` renders as `COURSE_START`. On the tick that completes the final
+leg, `stepVoyage` sets `legTicks = 0`, increments `legIndex` to `route.length - 1`, and recomputes
+`legTicksRequired = legTicksRequiredOf(ship, orientationCostOf(route, legIndex))`
+(`packages/sim/src/world/voyage.ts:71-74`). `orientationCostOf` reads `route[legIndex + 1]`, finds
+`undefined`, and returns `0` (`voyage.ts:92-94`); `legTicksRequiredOf(ship, 0)` is
+`Math.floor(seconds * TICKS_PER_SECOND * 0 / PER_MILLE)` = **0** (`voyage.ts:23-29`).
+
+So the moment the ship arrives it jumps from ~1000‰ back to tile `{21, 26}` and parks there — camera
+following — while the heading still reads "Bound for Doyle Island" and the panel says *"Port her once
+the last league be astern."* The player is told they have arrived and shown a ship that never left.
+It persists until they press `Port`, because `stepVoyage` then bails permanently on
+`legIndex >= route.length - 1`. The divide-by-zero guard is correct as a guard and wrong as a
+rendering answer: "no leg" and "no progress" are not the same state.
+
+`tests/view/sea.test.ts:94-107` drives the client into exactly this state and asserts the scene and
+the island, never the position.
+
+### B3 — the "edge of the world" fix is ineffective, and the committed baseline proves it
+
+The development entry above states the grid *"is now sized from the iso projection so a 972×720
+viewport stays on water for the whole course"*, verified in a browser at both ends of a leg. It is
+not. Decoding `tests/e2e/__screenshots__/sea.png` straight out of the object store and counting
+pixels exactly equal to `BACKDROP = 0x0a1622`:
+
+```
+backdrop-exact pixels within the 972-wide stage: 576
+bounding box: x 0-51, y 694-719
+corners: TL water(47,111,159)  TR water  BR water  BL BACKDROP(10,22,34)
+```
+
+The blessed baseline contains the void, in the bottom-left, at the *start* of the leg — the frame was
+taken ~94 ticks into 25 200, essentially at `COURSE_START`. The smoke passes because the defect was
+photographed and blessed, not because it is absent.
+
+The recorded derivation is also the wrong shape. `SEA_WIDTH + SEA_HEIGHT >= 78` is a **sum**
+condition, and the requirement is per-axis: a sum is equally satisfied by a degenerate 70×8 grid that
+would be almost all void. The camera is also centred on the *ship*, not on the diamond, so the
+binding case is the ship at a course endpoint, not the diamond's extent. `52` and `44` happen to
+satisfy the per-axis form on one axis and not the other. The corrected constraint and the resulting
+constants are left to the analysis stage rather than asserted here; what is established is that the
+current rule cannot be the right one and the current constants leave visible backdrop.
+
+### B4 — the analysis document overstates what was verified
+
+B3's claim is recorded as verified in a browser at both ends of a leg, and the artefact committed in
+the same breath falsifies it. Recorded not to score a point but because the next agent will otherwise
+trust the same sentence. The rest of the development entry held up well under checking — the
+`shipId` defect, the false stranding, the deliberate revert and the baseline nondeterminism were all
+volunteered accurately, and the revert is genuinely on the branch (`client.ts:181` reads `'deck'`,
+with no remnant of the alternative).
+
+### What was checked and found sound
+
+- **Blast radius of the shared-machinery change is genuinely nil.** `port.ts` and `deck.ts` are the
+  only other `createIsoScene` callers (`puzzle` and `battle` do not use it) and neither passes
+  `follow` or `avatarArt`; `followTarget` returns immediately when `follow` is undefined, and
+  `avatarArt ?? 'avatar'` preserves the old art. Walking, warping, the radial and `announceArrival`
+  are unchanged on those scenes.
+- **`create` and `reset` do not diverge on scene state.** `reset` calls `syncScene()` after setting
+  `current = 'port'`, so both converge. (They *do* diverge on refusal logging — recorded in
+  `ISSUES.md`, not blocking.)
+- **Decisions L8, L9 and L13 are met.** `atlas.ts` is genuinely absent from the diff and no new art
+  is introduced; the ship's position has exactly one source of truth; one new baseline, the four
+  pre-existing ones untouched, and `maxDiffPixelRatio` correctly not widened.
+- **No security or data-safety findings.** `current` is not persisted, so a save taken at sea
+  re-derives its scene through `syncScene` on load and no reachable pair leaves the client in a scene
+  its own `canEnter` would refuse; `restore`'s rollback still holds. The URL is the only untrusted
+  boundary and both `scene` and `seed` are allowlisted and range-checked. No manifest or lockfile
+  changed; nothing new reads the filesystem, spawns a process or evaluates a string.
+- **`syncScene` strands nobody** across the reachable `(inBattle, atSea, current)` combinations, and
+  fractional tile coordinates cause no throw anywhere they flow — `announceArrival` is unreachable in
+  the sea scene, and would early-return on an `undefined` tile if it were.
+
+### Routing
+
+Cycle 0 to 1. Blocking findings B1-B3 returned to analysis as
+`20260906-140000-analysis-opp21-slice-c-review-blockers`; B4 is corrected by this entry. Non-blocking
+findings — the dead avatar radial and the walk-refusal on every click, the duplicated opening block,
+the misleading `COURSE_*` names, six test-coverage gaps and two import-order slips — are in
+`ISSUES.md` under a dated heading. PR 16 stays open and unmerged.
+
+## 2026-09-06 — analysis, slice C review blockers (OPP-21), PR 16, cycle 1
+
+Answers the three blocking findings the independent review returned as
+`20260906-140000-analysis-opp21-slice-c-review-blockers`, plus the one non-blocking finding the
+review named for repair in the same pass. Work continues on the existing branch and PR 16; no second
+PR. Everything else in `ISSUES.md` stays there and is not re-litigated here.
+
+Two of the three findings turned out to be **larger than the review stated**, and one of the review's
+own framings needed correcting. Those are called out below rather than buried, because the repair
+scope depends on them.
+
+### B1 — the sea scene is unreachable, and it is also a dead end
+
+Confirmed exactly as reported. `client.ts:182` (`atSea && current === 'port'` to `'sea'`) is the only
+transition into `sea`, and `voyage.sail` is dispatched from one place, the helm prop at
+`deck.ts:88-91`, so `current` is always `'deck'` when `atSea` flips. Only `?scene=sea` reaches the
+scene, which is how all 13 new tests and the smoke baseline reach it.
+
+Two things the review did not establish, both of which change the repair:
+
+- **`canEnter` already permits the round trip.** At sea, `canEnter('sea')` is true (`client.ts:127`)
+  and `deck` falls through to the always-allowed case (`client.ts:129`). The client has always
+  allowed deck to sea and back while under way; nothing in the UI ever asks for it. This is an
+  affordance gap, not a permissions one, and no change to `client.ts` is required.
+- **The tab strip cannot substitute for the missing exit.** It is a *panel* switcher
+  (`panels.ts:30,58-66`) over the Ye/Location/Booty/Market widget, mounted once into the DOM overlay
+  outside the Pixi stage; `open(tab)` never touches `client.scene`. So the review's reason for
+  classifying the dead radial as non-blocking is sound for the *panels*, but it does not give the
+  sea scene an exit. `sea.ts` has no portal tile, no prop and no `enter-scene` intent, so a player who
+  reached it would be held there for the whole voyage — away from the bilge pump, the helm, and every
+  station the pillage loop needs. **The scene is a dead end in both directions**, and the repair must
+  close both.
+
+`voyage.abandon` is offered only before departure (`minimap.ts:112-113`, and the sim refuses it under
+way at `dispatch.ts:96`), so the only exit from a voyage is `voyage.port` from the location panel.
+That is by design and is not changed here.
+
+**The repair.** On an accepted `voyage.sail`, the helm emits `{ kind: 'enter-scene', scene: 'sea' }`
+alongside the dispatch (`deck.ts:88-92`). This is the path every other scene change in the tree
+already takes — boarding (`port.ts:47`), the bilge pump (`deck.ts:58`), the gangplank (`deck.ts:108`),
+the end of a battle (`battle.ts:294`). For the exit, the sea radial gains an action to the deck, and
+the helm gains one back to the passage, both routed through the existing intent tables
+(`SEA_INTENTS` `sea.ts:17-20`, `DECK_INTENTS` `deck.ts:57-63`) so no new mechanism appears.
+
+Widening `syncScene` instead was rejected: it runs on every `advance` (`client.ts:108`), so a rule
+promoting `deck` to `sea` would drag the player back out of the deck on the next tick, permanently —
+the opposite defect, and one that breaks `loop.test.ts:59` and contradicts decision L7.
+
+`syncScene`'s `port` to `sea` rule is kept. It is a **boot and restore rule, not a play rule**: it is
+what puts the `under-way` opening on the sea at `client.ts:51-57`, and what re-derives the scene when
+a save taken at sea is restored. It reads as dead code and is not.
+
+### B2 — the arrival teleport is the terminal case of a defect that fires every leg
+
+Confirmed, and it is **wider than the review found**. The rendered position is
+`legTicks / legTicksRequired` and nothing else — `legIndex` and `route` are never consulted
+(`sea.ts:29-41`). Because `stepVoyage` zeroes `legTicks` at every league point (`voyage.ts:67`), the
+ship re-traverses the entire drawn course **once per leg** and snaps back to `COURSE_START` at *every
+interior* league point, not only at arrival. Traced on the real alkaid-to-doyle route `[1, 2, 8]`
+(2 legs, 25 200 then 18 000 ticks at the opening's speed):
+
+| tick   | legIndex | legTicks | legTicksRequired | progress ‰ | rendered tile  |
+| ------ | -------- | -------- | ---------------- | ---------- | -------------- |
+| 25 199 | 0        | 25 199   | 25 200           | 999        | (29.99, 17.01) |
+| 25 200 | 1        | 0        | 18 000           | 0          | (21, 26)       |
+| 43 199 | 1        | 17 999   | 18 000           | 999        | (29.99, 17.01) |
+| 43 200 | 2        | 0        | 0                | 0          | (21, 26)       |
+
+The last row is B2 as reported: `orientationCostOf` reads `route[legIndex + 1]`, finds `undefined`
+and returns 0 (`voyage.ts:94`), so `legTicksRequired` becomes 0, the `<= 0` guard at `sea.ts:30`
+returns 0, and `voyage.ts:62` then freezes the state forever, so the ship parks at the origin while
+the heading still reads "Bound for Doyle Island". The row above it is the same teleport, mid-route,
+lasting until the next leg crawls out again — and the leg's apparent speed also changes by 40 %
+between a horizontal and a diagonal league.
+
+**The task asked for the mid-route case to be decided either way. It is a defect, not design.** It
+follows literally from decision L9, but L9 chose where the *number* comes from; it never said the
+drawn course represents one league. The rest of the scene reads as the whole passage — the heading
+names the final island (`sea.ts:45`) — so re-sailing the same line once per league contradicts what
+the scene tells the player. Fixing only the `<= 0` guard would leave a full-length backwards teleport
+at every interior point, which is why the repair is the formula, not the guard.
+
+**The repair.** `legProgressPerMilleOf` becomes whole-voyage progress: the within-leg fraction is
+computed only when `legTicksRequired > 0`, and the result is `(legIndex + fraction) / legs` in per
+mille, clamped, where `legs = route.length - 1`. One expression resolves all four states — charted
+gives 0 at `COURSE_START`; mid-leg is monotonic; a leg boundary lands on `legIndex / legs`, a real
+intermediate point with no snap; arrival gives exactly 1000 at `COURSE_END`. The `<= 0` guard stays,
+demoted to what it always should have been: a divide-by-zero defence, not a rendering answer.
+
+`legIndex >= route.length - 1` is the sim's own arrival predicate (`voyage.ts:62`) and the convention
+the world loop and dispatch tests already use, so nothing new is invented. Keying off
+`legTicksRequired === 0` would be wrong twice: it is an accident of the out-of-range lookup, and
+`dispatch.test.ts:64-68` builds the arrived state by setting `legIndex` alone.
+
+**A second, unreported instance of the same guard** sits at `panels/minimap.ts:218-221`, so on
+arrival the chart panel reads "Leg 2 of 2" with a 0 % bar labelled `0/0`. It gets the same correction;
+fixing one and not the other would leave the two panels disagreeing.
+
+A sim-side `phase: 'arrived'` was rejected. It would flip `client.atSea` (`client.ts:86`) and eject
+the player from the sea scene at the moment of arrival, loosen the `voyage.sail` and `voyage.abandon`
+guards (`dispatch.ts:77,96`), and need a schema 7 to 8 migration — and it would still not fix the
+mid-route snap, which needs the view change regardless.
+
+### B3 — the constraint, derived per-axis, and the baseline re-measured
+
+The review's measurement was reproduced independently, decoding the PNG from scratch: **576 pixels
+exactly equal to `BACKDROP`, bounding box x 0-51 / y 694-719, bottom-left corner backdrop and the
+other three water.** Confirmed to the pixel.
+
+Measuring the *shape* as well as the count pins the geometry. The void's edge is a single straight
+line of slope one half — exactly `TILE_HEIGHT / TILE_WIDTH`, the slope of a `v = const` line — and
+solving it against the projection recovers `ship.y = 26 = COURSE_START.y` and re-derives the 972x720
+stage independently. The void is precisely the region `v > SEA_HEIGHT` at the start of the leg. The
+full triangle would be 702 px; 126 are hidden behind the chat overlay, giving 576. The count
+reproduces exactly.
+
+**Where the recorded rule went wrong.** `SEA_WIDTH + SEA_HEIGHT >= 78` is a correct theorem about a
+camera centred on the *diamond*. This camera centres on the *ship*: `camera.ts` never learns the grid
+extent at all — it imports only the projection — and `keepVisible` only clamps the anchor into a 96 px
+margin (`camera.ts:31-35,54-57`), while `resize` re-centres unconditionally (`camera.ts:48-52`). The
+binding case is therefore the ship at a course *endpoint*, and the course midpoint being centred on
+the diamond is true and irrelevant, since the endpoints sit 4.5 tiles away on both axes.
+
+Writing `R` for the half-viewport measured along either iso axis, in tiles:
+
+```
+R = VH / (2 * TILE_HEIGHT) + VW / (2 * TILE_WIDTH) = 720/64 + 972/128 = 11.25 + 7.59375 = 18.84375
+```
+
+Both `u` and `v` pick up the same `R`, so the condition is symmetric per axis, and because
+`coursePositionOf` is affine the extremes are the two endpoints. **The constraint, as four
+inequalities rather than one sum:**
+
+```
+min(COURSE_START.x, COURSE_END.x) >= R      max(COURSE_START.x, COURSE_END.x) + R <  SEA_WIDTH
+min(COURSE_START.y, COURSE_END.y) >= R      max(COURSE_START.y, COURSE_END.y) + R <  SEA_HEIGHT
+```
+
+The centred camera is the worst case: `clampToAnchor` always moves the view *toward* the centred
+value for the current anchor, so every window shown lies in the convex hull of the centred windows.
+This was checked numerically against the real camera code, not only argued.
+
+Against the shipped constants, `SEA_HEIGHT` is wrong at **both** ends, in different corners:
+
+| quantity           | value    | required    | verdict        |
+| ------------------ | -------- | ----------- | -------------- |
+| `min course x`     | 21       | >= 18.84375 | ok             |
+| `max course x` + R | 48.84375 | < 52        | ok, 3.16 spare |
+| `min course y`     | 17       | >= 18.84375 | fails by 1.84  |
+| `max course y` + R | 44.84375 | < 44        | fails by 0.84  |
+
+The 0.84-tile overshoot at `COURSE_START` is the 26-row triangle in the baseline. The 1.84-tile
+shortfall at `COURSE_END` would be a *top-right* void; it is absent from the baseline only because by
+then `keepVisible` has panned the camera, and a browser resize at that moment would expose it — which
+is exactly why "verified in a browser at both ends of a leg" returned a false positive. Simulating the
+real camera over the leg, **the void is on screen for roughly 77 % of the passage.**
+
+**The repair.** Grid `49 x 49` with `COURSE_START = {x: 20, y: 29}` and `COURSE_END = {x: 29, y: 20}`:
+square, so the two axes cannot silently diverge a third time; the course still centred; a full tile of
+slack on all four inequalities at both endpoints; and essentially the same paint cost as today
+(2401 sprites against 2288). Verified against the real camera code at every mount point and every
+progress value.
+
+**Encoded structurally, because prose did not hold.** The constants carry no derivation in the source
+— `sea.ts` has no comment at all — which is why each agent re-guessed them. The repo's own habit is
+that the projection's numbers are the source and everything else is expressed from them
+(`atlas.ts:74-75`). So the radius becomes a function in `iso/projection.ts` where that reasoning
+belongs, the design stage size is named once, and the grid is derived from the course rather than
+typed in. The four inequalities are then asserted in `tests/view/sea.test.ts`, which already imports
+these constants. A `tools/` gate is the wrong tier: the gates in this repo enforce architectural facts
+across trees, not a numeric relation between two constants in one module.
+
+State the upper bound **strictly**: water covers `0 <= u < SEA_WIDTH`, so a rule written with `<=`
+would accept `48.84375 <= 49` and leave a hairline of backdrop.
+
+### The non-blocking item repaired in the same pass
+
+The sea radial can never open and every click emits a walk refusal. `follow` makes `standing`
+fractional (`isoScene.ts:174-181`); the radial is gated on `sameTile(screenToIso(...), standing)`
+(`isoScene.ts:243`) and `screenToIso` floors (`projection.ts:26`), so the comparison is never true
+under way. The click then falls through to `walkTo` on an all-water grid, every tile of which is in
+`HAZARD_TILES` (`grid.ts:34`), producing the refusal on every click anywhere.
+
+Two changes, and they are independent. `walkTo` is suppressed when a scene declares `follow` — the
+field already means "this scene owns the avatar's position", so a walk order is meaningless rather
+than merely impossible, and the guard has the same shape as the one four lines away at
+`isoScene.ts:175`. And the avatar is hit-tested in screen space by making the sprite interactive,
+which is the mechanism `clickableProps` already uses for every other clickable thing
+(`isoScene.ts:145-148`); the tile-space test is the outlier. Screen-space hit-testing is also the only
+option that is **independent of the ship's position**, which matters because M4 changes how that
+position is expressed.
+
+Both are provably inert on `port` and `deck`: they are the only other `createIsoScene` callers and
+neither passes `follow` (`port.ts:74-81`, `deck.ts:111-121`); `puzzle` and `battle` do not use the
+machinery at all. Making the avatar sprite interactive does change one thing on those scenes —
+clicking the pirate's own body would open the radial where it currently walks a tile — which is
+recorded here rather than smuggled.
+
+### Decisions taken on the review's behalf
+
+| #   | Decision                                                                            | Rationale                                                                                                                |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| M1  | `sea` is entered by an intent emitted from the helm, not by widening `syncScene`     | Every player-initiated scene change already goes through an intent; `syncScene` runs each tick and would trap the player. |
+| M2  | Deck and passage are both reachable under way, by a radial action and a helm action  | L7 already decided both views are wanted, and `canEnter` already permits both — only the affordance was missing.          |
+| M3  | `syncScene`'s `port` to `sea` rule is kept                                           | It is the boot path for the `under-way` opening and the restore path for a save taken at sea; it reads dead and is not.   |
+| M4  | Position becomes whole-voyage progress, `(legIndex + fraction) / legs`               | One expression resolves all four render states and removes the arrival teleport and the mid-route snap together.          |
+| M5  | The mid-route snap is treated as a defect, not a consequence of L9 to preserve       | The drawn course is the whole passage — the heading names the final island — so re-sailing it each league contradicts it. |
+| M6  | The fix stays in the view; `VoyagePhase` gains no `arrived` value                    | A sim phase would eject the player at arrival, loosen two dispatch guards, need a migration, and not fix the snap.        |
+| M7  | `panels/minimap.ts:218-221` gets the same correction as `sea.ts`                     | It carries a byte-identical guard, so the chart panel reads 0 % on arrival for exactly the same reason.                   |
+| M8  | The grid is derived from the projection and a named design stage, not hardcoded      | These constants have been wrong twice; the repo's habit is that the projection's numbers are the single source.           |
+| M9  | Grid 49 x 49, course (20,29) to (29,20)                                              | Square so the axes cannot diverge again; a full tile of slack on all four inequalities at both endpoints.                 |
+| M10 | The four inequalities are asserted in `tests/view/sea.test.ts`                        | Catches a third wrong value in milliseconds rather than in a Playwright baseline nobody re-inspects.                      |
+| M11 | The camera does not learn the grid extent in this pass                               | It would make placement irrelevant and survive right-drag panning, but it touches every iso scene. Filed in `ISSUES.md`.  |
+| M12 | `walkTo` is suppressed when a scene declares `follow`                                | `follow` means the scene owns the avatar's position, so a walk order is meaningless. Inert on the two unfollowed scenes.  |
+| M13 | The avatar is hit-tested in screen space                                             | It is the mechanism every other clickable thing uses, and the only option independent of the position M4 changes.         |
+| M14 | The `sea` baseline is re-blessed once, after all of the above land                   | It currently certifies the void; both the constants and the progress formula move the frame, so one deliberate re-take.   |
+
+### Deliberately not in scope
+
+- **The camera learning the grid extent** (M11). The stronger fix — clamping the view against the
+  grid's four half-planes, two `between` calls in the style of `clampToAnchor` — would make the course
+  placement question disappear, reduce the requirement to one inequality per axis satisfiable by a
+  40x40 grid, and make right-drag panning void-proof, which no choice of constants can. It benefits
+  every `createIsoScene` caller, which is exactly why it does not belong in a cycle-1 repair of one
+  scene. `ISSUES.md`.
+- **The stale heading.** `sea.ts:66` passes `heading` as a string evaluated once at construction, not
+  as a callback like `follow`, so it cannot ever update and still reads "Bound for Doyle Island" after
+  arrival. Making it re-derivable is a change to `isoScene.ts`'s definition shape. `ISSUES.md`.
+- **A drag-proof grid** (77x77, from `R_pan = 33.1875`). Rejected as 2.5 times the paint cost to
+  defend against a deliberate right-drag; M11 is the better answer to the same problem.
+- Everything already in `ISSUES.md` under the 2026-09-06 heading, including the duplicated opening
+  block in `create` and `reset`.
+
+### The test gap this cycle has to close
+
+The reason all three findings passed a green suite is that **no test anywhere drives the player's
+path**. The existing sea tests reach the scene through `GameClient.create({ opening: 'under-way' })`,
+which dispatches `voyage.sail` while `current` is still the constructor default `'port'` — a state
+the UI cannot produce. `loop.test.ts:106-123` does the same explicitly. And `loop.test.ts:54-59`,
+which drives the *real* order, asserts the scene stays `'deck'` — the suite recorded B1 as expected
+behaviour.
+
+The regressions that would have caught these, and that this cycle must add:
+
+1. From the deck, with a charted course, an **accepted** sail puts the scene on `sea`; a refused one
+   does not. (B1, and the assertion nobody wrote.)
+2. Under way, entering the deck works and the next `advance` leaves the player there. (M2's
+   anti-trap assertion — the one that fails if anyone later widens `syncScene`.)
+3. On the tick completing the final leg, progress is exactly 1000 and the position is `COURSE_END`;
+   it stays there. (B2. `sea.test.ts:94-106` already drives the client into this state and asserts
+   scene and island but never position.)
+4. Progress is monotonic across an interior leg boundary. (M5.)
+5. The four inequalities hold for both course endpoints. (M10, B3.)
+6. The chart panel's leg progress on arrival. (M7 — `minimap.test.ts` has no coverage of it.)
+7. A first test of the click decision, through a pure exported predicate rather than a faked pointer
+   event. (M12 and M13 — nothing currently covers `onTap`, the radial or `walkTo` end to end.)
+
+Note that `sea.test.ts:30-44` passes bare `{ legTicks, legTicksRequired }` objects with no `route` or
+`legIndex`; under M4 those must be rewritten. `sea.test.ts:21-28` (`coursePositionOf(0)` is
+`COURSE_START`, `coursePositionOf(1000)` is `COURSE_END`) still holds, and `tests/world/*` are
+untouched because nothing in `packages/sim` changes — so no golden, save or migration churn.
+
+### Correcting the record
+
+The claim in the slice C development entry above — that the grid "is now sized from the iso projection
+so a 972x720 viewport stays on water for the whole course", with the rule `SEA_WIDTH + SEA_HEIGHT >=
+78` — is superseded by the derivation in B3. The rule is a sum where the requirement is per-axis, and
+it is a theorem about a diamond-centred camera this code does not have.
+
+### Routing
+
+Cycle 1. One development task, `20260906-141500-opp21-slice-c-repair-cycle-1`, continuing on
+`agent/feature/20260904-132302-opp17-slice-c-the-passage-is-a-place` and PR 16. No second PR, no
+merge. `atlas.ts` stays out of the diff. Slice D remains held.
+
+## 2026-09-07 — development, slice C repair (OPP-21), PR 16, cycle 1
+
+Implements `20260906-141500-opp21-slice-c-repair-cycle-1` against the decisions M1–M14 in the entry
+above. Same branch, same PR, no second PR, no merge. `packages/sim` untouched, `atlas.ts` untouched,
+`client.ts` untouched. `npm run check` exits 0 with 637 tests passing and `npm run smoke` passes 5/5,
+both from cold.
+
+M1–M14 were implemented as written except where noted under *Deviations* below. The three blocking
+findings are closed and the named non-blocking one is repaired in the same pass.
+
+### What the constants actually resolve to
+
+`halfStageTileRadius(972, 720)` = `720/64 + 972/128` = **18.84375**, reproducing the analysis exactly.
+`COURSE_CLEARANCE_TILES` = `ceil(18.84375) + 1` = **20**, giving grid **49 × 49**, `COURSE_START`
+**(20, 29)**, `COURSE_END` **(29, 20)** — M9's values, now derived rather than typed. Both endpoints
+clear all four inequalities with **1.15 tiles** of slack (`29 + 18.84375 = 47.84375 < 49`, strictly).
+
+The 972 is confirmed structurally, not assumed: `mount` passes `resizeTo: options.canvasHost`
+(`packages/view/src/app.ts:48`), so the renderer sizes to the `#stage` host — the viewport less the
+308 px panel column — and not to the window.
+
+### The void is gone, and that claim is measured
+
+The previous pass reported this fixed after looking at a browser, and was wrong. This pass decoded
+the PNGs.
+
+A standalone decoder counted pixels exactly equal to `BACKDROP` (`0x0a1622`). Against the **committed**
+baseline it reproduced the review's figure to the pixel — **576 px, bbox x 0–51 / y 694–719** — which
+calibrates the instrument before it is used to certify anything.
+
+| capture                                   | backdrop px | bounding box       |
+| ----------------------------------------- | ----------- | ------------------ |
+| committed baseline (old constants), start | 576         | x 0–51 / y 694–719 |
+| **new baseline, start**                   | **0**       | —                  |
+| **arrival, new constants**                | **0**       | —                  |
+| arrival, old constants (control)          | 3422        | x 856–971 / y 0–57 |
+
+`COURSE_END` was exercised by driving a real voyage rather than by reasoning: an `evade` voyage
+charted through `window.__ppApp.client`, advanced to `legIndex 2` / `legTicksRequired 0` — the exact
+state that produced the arrival teleport — then `enterScene('sea')` and a screenshot.
+
+The last row is a **sensitivity control**, and it is the reason the other rows can be trusted. Only
+the four constants were reverted and the identical capture re-run; it exposes the top-right void the
+analysis predicted at `COURSE_END` and that a browser check had missed, because by then `keepVisible`
+has panned the camera. A "0" from a method that cannot detect a void at that position would have been
+worthless, which is precisely how the earlier false positive arose.
+
+### The smoke suite cannot catch this class of defect
+
+`maxDiffPixelRatio` is 0.01 — **9216 px** of a 1280×720 frame. The void measures 576 px at the start
+and 3422 px at arrival. Both pass comfortably.
+
+This was observed directly, not inferred: running the suite with the repaired code against the **old**
+baseline passed 5/5, and the baseline only regenerated once `sea.png` was deleted. The threshold was
+not widened (M14 forbids it, and widening would be the wrong direction anyway). **M10's unit
+assertion of the four inequalities is the real guard**; the baseline certifies composition, not
+geometry. Filed in `ISSUES.md`.
+
+### Deviations from M1–M14, and why
+
+- **M7, the chart panel, shares the arrival *predicate* rather than the progress *function*.** M7 says
+  the panel "gets the same correction". Taken literally that puts whole-voyage progress into a bar
+  labelled "Leg progress" whose value text is a leg tick pair, directly beneath the `Leg n of m` row
+  that already carries the coarse position — the row would then duplicate the one above it. It is
+  also not importable: `sea.ts` → `isoScene.ts` → `pixi.js` (line 1), so importing it into
+  `panels/minimap.ts` drags Pixi into the DOM panel layer and into `minimap.test.ts`, which runs on
+  happy-dom with no renderer. Today the panel layer imports only a *type* from `scenes/`. So the panel
+  keeps its own within-leg quantity and gains an arrival branch keyed on `legIndex >= route.length - 1`
+  — the sim's own predicate, per M4. M7's stated purpose is honoured: the two panels now agree on the
+  arrival state (ship at `COURSE_END` / 1000; bar full, "All leagues astern").
+- **M13 adds the screen-space hit-test but keeps the tile-space one.** M13 calls the tile-space test
+  "the outlier", but the same paragraph records exactly one accepted behaviour change on `port` and
+  `deck`. Removing the tile-space clause causes a *second*, unrecorded one: the avatar sprite is
+  anchored bottom-centre, so it never covers the lower half of its own tile diamond, and clicking
+  there would stop opening the radial and silently order a walk to the tile already occupied. The two
+  sentences cannot both be honoured; the concrete claim about `port`/`deck` was kept. On `sea` the
+  tile-space clause is never true under way, so it costs nothing there and M13 does all the work.
+- **`departureIntentOf` is an exported pure function** (`deck.ts`). M1's emission would otherwise live
+  inside `createDeckScene`'s closure, which the node tests cannot construct — it needs a Pixi `Atlas`
+  — making required regression 1 unwritable. This is the same idiom the analysis itself prescribes for
+  its regression 7.
+- **`legProgressPerMilleOf` was renamed `voyageProgressPerMilleOf`.** Under M4 the old name states the
+  opposite of what the function returns. Nothing else in the tree referenced it.
+- **Two numbers remain typed in `sea.ts`**: the course span (9 tiles) and one tile of spare water. M8
+  requires derivation and M9 gives the answers, but neither names the irreducible inputs. Everything
+  else — clearance, both endpoints, and both grid dimensions — follows from those two and the
+  projection. `SEA_HEIGHT = SEA_WIDTH` encodes M9's "square so the axes cannot diverge a third time".
+
+### One defect found in this pass's own work
+
+The new helm action **"To the passage" was a dead control while docked.** `canEnter('sea')` returns
+`atSea` (`client.ts:127`), so in port the intent was refused and `enterScene` returned `false`
+silently — a menu entry that does nothing, shipped inside the very PR whose purpose is to remove
+silent no-ops. It now answers the way the deck already answers an unavailable exit, alongside
+`GANGPLANK_STOWED`:
+
+```
+const PASSAGE_ASHORE = 'There be no passage while we lie alongside.';
+```
+
+The precondition is pinned in `loop.test.ts` at both states (`canEnter('sea')` false alongside, true
+under way).
+
+### The test gap, closed
+
+637 tests pass, up from 622. All seven regressions the analysis required are present. The load-bearing
+ones: an accepted sail from the deck now yields the departure intent and a refused one yields `null`
+(regression 1 — the assertion nobody wrote); entering the deck under way survives the next `advance`
+(regression 2 — the anti-trap assertion that fails if anyone widens `syncScene`); progress is exactly
+1000 at `COURSE_END` on the arriving tick and stays there (3); progress is monotonic across an interior
+leg boundary (4); the four inequalities hold for both endpoints (5); the chart panel on arrival (6);
+and the click decision through the pure exported `tapDecisionOf` (7).
+
+`loop.test.ts:54-59`, which asserted the scene stays `'deck'` after an accepted sail, recorded B1 as
+expected behaviour and was rewritten rather than worked around. `loop.test.ts:106-123`, which reached
+`sea` through the UI-impossible sail-from-`port` path, became a save/restore test — which is M3's
+actual justification for keeping the `port` → `sea` rule, so that rule now has a test matching its
+stated reason.
+
+### For the test stage
+
+`playwright.config.ts` sets `reuseExistingServer: !process.env.CI` against the fixed port 5178. A
+developer's own `npm run dev` — or another worktree's — was listening there during this run, so a
+plain `npm run smoke` would have silently exercised **that** tree and reported a pass for code it
+never loaded. Every Playwright pass here ran on an isolated port through a temporary config, deleted
+afterwards. Use an isolated port or set `CI`. Filed in `ISSUES.md`.
+
+### Routing
+
+Forwarded to review as cycle 1 on PR 16. Slice D remains held.
+
+## 2026-09-07 — review, slice C repair (OPP-21), PR 16, cycle 1
+
+Four lenses over `e7e6056..41628c5`. **No blocking findings; forwarded to the test stage.** The three
+blocking findings from the first review are closed in the code. Non-blocking findings are in
+`ISSUES.md` under the matching heading and are not repeated here; what follows is only what the
+review changed about the *record*, because three of its findings are places where these documents
+claim more than the branch delivers.
+
+### What was verified, and how
+
+Not by reading the tests, since the tests are what let all three defects through the first time.
+
+- **B2** — the sim was driven tick by tick through the entire 34 560-tick passage (`opening:
+  'under-way'`, seed 12648430, route `[1,2,8]`), sampling `voyageProgressPerMilleOf` at every tick.
+  0 at charted; **0 backwards steps** in either the per-mille value or the derived tile; the interior
+  league point crosses `499 -> 500` at exactly `legIndex / legs` with no snap; the final tick gives
+  `999 -> 1000` and the position lands exactly on `COURSE_END`, holding there for 5000 further ticks.
+  `legTicksRequired === 0` at arrival is real rather than assumed: `voyage.ts:62` freezes stepping and
+  `orientationCostOf` returns 0 for the out-of-range next leg, so the new `legTicksRequired <= 0`
+  branch is a pure divide-by-zero defence.
+- **B3** — both baselines were decoded with a purpose-written PNG decoder, calibrated by reproducing
+  the previous review's own figure on the *old* baseline to the pixel (576 px, bbox x 0-51 /
+  y 694-719) before its reading of **0 px** on the new one was trusted. Independently reproduced by a
+  second lens with its own decoder.
+- **B1** — traced statically through `canEnter` and the dispatch guards; live in both states.
+- Gates `deps`, `imports`, `boundary`, `typecheck`, `lint` all exit 0; `node --test` gives 637/637,
+  matching the development entry.
+
+### Correcting the record
+
+**1. "The void is gone" holds only at 1280x720.** The heading in the development entry is
+unqualified, and it should not be. `#stage` is `inset: 0 var(--pp-panel-column) 0 0` and `mount`
+passes `resizeTo: options.canvasHost`, so the real stage is `(windowWidth - 308) x windowHeight`,
+while the grid derives from a fixed 972x720. The no-void condition reduces to
+`windowWidth + 2 * windowHeight < 2868`, so 1366x768 already fails and a maximised 1080p window is
+9.47 tiles over budget, with the void back in the same two corners. This is not a regression and not
+a deviation — M8/M9 name a *design* stage deliberately and M11 is the filed structural answer — but
+the ceiling was nowhere stated, and the `ISSUES.md` "fourth uncoordinated copy" entry covers drift
+between the copies rather than the runtime window. M11 should now be read as fixing the *default*
+view at ordinary window sizes, not merely as hardening against a deliberate right-drag; that is a
+materially higher priority than its out-of-scope note implies.
+
+**2. The 2026-09-06 claim that "no other affordance moved" on `port`/`deck` is wrong.** Making the
+avatar interactive also shadows part of each prop's hit area, because `dynamicLayer` sits above
+`objectLayer` and `event.target === avatar` now short-circuits ahead of the tile lookup. With the
+pirate on `(12,5)` the avatar box covers the lower band of the deck helm's diamond at `(11,4)`, which
+now opens the avatar radial instead of the navigation one. It is not blocking — every prop keeps its
+label in `spriteLayer` above the avatar and the rest of its diamond — but M13 was accepted on the
+strength of the narrower claim, so the wider consequence belongs in the record.
+
+**3. "The test gap, closed" overstates regression 1.** The analysis worded that regression as "an
+*accepted* sail puts the *scene* on `sea`". What shipped, at `tests/view/loop.test.ts:110`, asserts
+that `departureIntentOf` returns an object literal and then performs the scene change in the test
+itself. The production wiring at `deck.ts:106` is never exercised, and neither are the three lines
+that constitute the M12/M13 fix. No test anywhere constructs a scene, and the smoke suite reaches
+every scene by `?scene=` URL rather than through an affordance, so B1's defect class — a control
+present but not connected — would still pass a green suite. The Deviations section explains why
+`departureIntentOf` was exported but does not disclose that the regression was weakened in the
+process. B2's and B3's regressions were checked against a re-implementation of the pre-fix code and
+genuinely fail against it; regression 1 does not.
+
+**4. M7's import justification is false in one of its three parts.** "Not importable... into
+`minimap.test.ts`, which runs on happy-dom with no renderer" is contradicted by the tree:
+`tests/view/sea.test.ts:13` already imported `scenes/sea.ts` — and therefore Pixi — at the base
+commit, and this commit adds two more such importers. The decision stands on the panel-layer boundary
+and the UI-duplication argument, which are sound; only the third reason should be struck.
+
+### One correction in the review's favour
+
+The B3 derivation's assertion that "the centred camera is the worst case" is not exactly right —
+`keepVisible` clamps only to a 96 px margin, so the ship drifts off-centre. It does not change the
+conclusion here: along this course `isoToScreen.y` is constant (`x + y = 49` throughout), so the drift
+is horizontal only and the four margins stay at or above 1.15625 for the whole passage. The 49x49
+grid is genuinely sufficient at 972x720, for a slightly different reason than the one recorded.
+
+### Routing
+
+Clean, so the branch goes to the test stage at cycle 1 rather than back to analysis. The test stage
+carries two instructions that follow directly from the findings above: exercise the affordances
+physically, since no automated tier covers them; and look at the sea scene at a window size other
+than 1280x720, since that is precisely where the shipped fix stops holding.
+
+## 2026-09-07 — test, slice C repair (OPP-21), PR 16, cycle 1
+
+Physical test of PR 16 at head `f3a7ad6` (code under test `41628c5`; the review commit touches only
+markdown). Both GitHub checks green on the head before starting. Driven through the UI in a real
+browser against an isolated dev server on port 5199 — never 5178, which `playwright.config.ts` would
+have reused silently.
+
+**Result: no blocking failures. Merged to `agent/develop`.**
+
+### The affordances, physically — the priority, and the reason this stage existed
+
+Every one of these was performed by clicking in the running app, not by URL and not by calling the
+intent function. This is the tier the review showed no automated test covers.
+
+| Affordance | Result |
+| ---------- | ------ |
+| Deck, docked: helm radial → "To the passage" | Refuses with `PASSAGE_ASHORE`, scene stays `deck` |
+| Deck: helm radial → "Set sail" | Scene becomes `sea` on the click |
+| Sea: click own ship → radial | Offers `Chart a course` / `Vessel` / `To the deck` |
+| Sea: "To the deck" | Enters `deck`, survives further ticks without being yanked back |
+| Deck under way: "To the passage" | Enters `sea` |
+| Round trip, both directions | Twice each, including from the arrived state |
+
+The helm radial opens with all four actions and the docked refusal is the real line, not silence:
+`There be no passage while we lie alongside.` B1's defect class is closed in the running app, and
+the dead control the development stage caught in its own work stays fixed.
+
+Arrival was reached by driving `client.advance(1000)` to `legIndex 2` of 2. The scene remained `sea`
+(M6), the ship finished at the far end of the course — screen x moved from 310 to 548 and did not
+snap back — and the chart panel read `Leg 2 of 2` with a full bar and `All leagues astern`, agreeing
+with the scene. That is M7's stated purpose satisfied at the only state where the two panels are
+meant to agree.
+
+### The sea scene away from 1280x720 — measured, not eyeballed
+
+Canvas-only captures, backdrop `0x0a1622` +/-6 per channel, counting only components touching a
+canvas corner. A decoder calibrated against the known-good viewport: 1280x720 measures exactly 0.
+
+| Viewport | Canvas | Corner void, start | Corner void, arrival |
+| --------- | ---------- | ------------------- | -------------------- |
+| 1280x720 | 972x720 | 0 px (0.000 %) | 0 px (0.000 %) |
+| 1366x768 | 1058x768 | 128 px (0.016 %) | 0 px (0.000 %) |
+| 1920x1080 | 1612x1080 | 121,390 px (6.97 %) | 121,390 px (6.97 %) |
+
+**1280x720 is genuinely clean at both ends of the passage** — the baseline certifies what it claims.
+1366x768 is the boundary the review derived: two 15x8 slivers at the course start, gone by arrival.
+
+At 1920x1080 the void is **about 7 % of the canvas**, and it does not look marginal — two large
+triangular wedges roughly 604x302 each, at the top-left and bottom-left, plus 28x14 nubs on the right.
+`R` measured 29.46875 in the running app and the grid is 9.47 tiles short, reproducing the review's
+arithmetic exactly. Two observations the review did not have:
+
+- **The void is layout-driven, not voyage-driven.** Advancing the voyage does not change the pixel
+  count or the bounding boxes at all: sailing the leg does not move the wedges, because `keepVisible`
+  clamps rather than re-centres.
+- **Which corners are affected depends on how you entered, not where you are.** Sailing from the start
+  leaves the wedges on the left for the whole passage; entering the passage afresh while at the
+  arrival end calls `centreOn` and puts them on the right. Both were observed.
+
+This is recorded as expected and **not blocking**: M8/M9 name the design stage deliberately, M11 is
+the filed structural answer, and it is not a regression — 52x44 was worse at every size. The number is
+here so the human can judge whether M11 should be pulled forward. At a maximised 1080p window a
+tenth of the play area is flat backdrop, which is the strongest argument yet that it should be.
+
+### The prop hit areas — the review's judgement, checked in the app
+
+Reproduced, and the mitigation holds:
+
+- On `deck`, with the pirate walked up beside the helm, clicking part of the helm's diamond opens the
+  **avatar** radial (`Ye` / `Yer booty`) rather than the navigation one. The shadowing the review
+  described is real and observable.
+- **The helm remains reachable**: its `Navigation` label, in `spriteLayer` above the avatar, opens the
+  full four-action radial with the pirate standing right beside it.
+- On `port`, the `Yer Sloop` label opens `Board the sloop`.
+
+No control was found that a player can walk to and then not operate. The review's non-blocking call is
+confirmed by observation rather than by inference.
+
+### Recorded so the next stage does not re-discover them
+
+- **`data-render-scene` does not track scene changes.** `packages/app/src/main.ts:103` sets it once at
+  boot; after entering another scene through an affordance the attribute still names the boot scene
+  (observed: attribute `sea`, client `deck`, deck rendered). `main.ts` is not in this PR's diff, so
+  this is pre-existing and **not blocking** — but it is newly *reachable*, because before this slice a
+  scene change through the UI was not possible. Any e2e test that waits on that attribute after a
+  click will assert the wrong scene. Filed to `ISSUES.md`.
+- **`requestAnimationFrame` does not run in a headless/idle browser pane.** The app ticker, walk
+  animation and Pixi hit-area updates are all frame-driven, so a radial item click misses unless a
+  frame is forced between opening the radial and clicking the item. Two apparent "To the passage"
+  no-ops were this environment artefact and both passed once frames were pumped. Not an app defect;
+  recorded so the next run does not raise it as one.
+
+### Guardrails
+
+`packages/sim` unchanged, `iso/atlas.ts` and `client.ts` out of the diff, `main` untouched, the
+human's worktree on `agent/feature/20260904-opp26-scene-blueprints` untouched.

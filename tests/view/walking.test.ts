@@ -6,8 +6,15 @@ import {
   objectAt,
   setTile,
   traversable,
+  type SceneObject,
   type TileGrid,
 } from '../../packages/view/src/scenes/grid.ts';
+import {
+  AVATAR_TARGET_ID,
+  tapDecisionOf,
+  type TapDecision,
+  type TapSubject,
+} from '../../packages/view/src/scenes/isoScene.ts';
 import {
   NO_WALK_REFUSAL,
   pathBetween,
@@ -115,4 +122,77 @@ test('an unreachable patch of open ground is not warped to', () => {
 
   assert.equal(warpTargetOf(grid, { x: 8, y: 2 }), null);
   assert.equal(warpTargetOf(grid, { x: 99, y: 2 }), null);
+});
+
+const LEFT_BUTTON = 0;
+const RIGHT_BUTTON = 2;
+
+const AVATAR_ACTIONS = [{ id: 'ye', label: 'Ye' }];
+
+const MARKET: SceneObject = {
+  id: 'market',
+  x: 6,
+  y: 6,
+  art: 'market',
+  label: 'Market',
+  actions: [{ id: 'trade', label: 'Trade' }],
+};
+
+const TAP_ON_OPEN_GROUND: TapSubject = {
+  button: LEFT_BUTTON,
+  radialOpen: false,
+  scenePlacesAvatar: false,
+  drawn: undefined,
+  onAvatar: false,
+  avatarActions: AVATAR_ACTIONS,
+  underTile: undefined,
+};
+
+function tap(differences: Partial<TapSubject>): TapDecision {
+  return tapDecisionOf({ ...TAP_ON_OPEN_GROUND, ...differences });
+}
+
+test('a tap on open ground orders a walk', () => {
+  assert.deepEqual(tap({}), { kind: 'walk' });
+});
+
+test('a scene that places the avatar itself takes no walk orders', () => {
+  assert.deepEqual(tap({ scenePlacesAvatar: true }), { kind: 'ignore' });
+});
+
+test('a scene that places the avatar still opens the radial on the avatar', () => {
+  assert.deepEqual(tap({ scenePlacesAvatar: true, onAvatar: true }), {
+    kind: 'radial',
+    targetId: AVATAR_TARGET_ID,
+    actions: AVATAR_ACTIONS,
+  });
+});
+
+test('a tap on the avatar opens its radial rather than walking', () => {
+  assert.deepEqual(tap({ onAvatar: true }), {
+    kind: 'radial',
+    targetId: AVATAR_TARGET_ID,
+    actions: AVATAR_ACTIONS,
+  });
+});
+
+test('a tap on a drawn prop opens that prop, whatever tile lies under it', () => {
+  assert.deepEqual(tap({ drawn: MARKET, onAvatar: true }), {
+    kind: 'radial',
+    targetId: MARKET.id,
+    actions: MARKET.actions,
+  });
+});
+
+test('a tap on the tile of an object opens that object', () => {
+  assert.deepEqual(tap({ underTile: MARKET }), {
+    kind: 'radial',
+    targetId: MARKET.id,
+    actions: MARKET.actions,
+  });
+});
+
+test('the right button and an open radial both decide nothing', () => {
+  assert.deepEqual(tap({ button: RIGHT_BUTTON, onAvatar: true }), { kind: 'ignore' });
+  assert.deepEqual(tap({ radialOpen: true, underTile: MARKET }), { kind: 'ignore' });
 });

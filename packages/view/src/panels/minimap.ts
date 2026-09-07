@@ -6,7 +6,13 @@ import {
   leaguePointOf,
   routeBetween,
 } from '../client/rules.ts';
-import type { IslandId, LeaguePoint, LeaguePointId, VoyageType } from '../client/rules.ts';
+import type {
+  IslandId,
+  LeaguePoint,
+  LeaguePointId,
+  VoyageState,
+  VoyageType,
+} from '../client/rules.ts';
 import {
   actionRow,
   barRow,
@@ -22,6 +28,9 @@ import type { PanelContext } from './panels.ts';
 const HERE_MARK = '✕';
 const DEFAULT_VOYAGE_TYPE: VoyageType = 'pillage';
 const GENERIC_NAME_WORDS = ['isle', 'island', 'rock', 'of'];
+const LEG_PROGRESS_LABEL = 'Leg progress';
+const ALL_LEAGUES_ASTERN = 'All leagues astern';
+const FULL_PROGRESS_PER_MILLE = 1000;
 
 interface ChartCell {
   readonly point: LeaguePoint;
@@ -122,11 +131,7 @@ export function createMinimap(context: PanelContext, host: HTMLElement): PanelVi
       status.append(
         factRow('Leg', `${voyage.legIndex} of ${voyage.route.length - 1}`),
         factRow('Voyage', voyage.type),
-        barRow(
-          'Leg progress',
-          progressPerMilleOf(voyage.legTicks, voyage.legTicksRequired),
-          `${voyage.legTicks}/${voyage.legTicksRequired}`,
-        ),
+        legProgressRow(voyage),
       );
       return;
     }
@@ -215,9 +220,24 @@ function currentPointIdOf(context: PanelContext): LeaguePointId | null {
   return islandId === null ? null : islandPointOf(islandId);
 }
 
+function legProgressRow(voyage: VoyageState): HTMLElement {
+  if (hasArrived(voyage)) {
+    return barRow(LEG_PROGRESS_LABEL, FULL_PROGRESS_PER_MILLE, ALL_LEAGUES_ASTERN);
+  }
+  return barRow(
+    LEG_PROGRESS_LABEL,
+    progressPerMilleOf(voyage.legTicks, voyage.legTicksRequired),
+    `${voyage.legTicks}/${voyage.legTicksRequired}`,
+  );
+}
+
+function hasArrived(voyage: VoyageState): boolean {
+  return voyage.legIndex >= voyage.route.length - 1;
+}
+
 function progressPerMilleOf(ticks: number, required: number): number {
   if (required <= 0) return 0;
-  return Math.floor((ticks * 1000) / required);
+  return Math.floor((ticks * FULL_PROGRESS_PER_MILLE) / required);
 }
 
 function shortNameOf(name: string): string {

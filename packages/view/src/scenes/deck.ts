@@ -1,5 +1,11 @@
 import { STATION_SLOTS, shipClassOf } from '../client/rules.ts';
-import type { ShipClass, ShipState, StationSlot, WorldState } from '../client/rules.ts';
+import type {
+  CommandResult,
+  ShipClass,
+  ShipState,
+  StationSlot,
+  WorldState,
+} from '../client/rules.ts';
 import type { PropArt } from '../iso/atlas.ts';
 import type { TilePoint } from '../iso/projection.ts';
 import {
@@ -49,6 +55,7 @@ const STATION_COUNTS: Record<StationSlot, (shipClass: ShipClass) => number> = {
 const PLAY_ACTION = 'play';
 const CHART_ACTION = 'chart';
 const SAIL_ACTION = 'sail';
+const PASSAGE_ACTION = 'passage';
 const VESSEL_ACTION = 'vessel';
 const HOW_ACTION = 'how';
 const YE_ACTION = 'ye';
@@ -56,6 +63,7 @@ const BOOTY_ACTION = 'booty';
 
 const DECK_INTENTS: Record<string, Intent> = {
   [PLAY_ACTION]: { kind: 'enter-scene', scene: 'puzzle' },
+  [PASSAGE_ACTION]: { kind: 'enter-scene', scene: 'sea' },
   [CHART_ACTION]: { kind: 'open-panel', panel: 'minimap' },
   [VESSEL_ACTION]: { kind: 'open-panel', panel: 'location' },
   [YE_ACTION]: { kind: 'open-panel', panel: 'ye' },
@@ -66,6 +74,7 @@ const BILGING_ACTIONS: ObjectAction[] = [{ id: PLAY_ACTION, label: 'Play Bilging
 const NAVIGATION_ACTIONS: ObjectAction[] = [
   { id: CHART_ACTION, label: 'Chart a course' },
   { id: SAIL_ACTION, label: 'Set sail' },
+  { id: PASSAGE_ACTION, label: 'To the passage' },
   { id: VESSEL_ACTION, label: 'Vessel' },
 ];
 const CREWED_ACTIONS: ObjectAction[] = [{ id: HOW_ACTION, label: 'How to play' }];
@@ -77,6 +86,12 @@ const AVATAR_ACTIONS: ObjectAction[] = [
 const UNKNOWN_DECK_HEADING = 'A deck of yer own';
 const UNKNOWN_STATION_LABEL = 'That station';
 const GANGPLANK_STOWED = 'The gangplank be stowed while we sail.';
+const PASSAGE_ASHORE = 'There be no passage while we lie alongside.';
+
+export function departureIntentOf(sailed: CommandResult): Intent | null {
+  if (sailed.status !== 'accepted') return null;
+  return { kind: 'enter-scene', scene: 'sea' };
+}
 
 export function createDeckScene(context: SceneContext): Scene {
   const state = context.client.state;
@@ -87,11 +102,16 @@ export function createDeckScene(context: SceneContext): Scene {
 
   function act(targetId: string, actionId: string): void {
     if (actionId === SAIL_ACTION) {
-      context.client.dispatch({ op: 'voyage.sail' });
+      const departure = departureIntentOf(context.client.dispatch({ op: 'voyage.sail' }));
+      if (departure !== null) context.emit(departure);
       return;
     }
     const intent = DECK_INTENTS[actionId];
     if (intent !== undefined) {
+      if (actionId === PASSAGE_ACTION && !context.client.canEnter('sea')) {
+        context.client.say(PASSAGE_ASHORE);
+        return;
+      }
       context.emit(intent);
       return;
     }

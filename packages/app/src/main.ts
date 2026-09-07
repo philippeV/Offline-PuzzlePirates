@@ -5,7 +5,7 @@ import balanceFile from '../../../balance.json' with { type: 'json' };
 
 const DEFAULT_SEED = 12648430;
 const DEFAULT_SCENE = 'port';
-const SCENE_NAMES = ['port', 'deck', 'puzzle', 'battle'] as const;
+const SCENE_NAMES = ['port', 'deck', 'puzzle', 'battle', 'sea'] as const;
 const INTEGER_PATTERN = /^-?\d+$/;
 
 type SceneName = (typeof SCENE_NAMES)[number];
@@ -38,7 +38,9 @@ function sceneFrom(search: URLSearchParams): SceneName {
 }
 
 function openingFor(scene: SceneName): Opening {
-  return scene === 'battle' ? 'sea-battle' : DEFAULT_OPENING;
+  if (scene === 'battle') return 'sea-battle';
+  if (scene === 'sea') return 'under-way';
+  return DEFAULT_OPENING;
 }
 
 function hostElement(id: string): HTMLElement {

@@ -14,6 +14,7 @@ const SURFACES = [
   { scene: 'deck', surface: 'the ship deck' },
   { scene: 'puzzle', surface: 'the bilging puzzle board' },
   { scene: 'battle', surface: 'the battle grid' },
+  { scene: 'sea', surface: 'the sea passage' },
 ] as const;
 
 function inflatedScanlinesOf(png: Buffer): Buffer {

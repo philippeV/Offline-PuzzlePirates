@@ -4739,3 +4739,406 @@ follows is what the lenses substantiated and judged not worth stopping for.
   load through the deepened guard" test does not cover the two fixtures this slice introduced. They
   are loaded by `tests/sim/migration.test.ts`, so the migration itself is covered — it is the guard
   sweep that is not. Missing coverage for paths this task did not change, so non-blocking.
+
+## 2026-09-06 — independent review of PR 16 (slice C, the passage is a place, OPP-21)
+
+Four blocking findings went back to analysis as
+`20260906-140000-analysis-opp21-slice-c-review-blockers`. What follows is everything the review
+turned up that is *not* blocking, recorded here rather than looped.
+
+### The sea scene's own interaction model is dead, but it has a working alternative
+
+- **The sea scene's avatar radial can never open, and every click emits a walk refusal.**
+  `followTarget` (`packages/view/src/scenes/isoScene.ts:174-181`) overwrites `standing` with
+  `coursePositionOf(...)`, which is fractional for every progress value except exactly 0 and 1000
+  (`x = 21 + 9p/1000`). The click handler gates the radial on
+  `sameTile(screenToIso(...), standing)` (`isoScene.ts:243`), and `screenToIso` floors to integers
+  (`packages/view/src/iso/projection.ts:26`), so the comparison is never true under way. The two
+  declared actions in `packages/view/src/scenes/sea.ts:22-25` — `Chart a course` and `Vessel` — are
+  therefore unreachable by click. The click then falls through to `walkTo`; the grid is entirely
+  `water`, which is in `HAZARD_TILES` (`scenes/grid.ts:34`), so `traversable` is false everywhere,
+  `pathBetween` returns `null`, and the scene says *"Avast! I can't find a way to walk there."* on
+  **every** click anywhere in the sea. **Not blocking** only because both panels remain reachable
+  from the persistent tab strip, so no capability is actually lost. Named in the analysis task as
+  worth repairing in the same pass, since it shares a root cause with the blocking findings.
+
+- **`followTarget`'s walk-state reset never fires today.** The three lines clearing `stepTo` and
+  `queued` (`isoScene.ts:176-180`) are pre-emptive: on an all-water grid nothing can ever be queued.
+  Harmless, but a reader will hunt for the interaction that needs them.
+
+### Duplication, and the one worth acting on
+
+- **`create` and `reset` now carry the same opening-voyage block, and they diverge.**
+  `packages/view/src/client/client.ts:52-55` uses `client.dispatch` (which records refusals into the
+  log) and `161-166` uses `this.sim.dispatch` (which swallows them). The silent-refusal failure mode
+  that this very slice was written to fix — a charted `shipId` refused with no error anywhere — is
+  therefore still live on the `reset` path. One private helper collapses both. This is the strongest
+  dedup candidate in the diff, well ahead of the per-mille helpers.
+
+- **`legProgressPerMilleOf` vs `progressPerMilleOf` in `panels/minimap.ts`: leave them alone.** The
+  review agrees with the author's conclusion but not the reason given. Nothing enforces "a scene must
+  not import a panel" — `tools/check-view-boundary.ts` polices only the sim facade — so that is an
+  instinct, not a rule. The real reasons are that the two have different signatures and different
+  contracts (unclamped vs clamped to `[0, 1000]`), and the genuinely shared part is one line of
+  integer arithmetic. Worth noting that `minimap`'s copy is the untested one.
+
+- **`passageHeadingOf`'s route-to-island lookup (`scenes/sea.ts:45-48`) duplicates `destinationOf`
+  (`packages/sim/src/world/dispatch.ts:108-112`) line for line.** That one is domain knowledge and a
+  better unification candidate than the arithmetic, but it needs exporting through the sim facade.
+
+### Naming that misleads
+
+- **`COURSE_START`, `COURSE_END` and `coursePositionOf` describe a voyage but mean a single leg.**
+  `legProgressPerMilleOf` next to them is honest, and the chart panel calls the same thing "Leg 1 of
+  2". `alkaid` to `doyle` routes as `[1, 2, 8]` — two legs — so the ship crosses the drawn course
+  twice per voyage, and a reader of these three names would conclude it crosses once. `LEG_START` /
+  `LEG_END` / `legPositionOf` would say the truth.
+
+- **`berth()` (`scenes/sea.ts:52`)** is the ship's live position under way; a berth is a mooring,
+  which is precisely what it is not.
+
+- **`SEA_WIDTH`, `SEA_HEIGHT` and the two course endpoints are unexplained constants**
+  (`scenes/sea.ts:8-11`). The constraint that produced them lives only in the analysis document, and
+  the derivation recorded there is wrong (see the blocking findings). Both endpoints also sit on
+  `x + y === 47`, which is what keeps the course screen-horizontal, and nothing in the code says so.
+
+### Test coverage
+
+- **The new test's `while` loop is an unbounded copy of a bounded helper the repo already owns.**
+  `tests/view/sea.test.ts:96-99` advances 1000 ticks at a time until `legIndex` reaches the end of
+  the route. It terminates today and it cannot silently exit having tested nothing. But `stepVoyage`
+  returns immediately when `phase !== 'under-way'` (`packages/sim/src/world/voyage.ts:58`), so if a
+  future change ever leaves the opening charted-but-not-sailed — exactly the class of defect this
+  slice already hit once — the loop spins forever, and `node --test` has no default per-test timeout,
+  so CI would hang instead of failing. `sailToDestination(driver, maxTicks)` in
+  `tests/world/loop.ts:74` is the same loop, bounded, throwing a clear message, and already used by
+  `tests/view/loop.test.ts`. A three-line change.
+
+- **`reset()` with the `'under-way'` opening is new code that nothing exercises.** `boot.test.ts`
+  resets only the default opening and checks only the epoch. It is a real user path (`?scene=sea`
+  plus New Game) and it is the half of the duplicated block that swallows refusals.
+
+- **The `follow` wiring — the one genuinely new mechanism — is untested.** All 13 tests exercise the
+  three exported pure helpers plus `GameClient`; nothing mounts `createSeaScene`. That matches repo
+  convention (pixi does not run under node), but the smoke baseline gives thin cover here: `sea.png`
+  was blessed roughly 94 ticks into a 25 200-tick leg, essentially at `COURSE_START`, so **deleting
+  `follow` from `sea.ts:69` would produce a near-identical screenshot and pass everything.** A
+  baseline taken mid-leg would be the cheap fix. `avatarArt` is genuinely pinned.
+
+- **`coursePositionOf` is asserted only at its two endpoints.** `coursePositionOf(500)` should be
+  `{x: 25.5, y: 21.5}`; a change that floored the result to whole tiles — killing the smooth glide,
+  which is the entire point of the feature — would pass every test in the file, including the
+  direction-only assertions in `'the ship advances along the course as the leg is sailed'`.
+
+- **The partial-`VoyageState` casts give slightly false confidence.**
+  `{ legTicks, legTicksRequired } as never` (`tests/view/sea.test.ts:31,36,41`) omits six real
+  fields. If `legTicksRequired` were renamed the helper would read `undefined`, produce `NaN`, and
+  fail with a baffling `NaN !== 250` rather than a type error. `as never` appears nowhere else in the
+  repo as a partial-object stand-in. A local `voyageWith(legTicks, legTicksRequired)` factory
+  returning a complete `VoyageState` would keep the compile-time coupling.
+
+- **`passageHeadingOf` with an empty `route` is untested and, unusually, reachable** — ISSUES.md
+  already records a stranded `route: []` v6 save that migrates to `phase: 'under-way'`. The sea scene
+  handles it gracefully (`OPEN_SEA`); nothing pins that it keeps doing so.
+
+- **`'under-way'` is the first opening with no harness twin.** `boot.test.ts:17,35` pin
+  `'pillage-loop'` and `'sea-battle'` against scenarios in `packages/harness/src/scenarios.ts` via
+  `save()` equality; the new opening's session shape is not pinned anywhere.
+
+### Baseline durability
+
+- **`sea.png` is the first baseline with moving content.** The other four are all taken with
+  `voyage === null`; this one contains a live tick counter and a ship drifting ~2.7 px/s through
+  Playwright's settling. The author's arithmetic that this sits well inside `maxDiffPixelRatio: 0.01`
+  is sound, and the threshold was correctly not widened. But the drift grows with settle time, so
+  this is the first baseline that can flake on a loaded machine. Worth watching rather than changing.
+
+### Style
+
+- **Import order broken in two files**, neither lint-enforced (no import-sort rule in
+  `eslint.config.js`): `packages/view/src/app.ts:11` puts `./scenes/sea.ts` before
+  `./scenes/puzzle.ts`, and `packages/view/src/scenes/isoScene.ts:4` splits the `client/` group with
+  an `iso/atlas.ts` import.
+
+## 2026-09-06 — analysis, slice C review blockers (OPP-21), cycle 1
+
+Two items deliberately left out of the cycle-1 repair, both discovered while deriving the fix for
+review finding B3. Recorded here rather than widened into a repair that is already touching three
+blocking defects. Decisions M11 and the "deliberately not in scope" section of the
+`2026-09-06 — analysis, slice C review blockers` entry in
+`docs/analysis/20260904-125820-charting-setting-sail-and-the-voyage-bet.md` carry the reasoning.
+
+### The camera never learns the grid extent, so any constants can produce void
+
+`createCamera` (`packages/view/src/iso/camera.ts:22`) receives only a content container. `camera.ts`
+imports nothing but `projection.ts` and a `Viewport` type — it has no access to `TileGrid`, `width` or
+`height`, and there is no clamp anywhere in the code path against the edge of the world. The only
+clamp is `clampToAnchor` (`camera.ts:31-35`), which keeps the *anchor* 96 px from the viewport edge
+and says nothing about whether the diamond still covers the window.
+
+The consequence is structural: **every** iso scene depends on its constants happening to be generous
+enough, and nothing catches it when they are not. Review finding B3 is the second time the sea scene's
+constants have been wrong for exactly this reason. Cycle 1 fixes the constants and asserts the
+inequalities in a unit test (analysis decisions M8 to M10), which catches a third wrong value — but it
+does not remove the class.
+
+The stronger fix is tractable and was costed while deriving B3. The four conditions
+`u_min >= 0`, `u_max <= W`, `v_min >= 0`, `v_max <= H` are linear in `(view.x, view.y)`, and in the
+rotated coordinates `a = view.y/TILE_HEIGHT + view.x/TILE_WIDTH`,
+`b = view.y/TILE_HEIGHT - view.x/TILE_WIDTH` they form a plain axis-aligned box — so the clamp is two
+`between` calls in the same shape as the existing `clampToAnchor` (`camera.ts:98-101`). With it in
+place:
+
+- the course *placement* question disappears entirely, and the only surviving requirement is the
+  extent one, `SEA_WIDTH >= VH/TILE_HEIGHT + VW/TILE_WIDTH = 37.6875` and likewise per axis — met by a
+  40x40 grid, which is *cheaper* than both the current 52x44 and the repaired 49x49;
+- right-drag panning (`isoScene.ts:255-263`) becomes void-proof, which no choice of constants can
+  achieve — defending against it with constants alone needs a 77x77 grid, 2.5 times the paint cost;
+- the benefit reaches every `createIsoScene` caller, not just the sea.
+
+The cost is that the ship stops being exactly centred when it approaches the grid edge, which is
+standard camera behaviour and arguably better. Not blocking: the cycle-1 constants and their assertion
+make the sea scene correct today. This is the change that would make the whole class impossible.
+
+### The sea scene's heading is evaluated once and can never update
+
+`packages/view/src/scenes/sea.ts:66` passes `heading` to `createIsoScene` as a **string**, computed at
+scene construction, not as a callback the way `follow` is passed at `:69`. `passageHeadingOf`
+(`sea.ts:43-49`) names `route[route.length - 1]`, the final destination, so the banner reads "Bound
+for Doyle Island" for the entire voyage — including after arrival, when the ship is sitting at the
+destination waiting for the player to press `Port`.
+
+Cycle 1 fixes the *position* on arrival (review finding B2) but leaves the text, so after the repair
+the ship correctly sits at `COURSE_END` under a heading that still says it is bound for the place it
+has reached. That is a smaller discrepancy than the teleport it replaces, and fixing it properly means
+changing `IsoSceneDefinition`'s shape so `heading` can be re-derived per frame like `follow` — a change
+to shared machinery, which the cycle-1 guardrails keep out of the diff. Worth doing when the sea scene
+is next opened, most naturally alongside the traffic work in slice D.
+
+## 2026-09-07 — development, slice C repair (OPP-21), PR 16, cycle 1
+
+Non-blocking findings from implementing the cycle-1 repair. Everything blocking in that task was
+fixed on the branch; these are the things deliberately left.
+
+### The screenshot baseline cannot see a void, and never could
+
+`maxDiffPixelRatio` is `0.01` — **9216 px** of the 1280×720 frame. The backdrop void that came back
+as blocking finding B3 measures **576 px** at the course start and **3422 px** at arrival. Both sit
+far inside the tolerance.
+
+This is measured, not argued. Running `npm run smoke` with the *repaired* code against the *old*
+baseline passes 5/5; the baseline only regenerates once `sea.png` is deleted. So the blessed PNG that
+photographed the void would have kept passing indefinitely, and re-blessing it proves nothing about
+geometry either.
+
+The threshold must **not** be widened to compensate — that is the wrong direction and M14 forbids it.
+The right guard is the one M10 installed: the four per-axis inequalities asserted as a unit test in
+`tests/view/sea.test.ts`, which fails in milliseconds. Worth knowing when the next scene places a
+camera near a grid edge: the baseline certifies *composition*, not *coverage*.
+
+### `npm run smoke` can silently test a different worktree
+
+`playwright.config.ts:24` sets `reuseExistingServer: !process.env.CI` against the fixed port from
+`packages/app/vite.config.ts:3` (5178, `strictPort: true`).
+
+If **any** vite is already listening there — a developer's own `npm run dev`, or another worktree's,
+which is exactly what happened during this run — Playwright reuses it and screenshots whatever *that*
+server serves. The suite then reports a confident pass for code it never loaded, on a branch it was
+never pointed at. There is no warning; the run looks entirely normal.
+
+Every Playwright pass in this cycle therefore ran on an isolated port through a temporary config.
+That is a workaround, not a fix. The durable options are to have the smoke config own a dedicated
+port distinct from the dev default, or to set `reuseExistingServer: false` unconditionally. It starts
+to matter the moment two agents, or an agent and a human, run in the same checkout — which is now the
+normal case.
+
+### The design stage size is a fourth uncoordinated copy
+
+M8 moved the projection radius into `packages/view/src/iso/projection.ts` so the grid derives from
+the source instead of being guessed. That part holds. But the *input* it derives from does not: the
+972 × 720 stage now exists as `DESIGN_STAGE_WIDTH`/`DESIGN_STAGE_HEIGHT` in `projection.ts`, while the
+numbers it is supposed to track live in
+
+- `playwright.config.ts:18` — `viewport: { width: 1280, height: 720 }`
+- `packages/view/src/panels/panels.css:2` — `--pp-panel-column: 308px` (1280 − 308 = 972)
+- `packages/view/src/scenes/battle.ts:131` — an unrelated `let sceneHeight = 720;`
+
+Nothing links them. Change the panel column or the smoke viewport and the sea grid goes silently
+wrong a **third** time, with no test failing — M10's inequalities derive from the same copy, so they
+would agree with themselves and still be wrong. The real fix is for the app to publish its stage size
+so the constant and the layout cannot diverge, which is a change outside a cycle-1 repair of one
+scene. Until then the derivation is honest about the arithmetic but not about its input.
+
+### The chart panel's `Leg` row is mislabelled under way
+
+`packages/view/src/panels/minimap.ts:131` renders ``factRow('Leg', `${voyage.legIndex} of ${voyage.route.length - 1}`)``.
+`legIndex` counts leagues *astern*, not the leg being sailed, so a two-leg voyage reads **"Leg 0 of 2"**
+while sailing the first leg and **"Leg 1 of 2"** while sailing the second.
+
+Noted because the cycle-1 analysis quotes the *arrival* reading, "Leg 2 of 2", as part of the defect.
+It is not: on arrival that row is the only one of the three that is actually correct. The misleading
+states are the ones before it. Left alone rather than widening the diff, since the arrival bar — the
+thing that was blocking — is fixed.
+
+### Clicking the pirate's own body now opens the radial on `port` and `deck`
+
+A recorded and accepted consequence of M13. Making the avatar sprite interactive means a click landing
+on the body opens the avatar radial where it previously ordered a walk to that tile. The tile-space
+test was **kept** alongside the new screen-space one, so no other affordance moved — see the deviation
+note in the analysis document for why removing it would have introduced a second, unrecorded change.
+
+## 2026-09-07 — independent review of the slice C repair (OPP-21), PR 16, cycle 1
+
+Four lenses over `e7e6056..41628c5` only. **No blocking findings.** B1, B2 and B3 are closed in the
+code. B2 was verified by driving the real sim tick by tick through the whole 34 560-tick passage
+rather than by reading the tests, and B3's baseline was verified by decoding both PNGs with a
+purpose-written decoder, calibrated by reproducing the previous review's own figure to the pixel
+(576 px, bbox x 0-51 / y 694-719) before trusting its reading of 0 px on the new one.
+
+Everything below is non-blocking. Three of them are corrections to the *record* rather than to the
+code: the shipped behaviour is right, and the documents that describe it overstate.
+
+### The B3 repair holds only at 1280x720, and nothing says so
+
+`#stage` is `inset: 0 var(--pp-panel-column) 0 0` (`packages/app/src/app.css`) and `mount` passes
+`resizeTo: options.canvasHost` (`app.ts:48`), so the real stage is `(windowWidth - 308) x
+windowHeight`. The grid, however, derives from the fixed `DESIGN_STAGE_WIDTH/HEIGHT` (972x720,
+`iso/projection.ts:3-4`), pinning `COURSE_CLEARANCE_TILES` at 20. The no-void condition
+`max(course) + R < 49` therefore becomes `windowWidth + 2 * windowHeight < 2868`:
+
+| window    | R        | 29 + R   | verdict                 |
+| --------- | -------- | -------- | ----------------------- |
+| 1280x720  | 18.84375 | 47.84375 | ok — the smoke viewport |
+| 1280x794  | 20.00000 | 49.00000 | boundary                |
+| 1366x768  | 20.26563 | 49.26563 | void                    |
+| 1920x1080 | 29.46875 | 58.46875 | void, both corners      |
+
+So on a maximised browser at 1080p the void that came back as blocking finding B3 is still on
+screen, in the same two corners, for the same reason — 9.47 tiles over budget. This is **not** a
+regression: the old 52x44 constants were worse at every size, M8/M9 deliberately name a *design*
+stage, and M11 is the filed structural answer (the camera clamping to the grid's half-planes, which
+fixes window size and right-drag panning together). It is recorded here because neither the existing
+"fourth uncoordinated copy" entry — which covers drift *between the copies* — nor the development
+entry's unqualified heading "The void is gone, and that claim is measured" states the ceiling. The
+re-blessed baseline certifies 1280x720 and nothing wider. It starts to matter the moment the game is
+played anywhere but the smoke viewport, which is to say now.
+
+### `avatar.eventMode = 'static'` moved a second affordance, which the record denies
+
+The 2026-09-06 entry accepts exactly one change on `port`/`deck` — "clicking the pirate's own body
+would open the radial where it currently walks a tile" — and states that no other affordance moved.
+A second one did.
+
+`world.addChild(baseLayer, objectLayer, dynamicLayer, spriteLayer)` (`isoScene.ts:118`) puts the
+avatar's `dynamicLayer` above the props' `objectLayer`, and Pixi's `hitTestRecursive` walks children
+in reverse display order. Before this commit a non-interactive sprite whose bounds contain the point
+already halted the descent, but the target resolved to `root` and `onTap` fell through to
+`objectAt(grid, tile)`, so the prop's radial still opened. Now `event.target === avatar`
+short-circuits at `isoScene.ts:273` and the avatar radial wins instead.
+
+Concretely: on `deck`, with the pirate on `(12,5)`, the avatar sprite (32x34, anchored bottom-centre
+at the tile centre) covers the lower band of the diamond of `(11,4)` — the navigation helm. Clicking
+that band used to offer *Chart a course / Set sail / To the passage / Vessel* and now offers *Ye /
+Yer booty*. The same applies to the moored sloop on `port` with the pirate on `(1,10)`.
+
+Severity is limited and that is why it is not blocking: each prop's oval label lives in `spriteLayer`
+*above* `dynamicLayer` at `spot.y - 54`, entirely clear of the avatar box, so every prop stays
+reachable by its label and by the rest of its diamond. No control becomes dead. The right correction
+is to this record, not to the code — M13 accepted screen-space avatar hit-testing knowingly.
+
+### Every predicate this PR adds is tested; every wiring line is not
+
+The extraction of `departureIntentOf` and `tapDecisionOf` made the decisions testable and left the
+connections untested at every tier. `tests/view/loop.test.ts:110` reads as the regression for B1, but
+it asserts that a pure function returns an object literal and then performs the scene change *itself*
+(`assert.ok(client.enterScene('sea'))`). The production wiring — `context.emit(departure)`,
+`deck.ts:106` — is never exercised. Delete that line and the suite stays green with B1 back.
+
+The same holds for the three lines that *are* the M12/M13 fix (`isoScene.ts:131`, `:271`, `:273`):
+remove any one and all seven `walking.test.ts` cases still pass while the sea radial breaks again.
+`SEA_INTENTS[DECK_ACTION]`, the `To the deck` radial entry and the `PASSAGE_ASHORE` refusal have no
+test at all. No test anywhere constructs a scene (`grep` for the four `create*Scene` factories over
+`tests/` returns nothing), and `tests/e2e/render-smoke.spec.ts:41` reaches every scene by
+`?scene=<name>` URL, never through an affordance. B1's defect class — a control that is present but
+not connected — would still pass a green suite today.
+
+This is a coverage gap over correct shipped code, so it is not blocking, and the physical test stage
+exercises exactly these affordances this cycle. What is missing is the durable guard. The cheap
+remediation needs no Pixi: export `DECK_INTENTS`, `SEA_INTENTS`, `NAVIGATION_ACTIONS` and
+`AVATAR_ACTIONS` and assert that the sail action's intent equals `departureIntentOf` of an accepted
+result, that `SEA_INTENTS` carries a `deck` entry reachable from `AVATAR_ACTIONS`, and that
+`IsoSceneDefinition.follow` maps to `scenePlacesAvatar`. Alternatively let the smoke suite reach
+`sea` by clicking the helm instead of by URL.
+
+### The four-inequality test cannot fail on a derived value
+
+M10 designates `tests/view/sea.test.ts:74-81` "the real guard" against a third wrong grid value. With
+`C = ceil(R) + SPARE_WATER_TILES` the four conditions reduce to `C >= R` and `R < C`, and both are
+identities for every `R >= 0` whenever `SPARE_WATER_TILES >= 1`. Set `DESIGN_STAGE_WIDTH` to 3440 and
+the test still passes.
+
+It is not worthless — it does fail against the old hardcoded literals, so it guards against a revert
+to typed-in constants, which is the failure mode that actually occurred twice. But the real guard on
+the derivation is `tests/view/projection.test.ts:35-38`, which pins `halfStageTileRadius` against
+`18.84375`, a number derived by hand in the analysis and independent of the implementation, and which
+additionally pins both design-stage constants. Worth knowing which of the two assertions is load
+bearing before someone simplifies the other away.
+
+### `SPARE_WATER_TILES` is load bearing, and reads like padding
+
+`sea.ts:14` records the `+ 1` as one of two "irreducible inputs". Its actual job is to keep the
+*upper* bound strict: with `SPARE_WATER_TILES = 0` and an integral `R`, both margins become
+`ceil(R) - R = 0`, the lower bound (`>=`) still passes and the upper (`<`) degenerates into exactly
+the hairline of backdrop the analysis warns about. A future simplification to `ceil(R)` would look
+harmless, and per the entry above the test would not stop it. A name such as
+`STRICT_CLEARANCE_MARGIN_TILES` would carry that, without a comment.
+
+### Smaller items
+
+- `docs/analysis/...voyage-bet.md`, M7 deviation: the stated reason that importing `sea.ts` would
+  drag Pixi "into `minimap.test.ts`, which runs on happy-dom with no renderer" is false.
+  `tests/view/sea.test.ts:13` already imported `scenes/sea.ts` at the base commit, and this commit
+  adds `walking.test.ts:12-17` and `loop.test.ts:7` doing the same; 637 passing tests are the proof.
+  The deviation's other two reasons — the panel-layer boundary and the UI duplication argument — are
+  sound and sufficient, so the decision stands and only the justification is wrong.
+- `panels/minimap.ts:234-236`: `hasArrived` is the third copy of `legIndex >= route.length - 1`,
+  alongside `packages/sim/src/world/voyage.ts:62` (which the analysis calls canonical) and the
+  implicit encoding in `sea.ts:50`. `client/rules.ts` is a pure re-export of `@opp/sim` and has no
+  Pixi problem, so it is the natural single home. The analysis says the panel "shares the predicate";
+  it re-implements it.
+- `panels/minimap.ts:33`: `FULL_PROGRESS_PER_MILLE` duplicates the exported `PROGRESS_PER_MILLE`
+  (`sea.ts:28`); same remedy.
+- `scenes/deck.ts:66` and `:92`: `{ kind: 'enter-scene', scene: 'sea' }` written twice as independent
+  literals. `departureIntentOf` should return `DECK_INTENTS[PASSAGE_ACTION]`.
+- `isoScene.ts:78,81`: `drawn` and `underTile` do not reveal intent under a no-comments convention —
+  the first means "the prop whose sprite the pointer hit", the second "the object occupying the
+  tile", and both are only decodable from the call site. `scenePlacesAvatar` and `radialOpen` on the
+  same interface are exemplary by contrast.
+- `tests/view/sea.test.ts:31`: the `as never` fixture defeats type checking, and `TWO_LEG_ROUTE`
+  holds island names where the real `route` holds league-point ids. Harmless today because only
+  `route.length` is read.
+- `tests/view/sea.test.ts:134` and `tests/view/minimap.test.ts:212`: unbounded `while` loops over
+  `client.advance(1000)`. A regression that stalls voyage progress turns a clean assertion failure
+  into a hung suite; `loop.test.ts:15` already has the right idiom in `MAX_VOYAGE_TICKS`.
+- `tests/view/loop.test.ts:107`: `assert.equal(shipOf(client.state, 'player').id, ship.id)` asserts
+  nothing about the behaviour the test names.
+- `tests/view/walking.test.ts`: the decision table omits `scenePlacesAvatar: true` combined with
+  `underTile`. Unreachable today because the sea grid has no objects; slice D's traffic work
+  introduces it.
+
+## From the test stage, 2026-09-07 (slice C repair, PR 16, cycle 1)
+
+- `packages/app/src/main.ts:103`: `document.documentElement.dataset.renderScene` is written once at
+  boot and never updated when the scene changes. After entering another scene through an affordance
+  the attribute still names the boot scene (observed: attribute `sea`, client `deck`, deck rendered).
+  Pre-existing and outside this PR's diff, but only reachable now that a scene change through the UI
+  is possible, and it is the readiness hook the e2e suite waits on — a smoke case that clicks rather
+  than navigating by `?scene=` will assert the wrong scene or hang. The fix is to set it wherever the
+  presented scene changes, not only at boot.
+- The sea backdrop void, measured rather than derived: corner void is exactly 0 px at 1280x720 at
+  both ends of the passage, 128 px at 1366x768 at the course start, and **121,390 px (6.97 % of the
+  canvas) at 1920x1080** — two wedges of roughly 604x302 at top-left and bottom-left plus 28x14 nubs
+  at the right. Advancing the voyage does not change the count or the bounding boxes; the wedges sit
+  on the left when you sail from the start and on the right when you enter the passage afresh at the
+  arrival end. Non-blocking and already covered by M11, but the size is the argument for pulling M11
+  forward: at a maximised 1080p window about a tenth of the play area is flat backdrop.
