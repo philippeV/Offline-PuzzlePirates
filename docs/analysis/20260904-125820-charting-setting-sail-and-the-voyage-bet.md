@@ -2227,3 +2227,148 @@ No golden and no replay exercises a voyage at all, so the entire traffic subsyst
 coverage, and nothing in the suite serialises a non-empty `traffic` array. A voyage golden is the natural
 companion to this slice and is the thing that would have made R1 visible to the gate rather than to a
 reviewer reading the stream by hand.
+
+## 2026-09-07 — test, slice D (OPP-22), traffic and battle by range, PR 17, cycle 0
+
+Head `ed33aec`, base `agent/develop`. `npm run check` green from cold in an isolated worktree: exit 0,
+**654 pass / 0 fail**, 18.6s, all six gates. Dev server on port **5191**, never 5178, so the
+`reuseExistingServer` trap that has poisoned earlier smoke runs was not armed. The passage was then played
+in a real browser against that server. **No blocking failures. PR 17 merges.**
+
+### The environment condition this lineage has carried since 2026-09-04 is gone
+
+Measured at the start of the run: **29 `node.exe`**, commit charge **21,265 of 64,040 MB (33 per cent)**,
+and nothing listening on 5170-5200. The standing advisory describes ~94-100 processes at 96-99 per cent.
+The machine has evidently been restarted. The gates ran from cold without a single `spawn ENOMEM`.
+
+### How this scene has to be driven, and why a screenshot is not a passive observation
+
+`ticker.ts` drives **both** the world clock and the canvas repaint from one `requestAnimationFrame`
+callback, and `Application` is created with `autoStart: false`. In an automated browser pane rAF never
+fires spontaneously — a callback did not run in 3s with `visibilityState === 'visible'`. Two consequences
+that cost time here and will cost it again:
+
+- **Taking a screenshot is what produces a frame**, and that frame runs `client.advance(ticks)` *before*
+  `application.render()`. So a screenshot is not a passive read: it advances the world by up to 240 ticks
+  first. A frame taken immediately after entering the sea scene therefore shows traffic already seeded even
+  though the state read a moment earlier said `traffic: []` — the frame itself crossed `legTicks === 0`.
+- The helm radial is Pixi scene-graph state, invisible until a frame is produced. Clicking the station and
+  then clicking where the button *should* be looks like a dead control. Screenshot in between and it is
+  there. `client.advance(n)` bypasses the ticker and is the reliable way to move the world.
+
+### The whole passage plays through its own controls
+
+Seed 1, by clicking only: McGuffin's Isle on the chart, then `Pillage`, `Chart course`, the Island tab,
+`Board the ship`, the **Navigation** station on the deck canvas, the radial (`Chart a course` / `Set sail` /
+`To the passage` / `Vessel`), and **`Set sail`**. Log: *"Lines cast off, bound for McGuffin's Isle."* Scene
+switched to `sea`, panel read `Leg 0 of 8`, `Voyage Pillage`. `voyage.sail` has exactly one control in the
+whole view package and it works.
+
+### 1. A traffic ship closes and starts a battle mid-leg — confirmed tick by tick
+
+Driven in the browser at seed 1, stepping one tick at a time whenever a ship was within 150 per mille:
+
+```
+t=17417  leg 2  legTicks 4572/9072 (504 per mille)   ship 8 at 564, gap +60, speed 50
+t=17418  encounter.spawned + battle.started          traffic 8 removed, battle.outcome running
+```
+
+The battle begins at **legTicks 4573 of 9072 — 504 per mille, strictly between departure and arrival**,
+and the event batch contains **no `voyage.legReached`**. The closing entry is deleted by id, exactly as R3
+describes. The scene switched to `Sea battle`, turn 1, Player Sloop against Brigand Sloop, with the panel
+still reading `Leg 2 of 8 · 4573/9072`. Log: *"A brigand bears down on ye!"* / *"Battle stations!"*
+
+Independently, the same slice was driven over the harness RPC across four seeds — encounters at leg
+progress **355, 503 and 780 per mille**, never on arrival. Seed 1 landed on **legIndex 2, legTicks
+6143/17304** over the harness and on the same `legIndex 2, legTicks 6143/17304` in the browser under the
+opening that gives a 17304-tick leg: the two transports agree exactly, which is a useful determinism check.
+
+An earlier crossing on leg 0 of the same voyage went **out of range to in range at t=5622 with no spawn**.
+That is the roll firing and declining, and it is the visible proof that a crossing is a *chance* and not a
+scripted fight.
+
+**Traffic is frozen for the duration of a battle**, confirmed directly: 600 ticks advanced while the battle
+ran left `legTicks` at 4573 and both surviving ships at 687 and −592, unmoved.
+
+**The loop still closes.** Left to run, the battle reached turn 15, *"Grappled! Boarders away!"*, then
+*"Ye be bested. The brigand leaves ye in her wake."* — `battle.ended`, scene back to `deck`, and the voyage
+**resumed mid-leg** at `legTicks 6143 → 6296` with traffic still on the passage. Deleting the arrival-gated
+roll has not broken the encounter/battle/settle cycle. Note for future runs: a sea battle needs player
+input to be *fought*; without it, turns pass until the brigand breaks off. A battle sitting at
+`outcome: running` after 60,000 unattended ticks is the puzzle waiting for a player, not a hang.
+
+### 2. Traffic moves in both directions, and astern ships really are behind the start
+
+On the 25200-tick leg (`?scene=sea`, seed 12648430), where the player makes ~40 per mille per 1000 ticks:
+
+| tick  | player | ship 3 (v30) | ship 4 (v34) | ship 5 (v56) |
+| ----- | ------ | ------------ | ------------ | ------------ |
+| 1004  | 40     | 422 (+382)   | −160 (−200)  | −543 (−583)  |
+| 9004  | 357    | 662 (+305)   | 112 (−245)   | −95 (−452)   |
+| 17004 | 675    | 902 (+227)   | 384 (−291)   | 353 (−322)   |
+
+Three different relationships in one passage: the player **runs down** ship 3 ahead of it, ship 4 **drops
+further astern**, and ship 5 **closes from astern**. Ship 3 was then **pruned past 1000** and vanished off
+the leg end. Both directions of overtaking, observed.
+
+Two caveats worth recording:
+
+- **The straddle depends on the leg, not on the band.** A fast sloop on a 5040-tick leg makes ~198 per
+  mille per 1000 ticks, far above the 25-60 band, so *every* ship is overtaken and nothing ever runs the
+  player down. The "band straddles the player" property holds for the ~25200-tick leg the design reasons
+  about, and silently does not for a fast hull. Not a defect; the design prose is simply narrower than it
+  reads.
+- **Astern ships are not clamped.** Measured over 745 astern spawns: raw `progressPerMille` **−900 to
+  −121**, none at 0; through `trafficProgressPerMilleOf` **−113 to −16**, **0 of 745 clamped**; through
+  `coursePositionOf`, tile **x 18.983-19.856 against `COURSE_START.x` 20** and **y 29.144-30.017 against
+  `COURSE_START.y` 29**. Every one strictly behind the start. Visually confirmed too: with traffic present
+  the first frame of a leg draws hulls to the left of the player's own, and clearing `state.traffic` drops
+  the scene to exactly one hull — the follower pool grows and shrinks.
+
+### 3. `voyage.port` mid-leg — the orphan is real; the ghost sloop is not observable
+
+Reproduced in the running app at seed 7919, pillage to McGuffin's Isle, ported at `legTicks 1500 of 25200`
+on leg 0: `voyage.port` **accepted**, `state.voyage` nulled, and **`state.traffic` left holding both
+ships**. A save taken in that state **carries the two orphans**, so the file says "no voyage" and "two ships
+on the passage" at once. Confirms the review's finding at state and at save level.
+
+The predicted one-frame ghost sloop, judged in the app: **not observable, and the record should say so.**
+Every frame runs `client.advance(ticks)` before it renders, and the first tick of the new leg reseeds
+`state.traffic`, so the stale array is gone before anything is drawn. A ghost frame requires a frame that
+advances **zero** ticks between the `voyage.sail` dispatch and the render — possible at 60fps but bounded
+at roughly 16 ms. It could not be produced here. The finding stays non-blocking; the impact is the stale
+save field, not a visible artefact.
+
+One thing that is *not* wrong, checked because it looked wrong: after porting mid-leg the scene stays `sea`
+for the instant of the dispatch, but one tick later it is `deck` and `canEnter('sea')` is `false`. There is
+no way to be stranded on the passage view.
+
+### 4. A save taken mid-passage reloads onto the same passage
+
+Through the real Ye-tab controls: `Save game` produced a **9822-char, `schemaVersion` 8** save carrying
+**three** traffic ships; `New game` wiped it to `port`, tick 0, `traffic: []`; pasting the text back and
+pressing `Load game` returned to sea at **tick 9804, leg 0 of 8, Pillage, legTicks 9804/25200**, with the
+same three ships (ids 3, 4, 5) at the same speeds in the same places, and the voyage **continuing** rather
+than restarting the leg. The scripted equivalent — save, `reset()` to an unrelated seed, `restore()` —
+returned a byte-equal passage and then advanced 9000 → 9500 normally.
+
+### 5. An empty leg looks like open water
+
+Seed 100 opens leg 0 with **zero traffic**. The frame is a single sloop on unbroken water — no gap, no
+missing sprite, nothing that reads as a failed scene. Measured incidence over real sailed legs: **120 of
+456 legs empty (26.3 per cent)**, and over 500 fresh draws **119 (23.8 per cent)**, against the 25 per cent
+the uniform 0..3 draw implies. Speeds over 764 ships spanned **every integer from 25 to 60**, mean 41.97,
+with 328 below the nominal player pace, 27 equal and 409 above.
+
+### Scenes rendered
+
+`port`, `deck`, `sea` and `battle` were all drawn during the run. The follower pool added to `isoScene.ts`
+is shared by every iso scene, and nothing in `port` or `deck` regressed.
+
+### Verdict
+
+Five for five on the behaviours the slice claims, plus the encounter/battle/settle regression. Nothing
+blocking under the contract test. `human_review` is `false` and the review passed at cycle 0, so PR 17 is
+merged into `agent/develop`. The non-blocking items already in `ISSUES.md` are unchanged, with the ghost
+sloop downgraded from prediction to *not observable* and the `voyage.port` orphan upgraded from predicted
+to *reproduced, and it reaches the save file*.
