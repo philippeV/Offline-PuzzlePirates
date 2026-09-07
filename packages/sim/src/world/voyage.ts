@@ -2,10 +2,11 @@ import { TICKS_PER_SECOND } from '../clock.ts';
 import type { RejectionReason } from '../commands.ts';
 import type { SimEvent } from '../events.ts';
 import { PER_MILLE } from '../puzzle/scoring.ts';
+import { rngStream } from '../rng.ts';
 import { shipClassOf } from '../ship/classes.ts';
 import { findShip, type ShipState } from '../ship/state.ts';
 import type { WorldState } from '../state.ts';
-import { rollEncounter } from './encounter.ts';
+import { ENCOUNTER_STREAM, rollEncounter } from './encounter.ts';
 import { ISLAND_IDS, type IslandId } from './islands.ts';
 import {
   DIAGONAL_LEAGUE_COST_PER_MILLE,
@@ -17,6 +18,14 @@ import {
   type LeaguePointId,
 } from './leaguePoints.ts';
 import type { VoyageState, VoyageType } from './state.ts';
+import {
+  advanceTraffic,
+  legProgressPerMilleOf,
+  seedTraffic,
+  trafficEnteringRange,
+  trafficStillOnLeg,
+  type TrafficShip,
+} from './traffic.ts';
 
 const LEGS_IN_A_ROUTE = 2;
 
@@ -61,13 +70,24 @@ export function stepVoyage(state: WorldState): SimEvent[] {
   if (ship === undefined) return [];
   if (voyage.legIndex >= voyage.route.length - 1) return [];
 
+  if (voyage.legTicks === 0) state.traffic = seedTrafficForLeg(state, voyage);
+
+  const passedProgress = state.traffic.map((traffic) => traffic.progressPerMille);
+  const passedPlayerProgress = legProgressPerMilleOf(voyage.legTicks, voyage.legTicksRequired);
+
   voyage.legTicks += 1;
-  if (voyage.legTicks < voyage.legTicksRequired) return [];
+  advanceTraffic(state.traffic);
+
+  const encounter = rollTrafficEncounter(state, voyage, passedProgress, passedPlayerProgress);
+  state.traffic = trafficStillOnLeg(state.traffic);
+
+  if (voyage.legTicks < voyage.legTicksRequired) return encounter;
 
   voyage.legTicks = 0;
   voyage.legIndex += 1;
+  state.traffic = [];
   const pointId = voyage.route[voyage.legIndex];
-  if (pointId === undefined) return [];
+  if (pointId === undefined) return encounter;
   voyage.legTicksRequired = legTicksRequiredOf(
     ship,
     orientationCostOf(voyage.route, voyage.legIndex),
@@ -80,8 +100,40 @@ export function stepVoyage(state: WorldState): SimEvent[] {
       legIndex: voyage.legIndex,
       difficultyPerMille: leaguePointOf(pointId).difficultyPerMille,
     },
-    ...rollEncounter(state, pointId),
+    ...encounter,
   ];
+}
+
+function seedTrafficForLeg(state: WorldState, voyage: VoyageState): TrafficShip[] {
+  const balance = state.balance;
+  const fromPointId = voyage.route[voyage.legIndex];
+  const toPointId = voyage.route[voyage.legIndex + 1];
+  if (balance === null || fromPointId === undefined || toPointId === undefined) return [];
+  const stream = rngStream(state.seed, state.rngStreams, ENCOUNTER_STREAM);
+  return seedTraffic(state, stream, balance.world, fromPointId, toPointId);
+}
+
+function rollTrafficEncounter(
+  state: WorldState,
+  voyage: VoyageState,
+  passedProgress: readonly number[],
+  passedPlayerProgress: number,
+): SimEvent[] {
+  const balance = state.balance;
+  const toPointId = voyage.route[voyage.legIndex + 1];
+  if (balance === null || toPointId === undefined) return [];
+  const closing = trafficEnteringRange(
+    state.traffic,
+    passedProgress,
+    passedPlayerProgress,
+    legProgressPerMilleOf(voyage.legTicks, voyage.legTicksRequired),
+    balance.world.encounterRangePerMille,
+  );
+  if (closing === undefined) return [];
+  const events = rollEncounter(state, toPointId);
+  if (!events.some((event) => event.type === 'encounter.spawned')) return events;
+  state.traffic = state.traffic.filter((traffic) => traffic.id !== closing.id);
+  return events;
 }
 
 function isIsland(islandId: IslandId): boolean {

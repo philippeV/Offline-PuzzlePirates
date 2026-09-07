@@ -5142,3 +5142,28 @@ harmless, and per the entry above the test would not stop it. A name such as
   on the left when you sail from the start and on the right when you enter the passage afresh at the
   arrival end. Non-blocking and already covered by M11, but the size is the argument for pulling M11
   forward: at a maximised 1080p window about a tenth of the play area is flat backdrop.
+
+## From slice D, 2026-09-07 (traffic and battle by range, OPP-22)
+
+- **Pillage encounters are 43 per cent more frequent than before this slice.** Measured over 60 seeds:
+  0.825 spawns per leg before, 1.179 after — 4.95 against 7.08 over a six-leg voyage. This is the
+  specified mechanism, not a defect: the analysis says a traffic ship crossing into range rolls, and a
+  leg offers up to `world.trafficShipsPerLegMax` crossings where arrival offered exactly one roll. It
+  was deliberately not hidden by retuning, because `world.encounterChancePerMille`'s `_sources` entry
+  documents "a quarter of legs carrying a brigand ... a voyage rather than a gauntlet" and that
+  sentence would silently stop being true. The remedy is one data value — lower
+  `world.encounterChancePerMille` — once someone decides what the rate should be now that the trigger
+  has moved. Note the base constant was already not the effective pillage rate: the pillage bonus and
+  difficulty weighting put the old effective chance near 80 per cent a leg, so the `_sources` sentence
+  describes the base number rather than pillage.
+- A battle now requires a ship to actually close, so a short pillage is no longer certain to fight: a
+  two-leg run meets a brigand 85.5 per cent of the time against an eight-leg run's 100 per cent. That
+  is the point of battle-by-range, but any test that assumes a voyage always fights is now seed
+  dependent — `tests/harness/restocking.test.ts` was one and needed its seed moved.
+- `packages/sim/src/world/traffic.ts` `trafficEnteringRange` takes the previous progress of every ship
+  as a parallel array supplied by the caller. It is correct and allocation-cheap, but the pairing of
+  `traffic[i]` with `passedProgress[i]` is a positional contract between two files that nothing
+  enforces; if traffic ever stops being rebuilt wholesale per tick, this is where it breaks.
+- Traffic sprites are drawn from the `sloop` art with no tint or scale, so a neutral passing ship and
+  the ship that is about to turn hostile look identical. Distinguishing them needs something beyond the
+  art key, which `atlas.ts` does not currently parameterise and this slice was barred from touching.

@@ -86,6 +86,7 @@ export type {
   SimEvent,
   StationSlot,
   TokenPool,
+  TrafficShip,
   VoyageState,
   VoyageType,
   WorldState,

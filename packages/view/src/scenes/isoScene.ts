@@ -65,6 +65,7 @@ export interface IsoSceneDefinition {
   avatarActions: ObjectAction[];
   avatarArt?: PropArt;
   follow?(): TilePoint;
+  followers?(): TilePoint[];
   crew?: TilePoint[];
   highlights?: TilePoint[];
   act(targetId: string, actionId: string): void;
@@ -133,6 +134,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
   let standing: TilePoint = definition.spawn;
   let stepFrom: TilePoint = definition.spawn;
   const clickableProps = new Map<unknown, SceneObject>();
+  const followerSprites: Sprite[] = [];
   let stepTo: TilePoint | null = null;
   let stepElapsedMs = 0;
   let queued: TilePoint[] = [];
@@ -200,6 +202,32 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
     avatar.x = from.x + (to.x - from.x) * progress;
     avatar.y = from.y + (to.y - from.y) * progress - bob;
     avatar.zIndex = depthOf(target, AVATAR_DEPTH);
+  }
+
+  function followerAt(index: number): Sprite {
+    const moored = followerSprites[index];
+    if (moored !== undefined) return moored;
+    const sail = Sprite.from(context.atlas.texture('sloop'));
+    sail.anchor.set(0.5, 1);
+    sail.eventMode = 'none';
+    followerSprites.push(sail);
+    dynamicLayer.addChild(sail);
+    return sail;
+  }
+
+  function scuttleFollowersBeyond(count: number): void {
+    for (const spare of followerSprites.splice(count)) spare.destroy();
+  }
+
+  function placeFollowers(): void {
+    const tiles = definition.followers?.() ?? [];
+    tiles.forEach((tile, index) => {
+      const spot = standingSpot(tile);
+      const sail = followerAt(index);
+      sail.position.set(spot.x, spot.y);
+      sail.zIndex = depthOf(tile, CREW_DEPTH);
+    });
+    scuttleFollowersBeyond(tiles.length);
   }
 
   function followTarget(): void {
@@ -301,6 +329,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
   paintCrew();
   dynamicLayer.addChild(avatar);
   placeAvatar();
+  placeFollowers();
 
   root.on('pointertap', onTap);
   root.on('pointerdown', onPointerDown);
@@ -322,6 +351,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
       followTarget();
       advanceWalk(elapsedMs);
       placeAvatar();
+      placeFollowers();
       camera.keepVisible(standing);
     },
     destroy(): void {

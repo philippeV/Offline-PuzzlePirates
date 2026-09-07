@@ -2056,3 +2056,110 @@ confirmed by observation rather than by inference.
 
 `packages/sim` unchanged, `iso/atlas.ts` and `client.ts` out of the diff, `main` untouched, the
 human's worktree on `agent/feature/20260904-opp26-scene-blueprints` untouched.
+
+## 2026-09-07 — development, slice D (OPP-22), traffic and battle by range, cycle 0
+
+Branched from `agent/develop` at `64b5e36`, which is slice C merged, so the precondition took its
+stronger branch: the passage is already a place with a rendered ship on it.
+
+`npm run check` 652 pass / 0 fail (baseline on the untouched branch was 637). `npm run smoke` 5/5.
+
+### What was built
+
+Traffic is a light entity, per L10 — `packages/sim/src/world/traffic.ts` carries `{ from, to,
+progressPerMille, progressAccumulator, speed }` and never a `ShipState` hull. It is seeded on the
+first tick of each leg, advanced by integer arithmetic, pruned when it leaves the leg at either end,
+and cleared at each leg change. The accumulator is the repo's existing `damageAccumulator` idiom and
+is not optional: `canonicalJson` throws on a non-safe-integer, so a fractional speed cannot be stored.
+
+`rollEncounter` itself is **unchanged**. Only its trigger moved: the arrival-gated call in
+`stepVoyage` is gone, and a roll now happens when a traffic ship crosses into range. Keeping the roll
+where it was is the smallest change that satisfies the slice, and it keeps `evade`'s structural zero
+exactly where it already was — the `chance === 0` short-circuit still returns before the stream is
+opened, so an `evade` voyage still cannot spawn a brigand by any path.
+
+The trigger sits inside `stepVoyage`, which is the branch `stepWorld` delegates to **after** it has
+settled a concluded encounter. That is the same side of the `voyage === null` early return that slice
+B relied on, so decision 129's hole is exactly as wide as it was; nothing about this slice can leave
+a concluded battle with a nulled voyage.
+
+### Decisions taken on the goal's behalf
+
+| #  | Decision                                                                        | Rationale                                                                                                          |
+| -- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| N1 | A mid-leg roll takes its difficulty from the leg's destination point               | The roll needs a `LeaguePointId` for both difficulty and the `encounter.spawned` payload; the water being sailed into is the honest choice. |
+| N2 | A ship rolls on the tick it **crosses** into range, never per tick while inside it | A per-tick roll inside the window makes an encounter near-certain; a crossing is a single event and needs no new persisted flag. |
+| N3 | Traffic opens a leg either ahead of the player or astern of it                     | The slice says other ships "can pass the player". Seeded only ahead, nothing can ever overtake the player from behind. |
+| N4 | Traffic is seeded on `evade` voyages too                                           | It is scenery; only the encounter chance is zero for `evade`. An `evade` voyage therefore now opens a `world.encounter` cursor it never opened before. |
+
+### L11 was followed to the letter, and its stated rationale is wrong
+
+L11 says traffic draws from the existing `world.encounter` stream because "a new stream would change
+every existing seed's outcomes". That reasoning is backwards, and this repo's own precedent says the
+opposite: road-document decision 52 gives critters a **new** stream precisely because "adding draws
+to `bilge.refill` would shift the pinned refill draw order; a separate stream is independent by
+construction", and the road document states flatly that no world code draws from a pre-existing
+stream.
+
+It was followed anyway, because on this branch it is provably safe rather than merely decided. The
+golden's patch is the evidence: every pinned fixture — the `bilge-session` golden and both replay
+trails — runs a scenario with **no voyage**, so traffic is never seeded there and not one extra draw
+occurs. The re-blessed golden's `rngStreams` subtree is byte-identical to the old one. Had that
+subtree moved, the decision would have had to give way.
+
+### Costs paid deliberately, and what each one was classified as
+
+- **The golden was re-blessed.** Its patch was read first and is exactly seven operations: six added
+  `balance.world` keys, `schemaVersion` 7 to 8, and `traffic []`. Nothing else moved, and
+  `rngStreams` in particular did not. Classified an intended behaviour change under
+  `.claude/skills/pp-golden-state`, whose rule is that an unexplained field is a regression until
+  proven otherwise. New hash `50ed87433e27a029`.
+- **Both replay trails were re-recorded**, and the deliberately-diverged fixture was **rebuilt from
+  the new trail rather than re-recorded**, per its own note, keeping `deadbeefdeadbeef` at tick 5 so
+  it still diverges at 5 and not at 0.
+- **The scenario opening was re-pinned** only after proving the board, star level and water line are
+  byte-identical; the whole-state hash was the only thing that moved.
+- **The `sea` baseline was re-taken deliberately**, per L13 and the guardrail. It had to be: three
+  sloop sprites are about 3 400 px against the suite's 9 216 px of slack, so the smoke passed 5/5
+  against the *old* baseline with traffic already rendering. A green smoke was not evidence here, and
+  the new baseline visibly carries the player plus a traffic ship.
+
+### A measured side effect the analysis did not cost out
+
+Per-crossing rolls raise pillage encounters from **0.825 to 1.179 spawns per leg** — 4.95 to 7.08 over
+a six-leg voyage, up 43 per cent. That is the specified mechanism, not a defect: the analysis prose
+says the crossing rolls, and a leg now offers up to three crossings where arrival offered one roll.
+It was left as specified rather than quietly retuned, because `world.encounterChancePerMille`'s
+`_sources` entry documents a different intent and rewriting a constant to hide a mechanism change is
+worse than declaring it. Filed to `ISSUES.md` with the one-line remedy.
+
+Related and deliberate: a battle now requires someone to actually close, so a short pillage is no
+longer certain to fight. A two-leg run meets a brigand 85.5 per cent of the time and an eight-leg run
+100 per cent. `tests/harness/restocking.test.ts` fell in that 14.5 per cent on its seed, so the
+**seed** moved 2026 to 2028 and the assertion was left exactly as strong — the test still requires a
+battle and still requires the magazine to be spent.
+
+### Verified by driving it, not by reading it
+
+The affordance lesson from slice C was applied to the render: traffic was confirmed in a real browser
+on an isolated port, never 5178. Setting `state.traffic` to one ship draws exactly two hulls; setting
+it to `[]` draws exactly one, which is what proves the follower pool both grows and shrinks. A leg was
+watched through with ships ahead and astern, the fastest sailing past the leg end and being pruned.
+
+### A defect this stage's own work shipped, caught by reading the diff
+
+`trafficProgressPerMilleOf` was written against a 0..1000 leg progress and clamped its result with
+`Math.max(sailed, 0)`. Decision N3 then made traffic progress signed. The two are incompatible: every
+ship astern of the player clamped to exactly 0 and was drawn piled on `COURSE_START` rather than
+trailing behind, which is the "fixed tableau" the slice exists to avoid — and no test and no green
+smoke said a word about it, because the sprites were still drawn and still moved.
+
+It was found by reading the diff rather than by running anything. The lower bound is now
+`-PROGRESS_PER_MILLE`, `coursePositionOf` extrapolates behind the start, and the sea grid's 20 tiles
+of clearance absorb it. `tests/view/sea.test.ts` now pins that an astern ship lands before
+`COURSE_START` on both axes, and the placement was confirmed in the browser: four hulls at frame gaps
+67 / 37 / 66 px against 65 / 37 / 67 predicted from the progress values.
+
+The `sea` baseline was re-taken **twice** for this reason — the first bless captured the clamped
+frame. The committed one is the second, and the smoke was run three times consecutively against it to
+check that up to four moving sprites had not made the capture flaky.

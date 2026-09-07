@@ -82,6 +82,12 @@ const BLOCK_KEYS: Record<string, string[]> = {
     'pillageSpawnBonusPerMille',
     'tradeSpawnPenaltyPerMille',
     'brigandCrewCount',
+    'trafficShipsPerLegMax',
+    'trafficSpawnAheadMinPerMille',
+    'trafficSpawnAheadMaxPerMille',
+    'trafficSpeedMinPerMillePerThousandTicks',
+    'trafficSpeedMaxPerMillePerThousandTicks',
+    'encounterRangePerMille',
   ],
   market: [
     'rawBasePricePoe',

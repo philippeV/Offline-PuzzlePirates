@@ -54,6 +54,18 @@ export function voyageProgressPerMilleOf(voyage: VoyageState | null): number {
   return Math.min(Math.max(sailed, 0), PROGRESS_PER_MILLE);
 }
 
+export function trafficProgressPerMilleOf(
+  voyage: VoyageState | null,
+  legProgressPerMille: number,
+): number {
+  if (voyage === null) return 0;
+  const legs = voyage.route.length - 1;
+  if (legs <= 0) return 0;
+  const withinLeg = legProgressPerMille / PROGRESS_PER_MILLE;
+  const sailed = Math.floor(((voyage.legIndex + withinLeg) * PROGRESS_PER_MILLE) / legs);
+  return Math.min(Math.max(sailed, -PROGRESS_PER_MILLE), PROGRESS_PER_MILLE);
+}
+
 export function coursePositionOf(progressPerMille: number): TilePoint {
   const sailed = progressPerMille / PROGRESS_PER_MILLE;
   return {
@@ -75,6 +87,13 @@ export function createSeaScene(context: SceneContext): Scene {
     return coursePositionOf(voyageProgressPerMilleOf(context.client.state.voyage));
   }
 
+  function trafficBerths(): TilePoint[] {
+    const voyage = context.client.state.voyage;
+    return context.client.state.traffic.map((ship) =>
+      coursePositionOf(trafficProgressPerMilleOf(voyage, ship.progressPerMille)),
+    );
+  }
+
   function act(_targetId: string, actionId: string): void {
     const intent = SEA_INTENTS[actionId];
     if (intent === undefined) return;
@@ -89,6 +108,7 @@ export function createSeaScene(context: SceneContext): Scene {
     avatarActions: AVATAR_ACTIONS,
     avatarArt: 'sloop',
     follow: berth,
+    followers: trafficBerths,
     act,
   });
 }

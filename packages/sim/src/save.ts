@@ -24,6 +24,7 @@ const migrations: Record<number, Migration> = {
   }),
   5: (save) => ({ ...save, balance: null, puzzle: shapedPuzzleOf(save['puzzle']) }),
   6: (save) => ({ ...save, voyage: departedVoyageOf(save['voyage']) }),
+  7: (save) => ({ ...save, traffic: [] }),
 };
 
 const FIELD_KINDS: Record<keyof WorldState, FieldKind> = {
@@ -39,6 +40,7 @@ const FIELD_KINDS: Record<keyof WorldState, FieldKind> = {
   battle: 'an object or null',
   pirate: 'an object or null',
   voyage: 'an object or null',
+  traffic: 'an array',
   markets: 'an array',
 };
 

@@ -158,6 +158,16 @@ function worldBalanceOf(read: BlockReader): WorldBalance {
     pillageSpawnBonusPerMille: read.integer('pillageSpawnBonusPerMille'),
     tradeSpawnPenaltyPerMille: read.integer('tradeSpawnPenaltyPerMille'),
     brigandCrewCount: read.integer('brigandCrewCount'),
+    trafficShipsPerLegMax: read.integer('trafficShipsPerLegMax'),
+    trafficSpawnAheadMinPerMille: read.integer('trafficSpawnAheadMinPerMille'),
+    trafficSpawnAheadMaxPerMille: read.integer('trafficSpawnAheadMaxPerMille'),
+    trafficSpeedMinPerMillePerThousandTicks: read.integer(
+      'trafficSpeedMinPerMillePerThousandTicks',
+    ),
+    trafficSpeedMaxPerMillePerThousandTicks: read.integer(
+      'trafficSpeedMaxPerMillePerThousandTicks',
+    ),
+    encounterRangePerMille: read.integer('encounterRangePerMille'),
   };
 }
 

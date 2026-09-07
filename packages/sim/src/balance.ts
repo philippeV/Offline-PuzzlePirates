@@ -65,6 +65,12 @@ export interface WorldBalance {
   pillageSpawnBonusPerMille: number;
   tradeSpawnPenaltyPerMille: number;
   brigandCrewCount: number;
+  trafficShipsPerLegMax: number;
+  trafficSpawnAheadMinPerMille: number;
+  trafficSpawnAheadMaxPerMille: number;
+  trafficSpeedMinPerMillePerThousandTicks: number;
+  trafficSpeedMaxPerMillePerThousandTicks: number;
+  encounterRangePerMille: number;
 }
 
 export interface MarketBalance {
