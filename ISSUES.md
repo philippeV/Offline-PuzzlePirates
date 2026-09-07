@@ -5125,3 +5125,20 @@ harmless, and per the entry above the test would not stop it. A name such as
 - `tests/view/walking.test.ts`: the decision table omits `scenePlacesAvatar: true` combined with
   `underTile`. Unreachable today because the sea grid has no objects; slice D's traffic work
   introduces it.
+
+## From the test stage, 2026-09-07 (slice C repair, PR 16, cycle 1)
+
+- `packages/app/src/main.ts:103`: `document.documentElement.dataset.renderScene` is written once at
+  boot and never updated when the scene changes. After entering another scene through an affordance
+  the attribute still names the boot scene (observed: attribute `sea`, client `deck`, deck rendered).
+  Pre-existing and outside this PR's diff, but only reachable now that a scene change through the UI
+  is possible, and it is the readiness hook the e2e suite waits on — a smoke case that clicks rather
+  than navigating by `?scene=` will assert the wrong scene or hang. The fix is to set it wherever the
+  presented scene changes, not only at boot.
+- The sea backdrop void, measured rather than derived: corner void is exactly 0 px at 1280x720 at
+  both ends of the passage, 128 px at 1366x768 at the course start, and **121,390 px (6.97 % of the
+  canvas) at 1920x1080** — two wedges of roughly 604x302 at top-left and bottom-left plus 28x14 nubs
+  at the right. Advancing the voyage does not change the count or the bounding boxes; the wedges sit
+  on the left when you sail from the start and on the right when you enter the passage afresh at the
+  arrival end. Non-blocking and already covered by M11, but the size is the argument for pulling M11
+  forward: at a maximised 1080p window about a tenth of the play area is flat backdrop.

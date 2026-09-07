@@ -1959,3 +1959,100 @@ Clean, so the branch goes to the test stage at cycle 1 rather than back to analy
 carries two instructions that follow directly from the findings above: exercise the affordances
 physically, since no automated tier covers them; and look at the sea scene at a window size other
 than 1280x720, since that is precisely where the shipped fix stops holding.
+
+## 2026-09-07 — test, slice C repair (OPP-21), PR 16, cycle 1
+
+Physical test of PR 16 at head `f3a7ad6` (code under test `41628c5`; the review commit touches only
+markdown). Both GitHub checks green on the head before starting. Driven through the UI in a real
+browser against an isolated dev server on port 5199 — never 5178, which `playwright.config.ts` would
+have reused silently.
+
+**Result: no blocking failures. Merged to `agent/develop`.**
+
+### The affordances, physically — the priority, and the reason this stage existed
+
+Every one of these was performed by clicking in the running app, not by URL and not by calling the
+intent function. This is the tier the review showed no automated test covers.
+
+| Affordance | Result |
+| ---------- | ------ |
+| Deck, docked: helm radial → "To the passage" | Refuses with `PASSAGE_ASHORE`, scene stays `deck` |
+| Deck: helm radial → "Set sail" | Scene becomes `sea` on the click |
+| Sea: click own ship → radial | Offers `Chart a course` / `Vessel` / `To the deck` |
+| Sea: "To the deck" | Enters `deck`, survives further ticks without being yanked back |
+| Deck under way: "To the passage" | Enters `sea` |
+| Round trip, both directions | Twice each, including from the arrived state |
+
+The helm radial opens with all four actions and the docked refusal is the real line, not silence:
+`There be no passage while we lie alongside.` B1's defect class is closed in the running app, and
+the dead control the development stage caught in its own work stays fixed.
+
+Arrival was reached by driving `client.advance(1000)` to `legIndex 2` of 2. The scene remained `sea`
+(M6), the ship finished at the far end of the course — screen x moved from 310 to 548 and did not
+snap back — and the chart panel read `Leg 2 of 2` with a full bar and `All leagues astern`, agreeing
+with the scene. That is M7's stated purpose satisfied at the only state where the two panels are
+meant to agree.
+
+### The sea scene away from 1280x720 — measured, not eyeballed
+
+Canvas-only captures, backdrop `0x0a1622` +/-6 per channel, counting only components touching a
+canvas corner. A decoder calibrated against the known-good viewport: 1280x720 measures exactly 0.
+
+| Viewport | Canvas | Corner void, start | Corner void, arrival |
+| --------- | ---------- | ------------------- | -------------------- |
+| 1280x720 | 972x720 | 0 px (0.000 %) | 0 px (0.000 %) |
+| 1366x768 | 1058x768 | 128 px (0.016 %) | 0 px (0.000 %) |
+| 1920x1080 | 1612x1080 | 121,390 px (6.97 %) | 121,390 px (6.97 %) |
+
+**1280x720 is genuinely clean at both ends of the passage** — the baseline certifies what it claims.
+1366x768 is the boundary the review derived: two 15x8 slivers at the course start, gone by arrival.
+
+At 1920x1080 the void is **about 7 % of the canvas**, and it does not look marginal — two large
+triangular wedges roughly 604x302 each, at the top-left and bottom-left, plus 28x14 nubs on the right.
+`R` measured 29.46875 in the running app and the grid is 9.47 tiles short, reproducing the review's
+arithmetic exactly. Two observations the review did not have:
+
+- **The void is layout-driven, not voyage-driven.** Advancing the voyage does not change the pixel
+  count or the bounding boxes at all: sailing the leg does not move the wedges, because `keepVisible`
+  clamps rather than re-centres.
+- **Which corners are affected depends on how you entered, not where you are.** Sailing from the start
+  leaves the wedges on the left for the whole passage; entering the passage afresh while at the
+  arrival end calls `centreOn` and puts them on the right. Both were observed.
+
+This is recorded as expected and **not blocking**: M8/M9 name the design stage deliberately, M11 is
+the filed structural answer, and it is not a regression — 52x44 was worse at every size. The number is
+here so the human can judge whether M11 should be pulled forward. At a maximised 1080p window a
+tenth of the play area is flat backdrop, which is the strongest argument yet that it should be.
+
+### The prop hit areas — the review's judgement, checked in the app
+
+Reproduced, and the mitigation holds:
+
+- On `deck`, with the pirate walked up beside the helm, clicking part of the helm's diamond opens the
+  **avatar** radial (`Ye` / `Yer booty`) rather than the navigation one. The shadowing the review
+  described is real and observable.
+- **The helm remains reachable**: its `Navigation` label, in `spriteLayer` above the avatar, opens the
+  full four-action radial with the pirate standing right beside it.
+- On `port`, the `Yer Sloop` label opens `Board the sloop`.
+
+No control was found that a player can walk to and then not operate. The review's non-blocking call is
+confirmed by observation rather than by inference.
+
+### Recorded so the next stage does not re-discover them
+
+- **`data-render-scene` does not track scene changes.** `packages/app/src/main.ts:103` sets it once at
+  boot; after entering another scene through an affordance the attribute still names the boot scene
+  (observed: attribute `sea`, client `deck`, deck rendered). `main.ts` is not in this PR's diff, so
+  this is pre-existing and **not blocking** — but it is newly *reachable*, because before this slice a
+  scene change through the UI was not possible. Any e2e test that waits on that attribute after a
+  click will assert the wrong scene. Filed to `ISSUES.md`.
+- **`requestAnimationFrame` does not run in a headless/idle browser pane.** The app ticker, walk
+  animation and Pixi hit-area updates are all frame-driven, so a radial item click misses unless a
+  frame is forced between opening the radial and clicking the item. Two apparent "To the passage"
+  no-ops were this environment artefact and both passed once frames were pumped. Not an app defect;
+  recorded so the next run does not raise it as one.
+
+### Guardrails
+
+`packages/sim` unchanged, `iso/atlas.ts` and `client.ts` out of the diff, `main` untouched, the
+human's worktree on `agent/feature/20260904-opp26-scene-blueprints` untouched.
