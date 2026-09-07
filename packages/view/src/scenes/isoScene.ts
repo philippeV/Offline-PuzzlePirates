@@ -71,8 +71,38 @@ export interface IsoSceneDefinition {
   arrive?(tile: TilePoint, base: BaseTile): void;
 }
 
+export interface TapSubject {
+  button: number;
+  radialOpen: boolean;
+  scenePlacesAvatar: boolean;
+  drawn: SceneObject | undefined;
+  onAvatar: boolean;
+  avatarActions: ObjectAction[];
+  underTile: SceneObject | undefined;
+}
+
+export type TapDecision =
+  | { kind: 'ignore' }
+  | { kind: 'radial'; targetId: string; actions: ObjectAction[] }
+  | { kind: 'walk' };
+
 export function playerShipOf(state: Readonly<WorldState>): ShipState | undefined {
   return state.ships.find((ship) => ship.allegiance === 'player');
+}
+
+export function tapDecisionOf(subject: TapSubject): TapDecision {
+  if (subject.button !== LEFT_BUTTON || subject.radialOpen) return { kind: 'ignore' };
+  if (subject.drawn !== undefined) {
+    return { kind: 'radial', targetId: subject.drawn.id, actions: subject.drawn.actions };
+  }
+  if (subject.onAvatar) {
+    return { kind: 'radial', targetId: AVATAR_TARGET_ID, actions: subject.avatarActions };
+  }
+  if (subject.underTile !== undefined) {
+    return { kind: 'radial', targetId: subject.underTile.id, actions: subject.underTile.actions };
+  }
+  if (subject.scenePlacesAvatar) return { kind: 'ignore' };
+  return { kind: 'walk' };
 }
 
 export function createIsoScene(context: SceneContext, definition: IsoSceneDefinition): Scene {
@@ -98,6 +128,7 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
 
   const avatar = Sprite.from(context.atlas.texture(definition.avatarArt ?? 'avatar'));
   avatar.anchor.set(0.5, 1);
+  avatar.eventMode = 'static';
 
   let standing: TilePoint = definition.spawn;
   let stepFrom: TilePoint = definition.spawn;
@@ -233,23 +264,21 @@ export function createIsoScene(context: SceneContext, definition: IsoSceneDefini
   }
 
   function onTap(event: FederatedPointerEvent): void {
-    if (event.button !== LEFT_BUTTON || radial.open) return;
-    const drawn = clickableProps.get(event.target);
-    if (drawn !== undefined) {
-      openRadial(drawn.id, drawn.actions, event.global);
-      return;
-    }
     const tile = screenToIso(camera.toWorld(event.global));
-    if (sameTile(tile, standing)) {
-      openRadial(AVATAR_TARGET_ID, definition.avatarActions, event.global);
+    const decision = tapDecisionOf({
+      button: event.button,
+      radialOpen: radial.open,
+      scenePlacesAvatar: definition.follow !== undefined,
+      drawn: clickableProps.get(event.target),
+      onAvatar: event.target === avatar || sameTile(tile, standing),
+      avatarActions: definition.avatarActions,
+      underTile: objectAt(grid, tile.x, tile.y),
+    });
+    if (decision.kind === 'radial') {
+      openRadial(decision.targetId, decision.actions, event.global);
       return;
     }
-    const object = objectAt(grid, tile.x, tile.y);
-    if (object !== undefined) {
-      openRadial(object.id, object.actions, event.global);
-      return;
-    }
-    walkTo(tile);
+    if (decision.kind === 'walk') walkTo(tile);
   }
 
   function onPointerDown(event: FederatedPointerEvent): void {

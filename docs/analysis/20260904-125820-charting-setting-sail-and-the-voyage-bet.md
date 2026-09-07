@@ -1746,3 +1746,134 @@ it is a theorem about a diamond-centred camera this code does not have.
 Cycle 1. One development task, `20260906-141500-opp21-slice-c-repair-cycle-1`, continuing on
 `agent/feature/20260904-132302-opp17-slice-c-the-passage-is-a-place` and PR 16. No second PR, no
 merge. `atlas.ts` stays out of the diff. Slice D remains held.
+
+## 2026-09-07 — development, slice C repair (OPP-21), PR 16, cycle 1
+
+Implements `20260906-141500-opp21-slice-c-repair-cycle-1` against the decisions M1–M14 in the entry
+above. Same branch, same PR, no second PR, no merge. `packages/sim` untouched, `atlas.ts` untouched,
+`client.ts` untouched. `npm run check` exits 0 with 637 tests passing and `npm run smoke` passes 5/5,
+both from cold.
+
+M1–M14 were implemented as written except where noted under *Deviations* below. The three blocking
+findings are closed and the named non-blocking one is repaired in the same pass.
+
+### What the constants actually resolve to
+
+`halfStageTileRadius(972, 720)` = `720/64 + 972/128` = **18.84375**, reproducing the analysis exactly.
+`COURSE_CLEARANCE_TILES` = `ceil(18.84375) + 1` = **20**, giving grid **49 × 49**, `COURSE_START`
+**(20, 29)**, `COURSE_END` **(29, 20)** — M9's values, now derived rather than typed. Both endpoints
+clear all four inequalities with **1.15 tiles** of slack (`29 + 18.84375 = 47.84375 < 49`, strictly).
+
+The 972 is confirmed structurally, not assumed: `mount` passes `resizeTo: options.canvasHost`
+(`packages/view/src/app.ts:48`), so the renderer sizes to the `#stage` host — the viewport less the
+308 px panel column — and not to the window.
+
+### The void is gone, and that claim is measured
+
+The previous pass reported this fixed after looking at a browser, and was wrong. This pass decoded
+the PNGs.
+
+A standalone decoder counted pixels exactly equal to `BACKDROP` (`0x0a1622`). Against the **committed**
+baseline it reproduced the review's figure to the pixel — **576 px, bbox x 0–51 / y 694–719** — which
+calibrates the instrument before it is used to certify anything.
+
+| capture                                   | backdrop px | bounding box       |
+| ----------------------------------------- | ----------- | ------------------ |
+| committed baseline (old constants), start | 576         | x 0–51 / y 694–719 |
+| **new baseline, start**                   | **0**       | —                  |
+| **arrival, new constants**                | **0**       | —                  |
+| arrival, old constants (control)          | 3422        | x 856–971 / y 0–57 |
+
+`COURSE_END` was exercised by driving a real voyage rather than by reasoning: an `evade` voyage
+charted through `window.__ppApp.client`, advanced to `legIndex 2` / `legTicksRequired 0` — the exact
+state that produced the arrival teleport — then `enterScene('sea')` and a screenshot.
+
+The last row is a **sensitivity control**, and it is the reason the other rows can be trusted. Only
+the four constants were reverted and the identical capture re-run; it exposes the top-right void the
+analysis predicted at `COURSE_END` and that a browser check had missed, because by then `keepVisible`
+has panned the camera. A "0" from a method that cannot detect a void at that position would have been
+worthless, which is precisely how the earlier false positive arose.
+
+### The smoke suite cannot catch this class of defect
+
+`maxDiffPixelRatio` is 0.01 — **9216 px** of a 1280×720 frame. The void measures 576 px at the start
+and 3422 px at arrival. Both pass comfortably.
+
+This was observed directly, not inferred: running the suite with the repaired code against the **old**
+baseline passed 5/5, and the baseline only regenerated once `sea.png` was deleted. The threshold was
+not widened (M14 forbids it, and widening would be the wrong direction anyway). **M10's unit
+assertion of the four inequalities is the real guard**; the baseline certifies composition, not
+geometry. Filed in `ISSUES.md`.
+
+### Deviations from M1–M14, and why
+
+- **M7, the chart panel, shares the arrival *predicate* rather than the progress *function*.** M7 says
+  the panel "gets the same correction". Taken literally that puts whole-voyage progress into a bar
+  labelled "Leg progress" whose value text is a leg tick pair, directly beneath the `Leg n of m` row
+  that already carries the coarse position — the row would then duplicate the one above it. It is
+  also not importable: `sea.ts` → `isoScene.ts` → `pixi.js` (line 1), so importing it into
+  `panels/minimap.ts` drags Pixi into the DOM panel layer and into `minimap.test.ts`, which runs on
+  happy-dom with no renderer. Today the panel layer imports only a *type* from `scenes/`. So the panel
+  keeps its own within-leg quantity and gains an arrival branch keyed on `legIndex >= route.length - 1`
+  — the sim's own predicate, per M4. M7's stated purpose is honoured: the two panels now agree on the
+  arrival state (ship at `COURSE_END` / 1000; bar full, "All leagues astern").
+- **M13 adds the screen-space hit-test but keeps the tile-space one.** M13 calls the tile-space test
+  "the outlier", but the same paragraph records exactly one accepted behaviour change on `port` and
+  `deck`. Removing the tile-space clause causes a *second*, unrecorded one: the avatar sprite is
+  anchored bottom-centre, so it never covers the lower half of its own tile diamond, and clicking
+  there would stop opening the radial and silently order a walk to the tile already occupied. The two
+  sentences cannot both be honoured; the concrete claim about `port`/`deck` was kept. On `sea` the
+  tile-space clause is never true under way, so it costs nothing there and M13 does all the work.
+- **`departureIntentOf` is an exported pure function** (`deck.ts`). M1's emission would otherwise live
+  inside `createDeckScene`'s closure, which the node tests cannot construct — it needs a Pixi `Atlas`
+  — making required regression 1 unwritable. This is the same idiom the analysis itself prescribes for
+  its regression 7.
+- **`legProgressPerMilleOf` was renamed `voyageProgressPerMilleOf`.** Under M4 the old name states the
+  opposite of what the function returns. Nothing else in the tree referenced it.
+- **Two numbers remain typed in `sea.ts`**: the course span (9 tiles) and one tile of spare water. M8
+  requires derivation and M9 gives the answers, but neither names the irreducible inputs. Everything
+  else — clearance, both endpoints, and both grid dimensions — follows from those two and the
+  projection. `SEA_HEIGHT = SEA_WIDTH` encodes M9's "square so the axes cannot diverge a third time".
+
+### One defect found in this pass's own work
+
+The new helm action **"To the passage" was a dead control while docked.** `canEnter('sea')` returns
+`atSea` (`client.ts:127`), so in port the intent was refused and `enterScene` returned `false`
+silently — a menu entry that does nothing, shipped inside the very PR whose purpose is to remove
+silent no-ops. It now answers the way the deck already answers an unavailable exit, alongside
+`GANGPLANK_STOWED`:
+
+```
+const PASSAGE_ASHORE = 'There be no passage while we lie alongside.';
+```
+
+The precondition is pinned in `loop.test.ts` at both states (`canEnter('sea')` false alongside, true
+under way).
+
+### The test gap, closed
+
+637 tests pass, up from 622. All seven regressions the analysis required are present. The load-bearing
+ones: an accepted sail from the deck now yields the departure intent and a refused one yields `null`
+(regression 1 — the assertion nobody wrote); entering the deck under way survives the next `advance`
+(regression 2 — the anti-trap assertion that fails if anyone widens `syncScene`); progress is exactly
+1000 at `COURSE_END` on the arriving tick and stays there (3); progress is monotonic across an interior
+leg boundary (4); the four inequalities hold for both endpoints (5); the chart panel on arrival (6);
+and the click decision through the pure exported `tapDecisionOf` (7).
+
+`loop.test.ts:54-59`, which asserted the scene stays `'deck'` after an accepted sail, recorded B1 as
+expected behaviour and was rewritten rather than worked around. `loop.test.ts:106-123`, which reached
+`sea` through the UI-impossible sail-from-`port` path, became a save/restore test — which is M3's
+actual justification for keeping the `port` → `sea` rule, so that rule now has a test matching its
+stated reason.
+
+### For the test stage
+
+`playwright.config.ts` sets `reuseExistingServer: !process.env.CI` against the fixed port 5178. A
+developer's own `npm run dev` — or another worktree's — was listening there during this run, so a
+plain `npm run smoke` would have silently exercised **that** tree and reported a pass for code it
+never loaded. Every Playwright pass here ran on an isolated port through a temporary config, deleted
+afterwards. Use an isolated port or set `CI`. Filed in `ISSUES.md`.
+
+### Routing
+
+Forwarded to review as cycle 1 on PR 16. Slice D remains held.

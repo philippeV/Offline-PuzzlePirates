@@ -52,6 +52,29 @@ function chartCourse(host: HTMLElement): void {
   confirm.click();
 }
 
+function chooseVoyageType(host: HTMLElement, voyageType: string): void {
+  const control = [...courseSection(host).querySelectorAll<HTMLButtonElement>('.pp-chart-voyage')].find(
+    (candidate) => candidate.textContent === voyageType,
+  );
+  if (control === undefined) throw new Error(`the chart offers no ${voyageType} voyage`);
+  control.click();
+}
+
+function legCount(host: HTMLElement): string {
+  const value = host.querySelector('.pp-chart-status .pp-fact .pp-fact-value');
+  if (value === null) throw new Error('the chart shows no leg count');
+  return value.textContent ?? '';
+}
+
+function legProgress(host: HTMLElement): { value: string; width: string } {
+  const bar = host.querySelector<HTMLElement>('.pp-chart-status .pp-bar');
+  if (bar === null) throw new Error('the chart shows no leg progress');
+  const value = bar.querySelector('.pp-bar-value')?.textContent ?? '';
+  const fill = bar.querySelector<HTMLElement>('.pp-bar-fill');
+  if (fill === null) throw new Error('the leg progress bar has no fill');
+  return { value, width: fill.style.width };
+}
+
 function abandonControl(host: HTMLElement): HTMLButtonElement {
   const control = host.querySelector<HTMLButtonElement>('.pp-chart-abandon');
   if (control === null) throw new Error('the chart has no abandon control');
@@ -155,10 +178,7 @@ test('the chosen voyage type and Chart course charts the course', () => {
   const { host, context } = mountChart();
 
   islandCell(host, 'Doyle Island').click();
-  const trade = [...courseSection(host).querySelectorAll<HTMLButtonElement>('.pp-chart-voyage')].find(
-    (control) => control.textContent === 'trade',
-  );
-  trade?.click();
+  chooseVoyageType(host, 'trade');
   chartCourse(host);
 
   assert.equal(context.client.state.voyage?.type, 'trade');
@@ -174,6 +194,30 @@ test('charting a course leaves the pirate ashore until they set sail', () => {
   assert.equal(context.client.state.voyage?.phase, 'charted');
   assert.equal(context.client.state.pirate?.atIslandId, 'alkaid');
   assert.equal(context.client.atSea, false);
+});
+
+test('the chart reads a full bar once the last league is astern, not an empty one', () => {
+  const { host, context, refresh } = mountChart();
+  const client = context.client;
+
+  islandCell(host, 'Doyle Island').click();
+  chooseVoyageType(host, 'evade');
+  chartCourse(host);
+  assert.equal(client.dispatch({ op: 'voyage.sail' }).status, 'accepted');
+
+  client.advance(1);
+  refresh();
+  assert.match(legProgress(host).value, /^1\/[1-9]\d*$/);
+
+  const legs = (client.state.voyage?.route.length ?? 1) - 1;
+  while ((client.state.voyage?.legIndex ?? legs) < legs) {
+    client.advance(1000);
+  }
+  refresh();
+
+  assert.equal(client.state.voyage?.legTicksRequired, 0);
+  assert.equal(legCount(host), '2 of 2');
+  assert.deepEqual(legProgress(host), { value: 'All leagues astern', width: '100%' });
 });
 
 test('a charted course can be abandoned without leaving the island', () => {

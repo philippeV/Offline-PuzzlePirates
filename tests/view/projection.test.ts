@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  DESIGN_STAGE_HEIGHT,
+  DESIGN_STAGE_WIDTH,
   TILE_HEIGHT,
   TILE_WIDTH,
   depthOf,
+  halfStageTileRadius,
   isoToScreen,
   screenToIso,
 } from '../../packages/view/src/iso/projection.ts';
@@ -27,6 +30,11 @@ test('every tile of a field survives the round trip through screen space', () =>
       assert.deepEqual(screenToIso(centre), { x, y }, `tile ${x},${y} did not survive`);
     }
   }
+});
+
+test('a stage reaches the same tile radius along either iso axis', () => {
+  assert.equal(halfStageTileRadius(TILE_WIDTH * 2, TILE_HEIGHT * 2), 2);
+  assert.equal(halfStageTileRadius(DESIGN_STAGE_WIDTH, DESIGN_STAGE_HEIGHT), 18.84375);
 });
 
 test('tiles further from the camera sort behind nearer ones', () => {

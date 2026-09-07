@@ -1,5 +1,7 @@
 export const TILE_WIDTH = 64;
 export const TILE_HEIGHT = 32;
+export const DESIGN_STAGE_WIDTH = 972;
+export const DESIGN_STAGE_HEIGHT = 720;
 
 export interface TilePoint {
   x: number;
@@ -24,6 +26,10 @@ export function screenToIso(point: ScreenPoint): TilePoint {
   const x = point.x / halfWidth + point.y / halfHeight;
   const y = point.y / halfHeight - point.x / halfWidth;
   return { x: Math.floor(x / 2), y: Math.floor(y / 2) };
+}
+
+export function halfStageTileRadius(stageWidth: number, stageHeight: number): number {
+  return stageHeight / (2 * TILE_HEIGHT) + stageWidth / (2 * TILE_WIDTH);
 }
 
 export function depthOf(tile: TilePoint, layer: number): number {

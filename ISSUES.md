@@ -4914,3 +4914,75 @@ has reached. That is a smaller discrepancy than the teleport it replaces, and fi
 changing `IsoSceneDefinition`'s shape so `heading` can be re-derived per frame like `follow` — a change
 to shared machinery, which the cycle-1 guardrails keep out of the diff. Worth doing when the sea scene
 is next opened, most naturally alongside the traffic work in slice D.
+
+## 2026-09-07 — development, slice C repair (OPP-21), PR 16, cycle 1
+
+Non-blocking findings from implementing the cycle-1 repair. Everything blocking in that task was
+fixed on the branch; these are the things deliberately left.
+
+### The screenshot baseline cannot see a void, and never could
+
+`maxDiffPixelRatio` is `0.01` — **9216 px** of the 1280×720 frame. The backdrop void that came back
+as blocking finding B3 measures **576 px** at the course start and **3422 px** at arrival. Both sit
+far inside the tolerance.
+
+This is measured, not argued. Running `npm run smoke` with the *repaired* code against the *old*
+baseline passes 5/5; the baseline only regenerates once `sea.png` is deleted. So the blessed PNG that
+photographed the void would have kept passing indefinitely, and re-blessing it proves nothing about
+geometry either.
+
+The threshold must **not** be widened to compensate — that is the wrong direction and M14 forbids it.
+The right guard is the one M10 installed: the four per-axis inequalities asserted as a unit test in
+`tests/view/sea.test.ts`, which fails in milliseconds. Worth knowing when the next scene places a
+camera near a grid edge: the baseline certifies *composition*, not *coverage*.
+
+### `npm run smoke` can silently test a different worktree
+
+`playwright.config.ts:24` sets `reuseExistingServer: !process.env.CI` against the fixed port from
+`packages/app/vite.config.ts:3` (5178, `strictPort: true`).
+
+If **any** vite is already listening there — a developer's own `npm run dev`, or another worktree's,
+which is exactly what happened during this run — Playwright reuses it and screenshots whatever *that*
+server serves. The suite then reports a confident pass for code it never loaded, on a branch it was
+never pointed at. There is no warning; the run looks entirely normal.
+
+Every Playwright pass in this cycle therefore ran on an isolated port through a temporary config.
+That is a workaround, not a fix. The durable options are to have the smoke config own a dedicated
+port distinct from the dev default, or to set `reuseExistingServer: false` unconditionally. It starts
+to matter the moment two agents, or an agent and a human, run in the same checkout — which is now the
+normal case.
+
+### The design stage size is a fourth uncoordinated copy
+
+M8 moved the projection radius into `packages/view/src/iso/projection.ts` so the grid derives from
+the source instead of being guessed. That part holds. But the *input* it derives from does not: the
+972 × 720 stage now exists as `DESIGN_STAGE_WIDTH`/`DESIGN_STAGE_HEIGHT` in `projection.ts`, while the
+numbers it is supposed to track live in
+
+- `playwright.config.ts:18` — `viewport: { width: 1280, height: 720 }`
+- `packages/view/src/panels/panels.css:2` — `--pp-panel-column: 308px` (1280 − 308 = 972)
+- `packages/view/src/scenes/battle.ts:131` — an unrelated `let sceneHeight = 720;`
+
+Nothing links them. Change the panel column or the smoke viewport and the sea grid goes silently
+wrong a **third** time, with no test failing — M10's inequalities derive from the same copy, so they
+would agree with themselves and still be wrong. The real fix is for the app to publish its stage size
+so the constant and the layout cannot diverge, which is a change outside a cycle-1 repair of one
+scene. Until then the derivation is honest about the arithmetic but not about its input.
+
+### The chart panel's `Leg` row is mislabelled under way
+
+`packages/view/src/panels/minimap.ts:131` renders ``factRow('Leg', `${voyage.legIndex} of ${voyage.route.length - 1}`)``.
+`legIndex` counts leagues *astern*, not the leg being sailed, so a two-leg voyage reads **"Leg 0 of 2"**
+while sailing the first leg and **"Leg 1 of 2"** while sailing the second.
+
+Noted because the cycle-1 analysis quotes the *arrival* reading, "Leg 2 of 2", as part of the defect.
+It is not: on arrival that row is the only one of the three that is actually correct. The misleading
+states are the ones before it. Left alone rather than widening the diff, since the arrival bar — the
+thing that was blocking — is fixed.
+
+### Clicking the pirate's own body now opens the radial on `port` and `deck`
+
+A recorded and accepted consequence of M13. Making the avatar sprite interactive means a click landing
+on the body opens the avatar radial where it previously ordered a walk to that tile. The tile-space
+test was **kept** alongside the new screen-space one, so no other affordance moved — see the deviation
+note in the analysis document for why removing it would have introduced a second, unrecorded change.
