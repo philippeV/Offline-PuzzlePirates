@@ -2163,3 +2163,67 @@ of clearance absorb it. `tests/view/sea.test.ts` now pins that an astern ship la
 The `sea` baseline was re-taken **twice** for this reason — the first bless captured the clamped
 frame. The committed one is the second, and the smoke was run three times consecutively against it to
 check that up to four moving sprites had not made the capture flaky.
+
+## 2026-09-07 — review, slice D (OPP-22), traffic and battle by range, cycle 0
+
+Four lenses against PR 17 at `630ef97`. **No blocking findings; forwarded to test.** Full findings are in
+`ISSUES.md` under the review-stage heading for this PR. What follows is only what the review changed about
+the design record.
+
+### R1 — L11's safety argument is false as written, and the decision should be revisited
+
+The development entry defends reusing `world.encounter` on the ground that "every pinned fixture runs a
+scenario with no voyage". That is not true. `packages/fixtures/saves/voyage-charted-v7.json` and
+`voyage-under-way-v6.json` both carry voyages, and `tests/e2e/__screenshots__/sea.png` actively sails one:
+its `?scene=sea` opening charts an `evade` voyage to `doyle` and sails it
+(`packages/view/src/client/boot.ts`, `openingVoyageCommands`), so that baseline does seed traffic from the
+encounter stream. The analysis contradicts itself on this point — its own costs section notes the new
+baseline "visibly carries the player plus a traffic ship".
+
+The narrower claim does survive, and it is the one that mattered for the re-bless: the four RNG-hash-pinned
+artefacts — the golden, both replays, the scenario — run no voyage, and the golden's `/rngStreams` subtree is
+byte-identical across the diff. Verified directly. **No re-bless masked a stream shift.** But the gate stayed
+silent because nothing it watches sails, not because the discipline held, and that is a materially different
+statement from the one recorded.
+
+Set against L11 are road decision 52 (critters were given their own `bilge.critters` stream for exactly this
+reason), the road document's invariant "No world code draws from a pre-existing stream" — now untrue — and
+`.claude/skills/pp-golden-state`, whose remedy for this diagnosis is to give the new consumer its own stream.
+L11's stated rationale is backwards, which the development entry concedes.
+
+**Recorded as non-blocking** because it is not a correctness defect: determinism is preserved (a mid-leg
+save/reload plus 40,000 ticks reproduces an identical hash), CI is green, and the queue's blocking test
+places architectural coupling outside the blocking set. The implementation did what its spec told it to do;
+the spec is the part that is wrong. Sending it back to analysis would have had analysis re-derive a decision
+it already made, so the corrected premise is recorded here instead and the recommendation carried to the
+human at the `agent/develop` to `develop` gate. **The remedy is a `TRAFFIC_STREAM` constant beside
+`ENCOUNTER_STREAM` and one changed argument, and it gets more expensive with every seed pinned against the
+current draw order.**
+
+### R2 — the decision 129 guardrail holds, but not by the stated mechanism
+
+The claim under test was that `stepWorld` reaches `stepVoyage` only after settling a concluded encounter.
+It does not: `concludedEncounterOf` returns `null` for a *running* battle as well as for none, and
+`session.ts` then takes the `stepVoyage` branch — the two are mutually exclusive branches of one tick, not a
+sequence. The protection is real but comes from two other places, both pre-existing and neither in this
+diff: `stepVoyage` returns early while `battle.outcome === 'running'`, and `rollEncounter` returns `[]`
+whenever `state.battle !== null`. The `voyage === null` hole is not widened, and traffic can only exist in
+the `under-way` phase. Correct conclusion, wrong reasoning — worth fixing in the record so nothing later
+leans on the version as written.
+
+### R3 — behaviour the slice introduced but did not describe
+
+Recorded so the next agent does not rediscover them: traffic is frozen for the duration of a battle; a voyage
+restored mid-leg gets an empty passage until the next leg, because seeding is gated on `legTicks === 0`;
+traffic consumes the global `EntityId` counter; only the first ship crossing into range on a given tick is
+honoured, which is narrower than N2 as written; and a ship holding station near the range edge can present a
+fresh crossing on many ticks, which is a second and undeclared contributor to the measured 43 per cent rise
+in spawns. Also, the design prose's "promoted to a real brigand hull" is not a promotion — a fresh hull is
+minted and the traffic entry deleted by id. The net effect matches; the identity does not.
+
+### R4 — the coverage gap that let R1 through
+
+No golden and no replay exercises a voyage at all, so the entire traffic subsystem has no whole-state
+coverage, and nothing in the suite serialises a non-empty `traffic` array. A voyage golden is the natural
+companion to this slice and is the thing that would have made R1 visible to the gate rather than to a
+reviewer reading the stream by hand.
