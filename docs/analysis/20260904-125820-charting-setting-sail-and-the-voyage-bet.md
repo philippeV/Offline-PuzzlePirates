@@ -1877,3 +1877,85 @@ afterwards. Use an isolated port or set `CI`. Filed in `ISSUES.md`.
 ### Routing
 
 Forwarded to review as cycle 1 on PR 16. Slice D remains held.
+
+## 2026-09-07 — review, slice C repair (OPP-21), PR 16, cycle 1
+
+Four lenses over `e7e6056..41628c5`. **No blocking findings; forwarded to the test stage.** The three
+blocking findings from the first review are closed in the code. Non-blocking findings are in
+`ISSUES.md` under the matching heading and are not repeated here; what follows is only what the
+review changed about the *record*, because three of its findings are places where these documents
+claim more than the branch delivers.
+
+### What was verified, and how
+
+Not by reading the tests, since the tests are what let all three defects through the first time.
+
+- **B2** — the sim was driven tick by tick through the entire 34 560-tick passage (`opening:
+  'under-way'`, seed 12648430, route `[1,2,8]`), sampling `voyageProgressPerMilleOf` at every tick.
+  0 at charted; **0 backwards steps** in either the per-mille value or the derived tile; the interior
+  league point crosses `499 -> 500` at exactly `legIndex / legs` with no snap; the final tick gives
+  `999 -> 1000` and the position lands exactly on `COURSE_END`, holding there for 5000 further ticks.
+  `legTicksRequired === 0` at arrival is real rather than assumed: `voyage.ts:62` freezes stepping and
+  `orientationCostOf` returns 0 for the out-of-range next leg, so the new `legTicksRequired <= 0`
+  branch is a pure divide-by-zero defence.
+- **B3** — both baselines were decoded with a purpose-written PNG decoder, calibrated by reproducing
+  the previous review's own figure on the *old* baseline to the pixel (576 px, bbox x 0-51 /
+  y 694-719) before its reading of **0 px** on the new one was trusted. Independently reproduced by a
+  second lens with its own decoder.
+- **B1** — traced statically through `canEnter` and the dispatch guards; live in both states.
+- Gates `deps`, `imports`, `boundary`, `typecheck`, `lint` all exit 0; `node --test` gives 637/637,
+  matching the development entry.
+
+### Correcting the record
+
+**1. "The void is gone" holds only at 1280x720.** The heading in the development entry is
+unqualified, and it should not be. `#stage` is `inset: 0 var(--pp-panel-column) 0 0` and `mount`
+passes `resizeTo: options.canvasHost`, so the real stage is `(windowWidth - 308) x windowHeight`,
+while the grid derives from a fixed 972x720. The no-void condition reduces to
+`windowWidth + 2 * windowHeight < 2868`, so 1366x768 already fails and a maximised 1080p window is
+9.47 tiles over budget, with the void back in the same two corners. This is not a regression and not
+a deviation — M8/M9 name a *design* stage deliberately and M11 is the filed structural answer — but
+the ceiling was nowhere stated, and the `ISSUES.md` "fourth uncoordinated copy" entry covers drift
+between the copies rather than the runtime window. M11 should now be read as fixing the *default*
+view at ordinary window sizes, not merely as hardening against a deliberate right-drag; that is a
+materially higher priority than its out-of-scope note implies.
+
+**2. The 2026-09-06 claim that "no other affordance moved" on `port`/`deck` is wrong.** Making the
+avatar interactive also shadows part of each prop's hit area, because `dynamicLayer` sits above
+`objectLayer` and `event.target === avatar` now short-circuits ahead of the tile lookup. With the
+pirate on `(12,5)` the avatar box covers the lower band of the deck helm's diamond at `(11,4)`, which
+now opens the avatar radial instead of the navigation one. It is not blocking — every prop keeps its
+label in `spriteLayer` above the avatar and the rest of its diamond — but M13 was accepted on the
+strength of the narrower claim, so the wider consequence belongs in the record.
+
+**3. "The test gap, closed" overstates regression 1.** The analysis worded that regression as "an
+*accepted* sail puts the *scene* on `sea`". What shipped, at `tests/view/loop.test.ts:110`, asserts
+that `departureIntentOf` returns an object literal and then performs the scene change in the test
+itself. The production wiring at `deck.ts:106` is never exercised, and neither are the three lines
+that constitute the M12/M13 fix. No test anywhere constructs a scene, and the smoke suite reaches
+every scene by `?scene=` URL rather than through an affordance, so B1's defect class — a control
+present but not connected — would still pass a green suite. The Deviations section explains why
+`departureIntentOf` was exported but does not disclose that the regression was weakened in the
+process. B2's and B3's regressions were checked against a re-implementation of the pre-fix code and
+genuinely fail against it; regression 1 does not.
+
+**4. M7's import justification is false in one of its three parts.** "Not importable... into
+`minimap.test.ts`, which runs on happy-dom with no renderer" is contradicted by the tree:
+`tests/view/sea.test.ts:13` already imported `scenes/sea.ts` — and therefore Pixi — at the base
+commit, and this commit adds two more such importers. The decision stands on the panel-layer boundary
+and the UI-duplication argument, which are sound; only the third reason should be struck.
+
+### One correction in the review's favour
+
+The B3 derivation's assertion that "the centred camera is the worst case" is not exactly right —
+`keepVisible` clamps only to a 96 px margin, so the ship drifts off-centre. It does not change the
+conclusion here: along this course `isoToScreen.y` is constant (`x + y = 49` throughout), so the drift
+is horizontal only and the four margins stay at or above 1.15625 for the whole passage. The 49x49
+grid is genuinely sufficient at 972x720, for a slightly different reason than the one recorded.
+
+### Routing
+
+Clean, so the branch goes to the test stage at cycle 1 rather than back to analysis. The test stage
+carries two instructions that follow directly from the findings above: exercise the affordances
+physically, since no automated tier covers them; and look at the sea scene at a window size other
+than 1280x720, since that is precisely where the shipped fix stops holding.

@@ -4986,3 +4986,142 @@ A recorded and accepted consequence of M13. Making the avatar sprite interactive
 on the body opens the avatar radial where it previously ordered a walk to that tile. The tile-space
 test was **kept** alongside the new screen-space one, so no other affordance moved — see the deviation
 note in the analysis document for why removing it would have introduced a second, unrecorded change.
+
+## 2026-09-07 — independent review of the slice C repair (OPP-21), PR 16, cycle 1
+
+Four lenses over `e7e6056..41628c5` only. **No blocking findings.** B1, B2 and B3 are closed in the
+code. B2 was verified by driving the real sim tick by tick through the whole 34 560-tick passage
+rather than by reading the tests, and B3's baseline was verified by decoding both PNGs with a
+purpose-written decoder, calibrated by reproducing the previous review's own figure to the pixel
+(576 px, bbox x 0-51 / y 694-719) before trusting its reading of 0 px on the new one.
+
+Everything below is non-blocking. Three of them are corrections to the *record* rather than to the
+code: the shipped behaviour is right, and the documents that describe it overstate.
+
+### The B3 repair holds only at 1280x720, and nothing says so
+
+`#stage` is `inset: 0 var(--pp-panel-column) 0 0` (`packages/app/src/app.css`) and `mount` passes
+`resizeTo: options.canvasHost` (`app.ts:48`), so the real stage is `(windowWidth - 308) x
+windowHeight`. The grid, however, derives from the fixed `DESIGN_STAGE_WIDTH/HEIGHT` (972x720,
+`iso/projection.ts:3-4`), pinning `COURSE_CLEARANCE_TILES` at 20. The no-void condition
+`max(course) + R < 49` therefore becomes `windowWidth + 2 * windowHeight < 2868`:
+
+| window    | R        | 29 + R   | verdict                 |
+| --------- | -------- | -------- | ----------------------- |
+| 1280x720  | 18.84375 | 47.84375 | ok — the smoke viewport |
+| 1280x794  | 20.00000 | 49.00000 | boundary                |
+| 1366x768  | 20.26563 | 49.26563 | void                    |
+| 1920x1080 | 29.46875 | 58.46875 | void, both corners      |
+
+So on a maximised browser at 1080p the void that came back as blocking finding B3 is still on
+screen, in the same two corners, for the same reason — 9.47 tiles over budget. This is **not** a
+regression: the old 52x44 constants were worse at every size, M8/M9 deliberately name a *design*
+stage, and M11 is the filed structural answer (the camera clamping to the grid's half-planes, which
+fixes window size and right-drag panning together). It is recorded here because neither the existing
+"fourth uncoordinated copy" entry — which covers drift *between the copies* — nor the development
+entry's unqualified heading "The void is gone, and that claim is measured" states the ceiling. The
+re-blessed baseline certifies 1280x720 and nothing wider. It starts to matter the moment the game is
+played anywhere but the smoke viewport, which is to say now.
+
+### `avatar.eventMode = 'static'` moved a second affordance, which the record denies
+
+The 2026-09-06 entry accepts exactly one change on `port`/`deck` — "clicking the pirate's own body
+would open the radial where it currently walks a tile" — and states that no other affordance moved.
+A second one did.
+
+`world.addChild(baseLayer, objectLayer, dynamicLayer, spriteLayer)` (`isoScene.ts:118`) puts the
+avatar's `dynamicLayer` above the props' `objectLayer`, and Pixi's `hitTestRecursive` walks children
+in reverse display order. Before this commit a non-interactive sprite whose bounds contain the point
+already halted the descent, but the target resolved to `root` and `onTap` fell through to
+`objectAt(grid, tile)`, so the prop's radial still opened. Now `event.target === avatar`
+short-circuits at `isoScene.ts:273` and the avatar radial wins instead.
+
+Concretely: on `deck`, with the pirate on `(12,5)`, the avatar sprite (32x34, anchored bottom-centre
+at the tile centre) covers the lower band of the diamond of `(11,4)` — the navigation helm. Clicking
+that band used to offer *Chart a course / Set sail / To the passage / Vessel* and now offers *Ye /
+Yer booty*. The same applies to the moored sloop on `port` with the pirate on `(1,10)`.
+
+Severity is limited and that is why it is not blocking: each prop's oval label lives in `spriteLayer`
+*above* `dynamicLayer` at `spot.y - 54`, entirely clear of the avatar box, so every prop stays
+reachable by its label and by the rest of its diamond. No control becomes dead. The right correction
+is to this record, not to the code — M13 accepted screen-space avatar hit-testing knowingly.
+
+### Every predicate this PR adds is tested; every wiring line is not
+
+The extraction of `departureIntentOf` and `tapDecisionOf` made the decisions testable and left the
+connections untested at every tier. `tests/view/loop.test.ts:110` reads as the regression for B1, but
+it asserts that a pure function returns an object literal and then performs the scene change *itself*
+(`assert.ok(client.enterScene('sea'))`). The production wiring — `context.emit(departure)`,
+`deck.ts:106` — is never exercised. Delete that line and the suite stays green with B1 back.
+
+The same holds for the three lines that *are* the M12/M13 fix (`isoScene.ts:131`, `:271`, `:273`):
+remove any one and all seven `walking.test.ts` cases still pass while the sea radial breaks again.
+`SEA_INTENTS[DECK_ACTION]`, the `To the deck` radial entry and the `PASSAGE_ASHORE` refusal have no
+test at all. No test anywhere constructs a scene (`grep` for the four `create*Scene` factories over
+`tests/` returns nothing), and `tests/e2e/render-smoke.spec.ts:41` reaches every scene by
+`?scene=<name>` URL, never through an affordance. B1's defect class — a control that is present but
+not connected — would still pass a green suite today.
+
+This is a coverage gap over correct shipped code, so it is not blocking, and the physical test stage
+exercises exactly these affordances this cycle. What is missing is the durable guard. The cheap
+remediation needs no Pixi: export `DECK_INTENTS`, `SEA_INTENTS`, `NAVIGATION_ACTIONS` and
+`AVATAR_ACTIONS` and assert that the sail action's intent equals `departureIntentOf` of an accepted
+result, that `SEA_INTENTS` carries a `deck` entry reachable from `AVATAR_ACTIONS`, and that
+`IsoSceneDefinition.follow` maps to `scenePlacesAvatar`. Alternatively let the smoke suite reach
+`sea` by clicking the helm instead of by URL.
+
+### The four-inequality test cannot fail on a derived value
+
+M10 designates `tests/view/sea.test.ts:74-81` "the real guard" against a third wrong grid value. With
+`C = ceil(R) + SPARE_WATER_TILES` the four conditions reduce to `C >= R` and `R < C`, and both are
+identities for every `R >= 0` whenever `SPARE_WATER_TILES >= 1`. Set `DESIGN_STAGE_WIDTH` to 3440 and
+the test still passes.
+
+It is not worthless — it does fail against the old hardcoded literals, so it guards against a revert
+to typed-in constants, which is the failure mode that actually occurred twice. But the real guard on
+the derivation is `tests/view/projection.test.ts:35-38`, which pins `halfStageTileRadius` against
+`18.84375`, a number derived by hand in the analysis and independent of the implementation, and which
+additionally pins both design-stage constants. Worth knowing which of the two assertions is load
+bearing before someone simplifies the other away.
+
+### `SPARE_WATER_TILES` is load bearing, and reads like padding
+
+`sea.ts:14` records the `+ 1` as one of two "irreducible inputs". Its actual job is to keep the
+*upper* bound strict: with `SPARE_WATER_TILES = 0` and an integral `R`, both margins become
+`ceil(R) - R = 0`, the lower bound (`>=`) still passes and the upper (`<`) degenerates into exactly
+the hairline of backdrop the analysis warns about. A future simplification to `ceil(R)` would look
+harmless, and per the entry above the test would not stop it. A name such as
+`STRICT_CLEARANCE_MARGIN_TILES` would carry that, without a comment.
+
+### Smaller items
+
+- `docs/analysis/...voyage-bet.md`, M7 deviation: the stated reason that importing `sea.ts` would
+  drag Pixi "into `minimap.test.ts`, which runs on happy-dom with no renderer" is false.
+  `tests/view/sea.test.ts:13` already imported `scenes/sea.ts` at the base commit, and this commit
+  adds `walking.test.ts:12-17` and `loop.test.ts:7` doing the same; 637 passing tests are the proof.
+  The deviation's other two reasons — the panel-layer boundary and the UI duplication argument — are
+  sound and sufficient, so the decision stands and only the justification is wrong.
+- `panels/minimap.ts:234-236`: `hasArrived` is the third copy of `legIndex >= route.length - 1`,
+  alongside `packages/sim/src/world/voyage.ts:62` (which the analysis calls canonical) and the
+  implicit encoding in `sea.ts:50`. `client/rules.ts` is a pure re-export of `@opp/sim` and has no
+  Pixi problem, so it is the natural single home. The analysis says the panel "shares the predicate";
+  it re-implements it.
+- `panels/minimap.ts:33`: `FULL_PROGRESS_PER_MILLE` duplicates the exported `PROGRESS_PER_MILLE`
+  (`sea.ts:28`); same remedy.
+- `scenes/deck.ts:66` and `:92`: `{ kind: 'enter-scene', scene: 'sea' }` written twice as independent
+  literals. `departureIntentOf` should return `DECK_INTENTS[PASSAGE_ACTION]`.
+- `isoScene.ts:78,81`: `drawn` and `underTile` do not reveal intent under a no-comments convention —
+  the first means "the prop whose sprite the pointer hit", the second "the object occupying the
+  tile", and both are only decodable from the call site. `scenePlacesAvatar` and `radialOpen` on the
+  same interface are exemplary by contrast.
+- `tests/view/sea.test.ts:31`: the `as never` fixture defeats type checking, and `TWO_LEG_ROUTE`
+  holds island names where the real `route` holds league-point ids. Harmless today because only
+  `route.length` is read.
+- `tests/view/sea.test.ts:134` and `tests/view/minimap.test.ts:212`: unbounded `while` loops over
+  `client.advance(1000)`. A regression that stalls voyage progress turns a clean assertion failure
+  into a hung suite; `loop.test.ts:15` already has the right idiom in `MAX_VOYAGE_TICKS`.
+- `tests/view/loop.test.ts:107`: `assert.equal(shipOf(client.state, 'player').id, ship.id)` asserts
+  nothing about the behaviour the test names.
+- `tests/view/walking.test.ts`: the decision table omits `scenePlacesAvatar: true` combined with
+  `underTile`. Unreachable today because the sea grid has no objects; slice D's traffic work
+  introduces it.
